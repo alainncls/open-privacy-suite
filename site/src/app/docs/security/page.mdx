@@ -332,7 +332,7 @@ Do not increase `AccessTokenTTL` without adding a per-request revocation check
 
 ### RBAC Model
 
-- **Restrictive inheritance**: child groups can only narrow permissions
+- **Flat groups**: groups are siblings, not hierarchical — each group's permissions stand alone, no parent/child traversal (changed in RD-804)
 - **Multi-membership**: union of permissions across memberships
 - **Expiring memberships**: optional expiration timestamps
 - **Immutable audit log**: all changes tracked

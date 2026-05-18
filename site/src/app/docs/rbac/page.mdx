@@ -3,21 +3,21 @@ import { ApiEndpoint } from "@/components/mdx/api-endpoint";
 export const metadata = {
   title: "RBAC",
   description:
-    "Multi-tenant hierarchical role-based access control for blockchain node access.",
+    "Multi-tenant role-based access control for blockchain node access.",
 };
 
 # Role-Based Access Control (RBAC)
 
 ## Overview
 
-The Open Privacy Suite implements a **multi-tenant, hierarchical RBAC** system that protects blockchain
+The Open Privacy Suite implements a **multi-tenant RBAC** system that protects blockchain
 node access. Organizations define fine-grained permissions for users accessing JSON-RPC methods and
 smart contracts.
 
 **Key features:**
 
-- **Multi-tenant** -- multiple independent organizations with isolated permission hierarchies
-- **Hierarchical groups** -- nested groups with restrictive inheritance (children can only narrow parent permissions)
+- **Multi-tenant** -- multiple independent organizations with isolated permission sets
+- **Flat groups, UNION across memberships** -- each user can belong to multiple groups; effective permissions are the UNION of every membership's grants. The legacy parent/child group hierarchy was removed in RD-804 (`b85039f feat: flat groups`); the resolver no longer walks `parent_id` even though the column persists on the schema for compatibility.
 - **Dual membership** -- users can be assigned via admin API or ZK-attested credentials
 - **Contract ownership** -- track deployed contracts and define owner capabilities
 - **Caching** -- in-memory and database-level caching for high-performance access checks
@@ -29,7 +29,7 @@ smart contracts.
 
 The RBAC system uses a **two-layer permission model**: a method allowlist controls which RPC methods a group can call, and operational claims (`deploy`, `upgrade`, `admin`) gate specific high-privilege operations.
 
-1. **Method allowlist is the source of truth for read/write** -- each group defines which RPC methods are permitted via `GroupAccess.allowed_methods`. If `eth_call` is not in the list, the user cannot call it. If `eth_sendTransaction` is not in the list, the user cannot send transactions.
+1. **Method allowlist is the source of truth for non-privileged access** -- each group defines which RPC methods are permitted via `GroupAccess.allowed_methods`. If `eth_call` is not in the list, the user cannot call it. If `eth_sendTransaction` is not in the list, the user cannot send transactions.
 
 2. **Operational claims gate privileged operations** -- only `deploy`, `upgrade`, and `admin` are claim-gated. Contract deployment requires the `deploy` claim. Proxy upgrades require the `upgrade` claim. The `admin` claim implies both.
 
@@ -126,10 +126,9 @@ Methods that don't require `admin`/`deploy`/`upgrade` are gated solely by the al
 ```mermaid
 graph TD
     Org["Organization<br/><small>e.g. gateway, acme_corp</small>"]
-    Group["Group (root)"]
+    Group["Group<br/><small>flat — no parent/child</small>"]
     GA["GroupAccess<br/><small>methods, claims, rpc_api_key</small>"]
     CG["ContractGrant<br/><small>links group → contract</small>"]
-    Child["Group (child)<br/><small>engineering — INTERSECTION inheritance</small>"]
     UM["UserMembership<br/><small>user + group + role</small>"]
     User["User<br/><small>external_id (DID)</small>"]
     Contract["Contract<br/><small>0x1234...</small>"]
@@ -138,16 +137,15 @@ graph TD
     Org --> Contract
     Group --> GA
     Group --> CG
-    Group --> Child
-    Child --> UM
-    UM --> User
+    User --> UM
+    UM --> Group
     CG -.-> Contract
 ```
 
 ### Key entities
 
 - **Organization** -- top-level tenant with a unique slug, display name, and custom settings (JSONB)
-- **Group** -- hierarchical permission container with parent/child relationships and a materialized path (e.g., `root.engineering.devops`)
+- **Group** -- permission container scoped to an organization. **Flat** since RD-804 — the `parent_id` and `path` columns persist on the schema but the resolver no longer walks them. Users get UNION of every group they're a member of.
 - **GroupAccess** -- defines allowed methods, claims, and an optional RPC API key for a group
 - **ContractGrant** -- links a group to a contract; optionally restricts callable functions via `FunctionRule` and parameter constraints via `ParamRule`
 - **UserMembership** -- assigns a user to a group with a role
@@ -173,31 +171,32 @@ RPC access and explorer visibility share the same grant model. If a user can cal
 
 ---
 
-## Group Hierarchy and Restrictive Inheritance
+## Group Membership and Permission Aggregation
 
-Child groups can only **narrow** parent permissions, never expand them.
+Groups are **flat** — a group's effective permissions are exactly its own `GroupAccess` + `ContractGrant` set. There is no parent/child walk, no path-based inheritance, no INTERSECTION across a chain. RD-804 (`b85039f`) removed the resolver's hierarchy traversal; the schema columns (`parent_id`, `path`, `depth`) are kept for back-compat but the runtime ignores them.
 
 ```mermaid
 graph TD
-    Root["Root Group<br/><small>eth_call, eth_sendTransaction, eth_getBalance</small>"]
-    Child["Child Group<br/><small>eth_call, eth_getBalance</small>"]
-    Grand["Grandchild<br/><small>eth_call</small>"]
+    User["User<br/><small>did:privado:...</small>"]
+    M1["Membership A"]
+    M2["Membership B"]
+    G1["Group: traders<br/><small>methods: [eth_call, eth_sendTransaction]<br/>claims: []</small>"]
+    G2["Group: deployers<br/><small>methods: [eth_call]<br/>claims: [deploy]</small>"]
+    Result["Effective permissions<br/><small>methods: [eth_call, eth_sendTransaction]<br/>claims: [deploy]<br/>contract grants: G1 ∪ G2</small>"]
 
-    Root --> Child --> Grand
+    User --> M1
+    User --> M2
+    M1 --> G1
+    M2 --> G2
+    G1 --> Result
+    G2 --> Result
 ```
-
-When computing effective permissions for a single membership:
-
-1. Traverse from root to leaf group
-2. Apply **INTERSECTION** for methods and contracts
-3. Apply **UNION** for owned contracts (ownership propagates down)
-
-### Multiple Memberships
 
 A user can belong to multiple groups. Across memberships:
 
-1. Compute permissions for each membership (restrictive inheritance within the chain)
-2. Apply **UNION** across all memberships (user gets combined permissions)
+1. Compute permissions for each membership directly from the group's `GroupAccess` and `ContractGrant` rows (no traversal — see `resolver.go:computeGroupPermissions`, comment `// (flat — no hierarchy walk)`).
+2. Apply **UNION** across all memberships — methods, claims, and contract grants are all combined. A user gets the **most permissive** combined view of every group they belong to.
+3. Rate limits across memberships: **MAXIMUM** is honored (the most generous limit applies).
 
 ---
 
@@ -227,7 +226,6 @@ Common ERC20 selectors:
 | `0x23b872dd` | `transferFrom(address,address,uint256)` |
 
 If `functions` is empty or null, all functions are allowed. Selectors are case-insensitive.
-Inheritance uses INTERSECTION (child restrictions narrow parent).
 
 ### Parameter Constraints
 

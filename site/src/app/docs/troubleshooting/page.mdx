@@ -180,14 +180,11 @@ If the refresh token is also expired, re-authenticate through the web UI.
 
 ### Claims hierarchy
 
-Remember that claims have implied permissions:
+Remember that the `admin` claim has implied permissions:
 
-- `admin` implies `read + write + deploy + upgrade`
-- `deploy` implies `read + write`
-- `upgrade` implies `read + write`
+- `admin` implies `deploy` and `upgrade`
 
-
-A user with `deploy` claim can already read and write -- no need to add those separately.
+The legacy `read` / `write` claims were removed in RD-853 — non-privileged method access is now gated solely by the per-group method allowlist (`GroupAccess.allowed_methods`). Don't try to add `read` or `write` as claims; the resolver no longer recognizes them.
 
 ### Blocked methods
 
