@@ -845,6 +845,92 @@ func (s *Store) GetLogsByTransaction(ctx context.Context, txHash string) ([]Log,
 	return s.scanLogs(rows)
 }
 
+// FindLogParticipantTxs implements explorer.LogParticipantStore for the
+// SQL-backed indexer store. Returns the subset of txHashes where any of
+// viewerAddrs appears in an indexed address topic of a log whose topic0
+// is in ParticipantEventSlots (Transfer / Approval / ApprovalForAll /
+// TransferSingle / TransferBatch / Deposit / Withdrawal).
+//
+// Inputs:
+//   - viewerAddrs: lowercase 0x-prefixed 20-byte hex (e.g.
+//     "0x15d34aaf54267db7d7c367839aaf71a00a2c6a65"). Empty slice → return
+//     empty map (no work to do).
+//   - txHashes: lowercase 0x-prefixed tx hashes. Empty slice → empty map.
+//
+// Implementation notes:
+//   - The viewer addresses are left-padded to 32-byte topic form before
+//     matching against topic1/topic2/topic3 columns (those are stored as
+//     0x-prefixed 32-byte hex by the indexer).
+//   - Only ParticipantEventSlots topic0 values trigger a match — broader
+//     filters would over-reveal (e.g. operator addresses in events the
+//     viewer wasn't actually a counterparty for). See the
+//     ParticipantEventSlots docstring for why this list is intentional.
+//   - For each accepted event, only the slots declared in
+//     ParticipantEventSlots are checked. ApprovalForAll's bool is in
+//     topic3 (some implementations) but we don't accept it as a
+//     participant slot — only the address slots count.
+//   - Uses one query with ANY(...) on tx_hash and topic0 to keep the
+//     batch round-tripped efficiently; the per-slot OR ladder runs over
+//     the smaller match window after the topic0 / tx_hash filter.
+func (s *Store) FindLogParticipantTxs(ctx context.Context, viewerAddrs []string, txHashes []string) (map[string]bool, error) {
+	out := make(map[string]bool)
+	if len(viewerAddrs) == 0 || len(txHashes) == 0 {
+		return out, nil
+	}
+
+	// Normalise inputs. The store contract is "lowercase 0x-prefixed"; we
+	// defensively normalise once so callers can't poison the map with
+	// mixed-case duplicates (and so addrToTopic below doesn't have to
+	// repeat the same trim/lower per row).
+	normHashes := make([]string, 0, len(txHashes))
+	for _, h := range txHashes {
+		normHashes = append(normHashes, strings.ToLower(strings.TrimSpace(h)))
+	}
+	paddedTopics := make([]string, 0, len(viewerAddrs))
+	for _, a := range viewerAddrs {
+		// Left-pad 20-byte address to 32-byte topic: 12 zero bytes (24
+		// hex chars) + the 40-char address body.
+		addr := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(a)), "0x")
+		if len(addr) != 40 {
+			continue // Skip malformed inputs rather than poison the query.
+		}
+		paddedTopics = append(paddedTopics, "0x000000000000000000000000"+addr)
+	}
+	if len(paddedTopics) == 0 {
+		return out, nil
+	}
+
+	// Collect accepted topic0s from the canonical map.
+	accepted := make([]string, 0, len(ParticipantEventSlots))
+	for sig := range ParticipantEventSlots {
+		accepted = append(accepted, sig)
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT DISTINCT tx_hash
+		FROM logs
+		WHERE tx_hash = ANY($1)
+		  AND topic0   = ANY($2)
+		  AND (topic1 = ANY($3) OR topic2 = ANY($3) OR topic3 = ANY($3))`,
+		pq.Array(normHashes), pq.Array(accepted), pq.Array(paddedTopics))
+	if err != nil {
+		return nil, fmt.Errorf("FindLogParticipantTxs: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err != nil {
+			return nil, fmt.Errorf("FindLogParticipantTxs scan: %w", err)
+		}
+		out[strings.ToLower(h)] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("FindLogParticipantTxs rows.Err: %w", err)
+	}
+	return out, nil
+}
+
 // GetTransfersByAddress returns token transfers involving a specific address.
 func (s *Store) GetTransfersByAddress(ctx context.Context, address string, limit int, beforeBlock *uint64) ([]TokenTransfer, error) {
 	address = strings.ToLower(address)

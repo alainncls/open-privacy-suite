@@ -63,6 +63,13 @@ type ExplorerBackend interface {
 	GetLogsByTransaction(ctx context.Context, txHash string) ([]Log, error)
 	GetLogsByAddress(ctx context.Context, address string, limit int, offset int) ([]Log, int64, error)
 	GetLogs(ctx context.Context, address *string, topic0 *string, fromBlock *uint64, toBlock *uint64, limit int) ([]Log, error)
+	// FindLogParticipantTxs implements LogParticipantStore for the
+	// explorer backend. Returns the subset of txHashes where any of
+	// viewerAddrs appears as an indexed address topic on a log emitted
+	// by that tx, restricted to the canonical ParticipantEventSlots
+	// signature list. See LogParticipantStore docstring (redactor.go)
+	// for the rationale and accepted event list.
+	FindLogParticipantTxs(ctx context.Context, viewerAddrs []string, txHashes []string) (map[string]bool, error)
 
 	// Internal transactions
 	GetInternalTransactionsByTx(ctx context.Context, txHash string) ([]InternalTransaction, error)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"reflect"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
@@ -165,6 +166,66 @@ type DynamicPayloadAllowedResolver interface {
 	Resolve(ctx context.Context, addresses []string) map[string]bool
 }
 
+// ParticipantEventSlots is the canonical map of "events that name participants
+// by indexed address topics" → which 1-based topic slots are address-typed.
+// Used by LogParticipantResolver implementations and by RedactTransactions
+// to recognise a viewer as a tx participant via event-log evidence (RD-939).
+//
+// Why an explicit list rather than "any indexed address in any event":
+// over-broad inference (e.g. accepting a third-party operator address as a
+// participant signal for everyone in that log) would cause false-positive
+// reveals — the inverse of the bug we're fixing here. The signatures below
+// are the ERC-standard events whose slot semantics are unambiguously
+// "from / to / operator / owner / spender" (i.e. a counterparty), so the
+// viewer-on-topic test is sound by construction.
+//
+// Topic0 hashes (keccak256 of the canonical signature):
+//
+//	Transfer(address,address,uint256)
+//	   0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef
+//	Approval(address,address,uint256)
+//	   0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925
+//	ApprovalForAll(address,address,bool)
+//	   0x17307eab39ab6107e8899845ad3d59bd9653f200f220920489ca2b5937696c31
+//	TransferSingle(address,address,address,uint256,uint256)
+//	   0xc3d58168c5ae7397731d063d5bbf3d657854427343f4c083240f7aacaa2d0f62
+//	TransferBatch(address,address,address,uint256[],uint256[])
+//	   0x4a39dc06d4c0dbc64b70af90fd698a233a518aa5d07e595d983b8c0526c8f7fb
+//	Deposit(address,uint256)      (WETH)
+//	   0xe1fffcc4923d04b559f4d29a8bfc6cda04eb5b0d3c460751c2402c5c5cc9109c
+//	Withdrawal(address,uint256)   (WETH)
+//	   0x7fcf532c15f0a6db0bd6d0e038bea71d30d808c7d98cb3bf7268a95bf5081b65
+var ParticipantEventSlots = map[string][]int{
+	"0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef": {1, 2},    // Transfer
+	"0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925": {1, 2},    // Approval
+	"0x17307eab39ab6107e8899845ad3d59bd9653f200f220920489ca2b5937696c31": {1, 2},    // ApprovalForAll
+	"0xc3d58168c5ae7397731d063d5bbf3d657854427343f4c083240f7aacaa2d0f62": {1, 2, 3}, // TransferSingle
+	"0x4a39dc06d4c0dbc64b70af90fd698a233a518aa5d07e595d983b8c0526c8f7fb": {1, 2, 3}, // TransferBatch
+	"0xe1fffcc4923d04b559f4d29a8bfc6cda04eb5b0d3c460751c2402c5c5cc9109c": {1},       // Deposit (WETH)
+	"0x7fcf532c15f0a6db0bd6d0e038bea71d30d808c7d98cb3bf7268a95bf5081b65": {1},       // Withdrawal (WETH)
+}
+
+// LogParticipantStore returns the subset of tx hashes where the viewer is
+// a participant via event-log evidence. A viewer counts as a log
+// participant when one of their linked ETH addresses appears in any of the
+// address-typed indexed topic slots of an accepted ParticipantEventSlots
+// signature on a log emitted by that tx.
+//
+// This is the participant signal that catches token mints to the viewer,
+// approvals granted to/by the viewer, ERC-1155 batch transfers, and
+// WETH-style wrappers — none of which surface in tx.from / tx.to and most
+// of which are missed by the (legacy, hardcoded) calldata heuristic when
+// the contract uses a non-standard function selector. See RD-939 for the
+// origin bug (custom mint(address,…,…) calldata + Transfer event log,
+// viewer was dropped).
+//
+// Implementations MUST filter on ParticipantEventSlots only — accepting any
+// indexed address in any event would falsely flag uninvolved bystanders
+// (operator-of-someone-else's-transfer). Returns lowercase tx hashes.
+type LogParticipantStore interface {
+	FindLogParticipantTxs(ctx context.Context, viewerAddrs []string, txHashes []string) (map[string]bool, error)
+}
+
 // RedactionEngine handles the bulk redaction of explorer data based on user grants
 type RedactionEngine struct {
 	store                         ContractStore
@@ -174,6 +235,7 @@ type RedactionEngine struct {
 	adminContractsResolver        AdminContractsResolver
 	visibleToUnlockResolver       VisibleToUnlockResolver
 	dynamicPayloadAllowedResolver DynamicPayloadAllowedResolver
+	logParticipantStore           LogParticipantStore
 }
 
 // Database interface for the methods RedactionEngine needs from the main DB
@@ -260,6 +322,19 @@ func (r *RedactionEngine) SetDynamicPayloadAllowedResolver(resolver DynamicPaylo
 // keeping legacy tests passing. Production server startup MUST wire it.
 func (r *RedactionEngine) SetABIResolver(resolver ABIResolver) {
 	r.abiResolver = resolver
+}
+
+// SetLogParticipantStore wires the log-based participant detector (RD-939
+// Stage A). Without this resolver the redactor falls back to tx.from /
+// tx.to and the legacy hardcoded calldata heuristic, which misses
+// participants reached only via event-log topics (the original Dave bug:
+// custom-selector mint with viewer in Transfer's `to` topic).
+//
+// Production server startup MUST wire it; tests that don't care can leave
+// it unset (RedactTransactions degrades gracefully — no log signal, but
+// the other paths still fire).
+func (r *RedactionEngine) SetLogParticipantStore(store LogParticipantStore) {
+	r.logParticipantStore = store
 }
 
 // resolveContractABI returns the resolved ABI JSON for an address, or
@@ -369,6 +444,121 @@ func isViewerInCalldata(inputData string, viewerAddrs map[string]bool) bool {
 	return false
 }
 
+// isViewerInCalldataABI is the RD-939 Stage B successor to the hardcoded
+// `isViewerInCalldata` selector switch. It decodes the calldata against
+// the called contract's registered ABI (resolved via abiResolver — the
+// same path EventRuleChecker uses) and returns true when any decoded
+// address-typed argument matches one of the viewer's linked addresses.
+//
+// Posture:
+//   - Requires both abiResolver wired AND an ABI resolvable for tx.To.
+//     When ABI is absent we return false rather than guess — same
+//     fail-closed stance as RD-889 for log decoding. The log-based
+//     participant signal (Stage A) covers most missing-ABI cases.
+//   - Walks composite arg types (slice / array / single struct embed)
+//     down to single addresses. Catches multi-recipient batch calls
+//     where one of the recipients is the viewer.
+//   - Returns false on any parse error rather than panicking — calldata
+//     can be malformed or use a different ABI than the registered one
+//     (e.g. proxy patterns); we never want a decoder error to redact
+//     incorrectly.
+//
+// Why a method on RedactionEngine rather than a free function: it needs
+// access to r.abiResolver, which is configured per engine. The legacy
+// free `isViewerInCalldata` stays free because it's a fixed heuristic.
+func (r *RedactionEngine) isViewerInCalldataABI(ctx context.Context, tx Transaction, viewerAddrs map[string]bool) bool {
+	if r.abiResolver == nil || len(viewerAddrs) == 0 {
+		return false
+	}
+	if !tx.HasRecipient() {
+		return false // CREATE — no callee, no ABI to resolve.
+	}
+	abiJSON := r.abiResolver.Resolve(ctx, strings.ToLower(*tx.To))
+	if abiJSON == "" {
+		return false
+	}
+	parsedABI, err := abi.JSON(strings.NewReader(abiJSON))
+	if err != nil {
+		return false
+	}
+	data := strings.TrimPrefix(strings.ToLower(tx.InputData), "0x")
+	if len(data) < 8 {
+		return false
+	}
+	raw, err := hex.DecodeString(data)
+	if err != nil {
+		return false
+	}
+	method, err := parsedABI.MethodById(raw[:4])
+	if err != nil {
+		return false // Selector unknown to ABI (proxy/upgrade mismatch) — fail-closed.
+	}
+	args, err := method.Inputs.Unpack(raw[4:])
+	if err != nil {
+		return false
+	}
+	for _, arg := range args {
+		if anyAddressMatches(arg, viewerAddrs) {
+			return true
+		}
+	}
+	return false
+}
+
+// anyAddressMatches recursively walks an unpacked ABI value looking for
+// any common.Address that matches an entry in viewerAddrs (keys are
+// lowercase hex, with 0x prefix). Handles single addresses, []address,
+// and arbitrary nesting of slices/arrays. Other concrete types (uint,
+// bool, string, bytes) are ignored — only address-typed slots count.
+//
+// Struct fields are not walked because go-ethereum's ABI decoder
+// surfaces struct args as map[string]any only for events with named
+// non-indexed fields, not for function inputs. Function struct inputs
+// come back as anonymous structs at the type level but the reflect
+// path below covers them too.
+func anyAddressMatches(v any, viewerAddrs map[string]bool) bool {
+	switch x := v.(type) {
+	case common.Address:
+		return viewerAddrs[strings.ToLower(x.Hex())]
+	case []common.Address:
+		for _, a := range x {
+			if viewerAddrs[strings.ToLower(a.Hex())] {
+				return true
+			}
+		}
+		return false
+	case []any:
+		for _, e := range x {
+			if anyAddressMatches(e, viewerAddrs) {
+				return true
+			}
+		}
+		return false
+	}
+	// Fallback via reflect: covers fixed arrays ([N]common.Address) and
+	// struct-typed inputs. We walk every exported field / element and
+	// recurse.
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Array, reflect.Slice:
+		for i := 0; i < rv.Len(); i++ {
+			if anyAddressMatches(rv.Index(i).Interface(), viewerAddrs) {
+				return true
+			}
+		}
+	case reflect.Struct:
+		for i := 0; i < rv.NumField(); i++ {
+			if !rv.Field(i).CanInterface() {
+				continue
+			}
+			if anyAddressMatches(rv.Field(i).Interface(), viewerAddrs) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // RedactOpts provides optional overrides for transaction redaction.
 type RedactOpts struct {
 	// VisibleTxHashes is the set of tx hashes that are always visible to
@@ -424,17 +614,56 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 		}
 	}
 
+	// 2c. (RD-939 Stage A) Resolve log-based participant signals for this
+	// batch in a single store call. A viewer is a log participant in a tx
+	// when one of their linked addresses appears in an indexed address
+	// topic of any ParticipantEventSlots event emitted by that tx — the
+	// only signal that catches custom-selector mints to the viewer,
+	// approvals, ERC-1155 transfers, WETH wrappers, etc. (See
+	// LogParticipantStore docstring for the closed list and rationale.)
+	//
+	// Degrades gracefully: if the store isn't wired (legacy tests), if the
+	// viewer has no linked addresses, or if the query errors out, we just
+	// skip the log signal — tx.from/to and the legacy calldata heuristic
+	// still apply.
+	logParticipantTxs := make(map[string]bool)
+	if r.logParticipantStore != nil && len(viewerAddrs) > 0 && len(txs) > 0 {
+		addrSlice := make([]string, 0, len(viewerAddrs))
+		for a := range viewerAddrs {
+			addrSlice = append(addrSlice, a)
+		}
+		hashes := make([]string, 0, len(txs))
+		for i := range txs {
+			hashes = append(hashes, strings.ToLower(txs[i].Hash))
+		}
+		if found, err := r.logParticipantStore.FindLogParticipantTxs(ctx, addrSlice, hashes); err == nil {
+			logParticipantTxs = found
+		}
+	}
+
 	// 3. Apply redactions
 	var redactedTxs []Transaction
 	for _, tx := range txs {
 		// Determine whether the viewer is a participant in this transaction.
-		// Check tx-level from/to AND calldata-level recipients (e.g. ERC20
-		// transfer(address,uint256) encodes the real recipient in calldata,
-		// while tx.To is just the contract address).
+		// Four orthogonal signals; any one is sufficient.
+		//   1. tx-level from / to (the basic case).
+		//   2. Legacy hardcoded ERC-20/721/1155 calldata recipient
+		//      (isViewerInCalldata) — kept as cheap fast-path for
+		//      contracts without a registered ABI.
+		//   3. (RD-939 Stage B) ABI-decoded calldata: when the called
+		//      contract has a resolvable ABI, decode and check every
+		//      address-typed input arg. Catches custom selectors
+		//      (the original RD-939 mint(address,…) reproducer).
+		//   4. (RD-939 Stage A) Event-log topic appearance: viewer in
+		//      any indexed address slot of an accepted event signature.
+		//      Authoritative — the EVM emitted it.
 		viewerIsFrom := tx.From != "" && viewerAddrs[strings.ToLower(tx.From)]
 		viewerIsTo := tx.HasRecipient() && viewerAddrs[strings.ToLower(*tx.To)]
-		viewerIsCalldataRecipient := isViewerInCalldata(tx.InputData, viewerAddrs)
-		viewerIsParticipant := viewerIsFrom || viewerIsTo || viewerIsCalldataRecipient
+		viewerIsCalldataLegacy := isViewerInCalldata(tx.InputData, viewerAddrs)
+		viewerIsCalldataABI := r.isViewerInCalldataABI(ctx, tx, viewerAddrs)
+		viewerIsLogParticipant := logParticipantTxs[strings.ToLower(tx.Hash)]
+		viewerIsParticipant := viewerIsFrom || viewerIsTo ||
+			viewerIsCalldataLegacy || viewerIsCalldataABI || viewerIsLogParticipant
 
 		// Resolve base visibility from the shared map.
 		baseFromLevel := VisibilityFull
