@@ -276,6 +276,44 @@ based on the **target contract**:
 
 ---
 
+## Granting access (admin UI walkthrough)
+
+The admin dashboard's "Add Group Access" form is the canonical way to attach a group to a contract. The form is a **two-step wizard** (split out in the contract-grant refactor) — step 1 is "who can access and which functions"; step 2 is "which events are visible to that group".
+
+### Step 1 — Group + functions
+
+- **Select Group**: the dropdown lists every group in the org that does not already have a grant on this contract. Groups already granted are filtered out; to edit an existing grant, use the pencil icon on that grant card instead.
+- **Selected group's permissions panel**: shows the chosen group's `allowed_methods` + claims for context. If a group lacks the `deploy` claim, the `deploy` checkbox is shown in step 2 as opt-in but the form warns that this won't take effect unless the group's `GroupAccess` also includes `deploy` (mismatch is rejected server-side with a 400).
+- **Function mode** — radio:
+  - *All functions allowed* (default) — `functions = null` server-side; the group can call every method the contract exposes (subject to the allowlist).
+  - *Specific functions only* — opens a function picker (uses the contract's ABI if registered); selected functions become `FunctionRule[]`. Each rule can pin address-typed params (`must_be: self`, `must_be: <hex>`) via the param-constraint UI.
+- **Claims checkboxes** (RD-872 follow-up) — `deploy` and `upgrade` are now exposed as explicit per-grant checkboxes. They take effect only on this contract for this group; granting `deploy` on a single contract does NOT widen the group's overall deploy claim.
+- **"Next" button** — enabled once a group is selected and (if "specific functions" is chosen) at least one function is added. Advances to step 2.
+
+### Step 2 — Events
+
+- **Event mode** — radio:
+  - *No events visible* (default for new grants) — `event_rules = []` server-side; no event logs are visible to this group.
+  - *All events visible* — `event_rules = "*"` (the wildcard sentinel); every event the contract emits is visible (subject to redaction).
+  - *Specific events only* — opens an event picker populated from the contract's ABI. Each selected event becomes an `EventRule` with an optional `param_rules[]` array constraining address-typed indexed parameters.
+- **Contract without an ABI**: the picker is replaced by a warning that no ABI is registered. The grant can still be saved at "No events visible" or "All events visible", but "Specific events only" is rejected — the proxy cannot decode events without an ABI, so admins are forced to either upload an ABI or set the contract's `metadata.token_type` to a built-in registry value (`"ERC20"` or `"ERC721"`) before specific event rules become saveable.
+- **Save** — labelled "Create Grant" for new grants and "Save Changes" when editing. The button is disabled until the form's validation state is clean.
+
+### Editing an existing grant
+
+Each grant card on a contract's permissions dialog has two pencil icons:
+
+- **Edit function access** — opens the form in `editMode='functions'` with only step 1 content. Group is fixed; functions can be edited; events are preserved unchanged.
+- **Edit event visibility** — opens the form in `editMode='events'` with only step 2 content. Group + functions are preserved; events can be edited.
+
+This split lets reviewers update one axis without the wizard's "are you sure you didn't change anything else?" surface. The full two-step wizard is reachable only via "Add Group Access".
+
+<Callout variant="info" title="Default group is system-protected (RD-877)">
+  The default group on each org is marked `is_system = true`. Its `GroupAccess` row exists at org-create time and represents the baseline permissions for new users. Mutations to the default group's name/description/admin-flag are blocked at the API layer (`409 Conflict` with a "system group" message); only the `GroupAccess` surface (allowed methods, claims, `rpc_api_key`) can be edited, and only by a super-admin or the org's tier-2 admin.
+</Callout>
+
+---
+
 ## Rate Limiting
 
 Rate limiting is handled at the **RPC proxy API key level**, not per-group. Each group can have an

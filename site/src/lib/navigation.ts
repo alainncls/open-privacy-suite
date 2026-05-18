@@ -49,7 +49,9 @@ export const navigation: NavGroup[] = [
   {
     title: "Operations",
     items: [
+      { title: "Operator Deployment", href: "/docs/operator-deployment" },
       { title: "Contract Deployment", href: "/docs/deployment" },
+      { title: "Audit Log Integrity", href: "/docs/security/audit-integrity" },
       { title: "Scaling", href: "/docs/scaling" },
       { title: "Testing", href: "/docs/testing" },
       { title: "Troubleshooting", href: "/docs/troubleshooting" },
