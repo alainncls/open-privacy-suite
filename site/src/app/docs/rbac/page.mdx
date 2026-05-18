@@ -3,21 +3,21 @@ import { ApiEndpoint } from "@/components/mdx/api-endpoint";
 export const metadata = {
   title: "RBAC",
   description:
-    "Multi-tenant hierarchical role-based access control for blockchain node access.",
+    "Multi-tenant role-based access control for blockchain node access.",
 };
 
 # Role-Based Access Control (RBAC)
 
 ## Overview
 
-The Open Privacy Suite implements a **multi-tenant, hierarchical RBAC** system that protects blockchain
+The Open Privacy Suite implements a **multi-tenant RBAC** system that protects blockchain
 node access. Organizations define fine-grained permissions for users accessing JSON-RPC methods and
 smart contracts.
 
 **Key features:**
 
-- **Multi-tenant** -- multiple independent organizations with isolated permission hierarchies
-- **Hierarchical groups** -- nested groups with restrictive inheritance (children can only narrow parent permissions)
+- **Multi-tenant** -- multiple independent organizations with isolated permission sets
+- **Flat groups, UNION across memberships** -- each user can belong to multiple groups; effective permissions are the UNION of every membership's grants. The legacy parent/child group hierarchy was removed in RD-804 (`b85039f feat: flat groups`); the resolver no longer walks `parent_id` even though the column persists on the schema for compatibility.
 - **Dual membership** -- users can be assigned via admin API or ZK-attested credentials
 - **Contract ownership** -- track deployed contracts and define owner capabilities
 - **Caching** -- in-memory and database-level caching for high-performance access checks
@@ -29,7 +29,7 @@ smart contracts.
 
 The RBAC system uses a **two-layer permission model**: a method allowlist controls which RPC methods a group can call, and operational claims (`deploy`, `upgrade`, `admin`) gate specific high-privilege operations.
 
-1. **Method allowlist is the source of truth for read/write** -- each group defines which RPC methods are permitted via `GroupAccess.allowed_methods`. If `eth_call` is not in the list, the user cannot call it. If `eth_sendTransaction` is not in the list, the user cannot send transactions.
+1. **Method allowlist is the source of truth for non-privileged access** -- each group defines which RPC methods are permitted via `GroupAccess.allowed_methods`. If `eth_call` is not in the list, the user cannot call it. If `eth_sendTransaction` is not in the list, the user cannot send transactions.
 
 2. **Operational claims gate privileged operations** -- only `deploy`, `upgrade`, and `admin` are claim-gated. Contract deployment requires the `deploy` claim. Proxy upgrades require the `upgrade` claim. The `admin` claim implies both.
 
@@ -96,20 +96,12 @@ graph TD
     admin["admin"]
     deploy["deploy"]
     upgrade["upgrade"]
-    read["read"]
-    write["write"]
 
     admin --> deploy
     admin --> upgrade
-    admin --> read
-    admin --> write
-    deploy --> read
-    deploy --> write
-    upgrade --> read
-    upgrade --> write
 ```
 
-`ExpandClaims()` normalizes implied claims before saving on the backend.
+`ExpandClaims()` normalizes implied claims before saving on the backend. Only three claims gate behavior today; the legacy `read` and `write` claims were removed in RD-853 — non-privileged method access is now the exclusive job of the per-group method allowlist.
 
 | Claim | Purpose | Required For |
 |-------|---------|--------------|
@@ -117,13 +109,13 @@ graph TD
 | `admin` | Full administrative access | All operations including deployment; implies `deploy` + `upgrade` |
 | `upgrade` | Upgrade proxy contracts | `upgradeTo()`, `upgradeToAndCall()` on proxy contracts |
 
-Read and write access is controlled entirely by the method allowlist. If `eth_call` is in a group's allowed methods, members can read contract data. If `eth_sendTransaction` is in the list, members can send transactions. No additional claim is needed.
+Non-privileged method access (reads + non-mutating calls + ordinary writes) is controlled entirely by the method allowlist. If `eth_call` is in a group's allowed methods, members can read contract data. If `eth_sendTransaction` is in the list, members can send transactions. No additional claim is needed.
 
 <Callout variant="info" title="Method-claim validation">
 
 The system enforces consistency between allowed methods and claims. For example, allowing
 `debug_traceTransaction` without the `deploy` claim returns a 400 Bad Request error.
-Read/write methods do not require claims.
+Methods that don't require `admin`/`deploy`/`upgrade` are gated solely by the allowlist.
 
 </Callout>
 
@@ -134,10 +126,9 @@ Read/write methods do not require claims.
 ```mermaid
 graph TD
     Org["Organization<br/><small>e.g. gateway, acme_corp</small>"]
-    Group["Group (root)"]
+    Group["Group<br/><small>flat — no parent/child</small>"]
     GA["GroupAccess<br/><small>methods, claims, rpc_api_key</small>"]
     CG["ContractGrant<br/><small>links group → contract</small>"]
-    Child["Group (child)<br/><small>engineering — INTERSECTION inheritance</small>"]
     UM["UserMembership<br/><small>user + group + role</small>"]
     User["User<br/><small>external_id (DID)</small>"]
     Contract["Contract<br/><small>0x1234...</small>"]
@@ -146,16 +137,15 @@ graph TD
     Org --> Contract
     Group --> GA
     Group --> CG
-    Group --> Child
-    Child --> UM
-    UM --> User
+    User --> UM
+    UM --> Group
     CG -.-> Contract
 ```
 
 ### Key entities
 
 - **Organization** -- top-level tenant with a unique slug, display name, and custom settings (JSONB)
-- **Group** -- hierarchical permission container with parent/child relationships and a materialized path (e.g., `root.engineering.devops`)
+- **Group** -- permission container scoped to an organization. **Flat** since RD-804 — the `parent_id` and `path` columns persist on the schema but the resolver no longer walks them. Users get UNION of every group they're a member of.
 - **GroupAccess** -- defines allowed methods, claims, and an optional RPC API key for a group
 - **ContractGrant** -- links a group to a contract; optionally restricts callable functions via `FunctionRule` and parameter constraints via `ParamRule`
 - **UserMembership** -- assigns a user to a group with a role
@@ -167,7 +157,7 @@ graph TD
 
 <Callout variant="info" title="How permissions are computed">
 
-1. **Group has methods + claims** via GroupAccess: `{ methods: [...], claims: [deploy] }`. The method list controls read/write; claims gate deployment and upgrades.
+1. **Group has methods + claims** via GroupAccess: `{ methods: [...], claims: [deploy] }`. The method list is the sole gate for non-privileged methods; the `admin`, `deploy`, and `upgrade` claims gate the corresponding privileged operations.
 2. **Unregistered contracts**: denied (private by default). Only EVM precompiles (0x01-0x09) are accessible. All other contracts must be registered to an org.
 3. **Registered contracts**: require a `ContractGrant` on the user's group. The `admin` and `deploy` claims alone do **not** unlock registered contracts — tier 3 admins get RBAC bypass only on contracts explicitly granted to their group (per the 3-tier admin model). Functions can be restricted via `FunctionRule`. Parameters can be constrained via `ParamRule`.
 4. **Deployer contract grant**: when a user deploys a contract, a `contract_grant` is added to their existing deploy group. The admin must pre-create a group with the `deploy` claim and add deployers to it.
@@ -181,31 +171,32 @@ RPC access and explorer visibility share the same grant model. If a user can cal
 
 ---
 
-## Group Hierarchy and Restrictive Inheritance
+## Group Membership and Permission Aggregation
 
-Child groups can only **narrow** parent permissions, never expand them.
+Groups are **flat** — a group's effective permissions are exactly its own `GroupAccess` + `ContractGrant` set. There is no parent/child walk, no path-based inheritance, no INTERSECTION across a chain. RD-804 (`b85039f`) removed the resolver's hierarchy traversal; the schema columns (`parent_id`, `path`, `depth`) are kept for back-compat but the runtime ignores them.
 
 ```mermaid
 graph TD
-    Root["Root Group<br/><small>eth_call, eth_sendTransaction, eth_getBalance</small>"]
-    Child["Child Group<br/><small>eth_call, eth_getBalance</small>"]
-    Grand["Grandchild<br/><small>eth_call</small>"]
+    User["User<br/><small>did:privado:...</small>"]
+    M1["Membership A"]
+    M2["Membership B"]
+    G1["Group: traders<br/><small>methods: [eth_call, eth_sendTransaction]<br/>claims: []</small>"]
+    G2["Group: deployers<br/><small>methods: [eth_call]<br/>claims: [deploy]</small>"]
+    Result["Effective permissions<br/><small>methods: [eth_call, eth_sendTransaction]<br/>claims: [deploy]<br/>contract grants: G1 ∪ G2</small>"]
 
-    Root --> Child --> Grand
+    User --> M1
+    User --> M2
+    M1 --> G1
+    M2 --> G2
+    G1 --> Result
+    G2 --> Result
 ```
-
-When computing effective permissions for a single membership:
-
-1. Traverse from root to leaf group
-2. Apply **INTERSECTION** for methods and contracts
-3. Apply **UNION** for owned contracts (ownership propagates down)
-
-### Multiple Memberships
 
 A user can belong to multiple groups. Across memberships:
 
-1. Compute permissions for each membership (restrictive inheritance within the chain)
-2. Apply **UNION** across all memberships (user gets combined permissions)
+1. Compute permissions for each membership directly from the group's `GroupAccess` and `ContractGrant` rows (no traversal — see `resolver.go:computeGroupPermissions`, comment `// (flat — no hierarchy walk)`).
+2. Apply **UNION** across all memberships — methods, claims, and contract grants are all combined. A user gets the **most permissive** combined view of every group they belong to.
+3. Rate limits across memberships: **MAXIMUM** is honored (the most generous limit applies).
 
 ---
 
@@ -235,7 +226,6 @@ Common ERC20 selectors:
 | `0x23b872dd` | `transferFrom(address,address,uint256)` |
 
 If `functions` is empty or null, all functions are allowed. Selectors are case-insensitive.
-Inheritance uses INTERSECTION (child restrictions narrow parent).
 
 ### Parameter Constraints
 
@@ -281,6 +271,44 @@ based on the **target contract**:
 | No target (deployment) | User's default org | Use default org memberships |
 
 **Note on "unregistered" contracts:** Contracts deployed through the proxy are **never unregistered** — they are pre-registered to the deployer's org before the transaction is forwarded to the node, closing any race window. All unregistered addresses are private by default. If a contract exists on-chain but was not deployed through the proxy (e.g., system/genesis contracts), it must be claimed via the admin API (`POST /orgs/:org_id/contracts/claim`) to become accessible.
+
+---
+
+## Granting access (admin UI walkthrough)
+
+The admin dashboard's "Add Group Access" form is the canonical way to attach a group to a contract. The form is a **two-step wizard** (split out in the contract-grant refactor) — step 1 is "who can access and which functions"; step 2 is "which events are visible to that group".
+
+### Step 1 — Group + functions
+
+- **Select Group**: the dropdown lists every group in the org that does not already have a grant on this contract. Groups already granted are filtered out; to edit an existing grant, use the pencil icon on that grant card instead.
+- **Selected group's permissions panel**: shows the chosen group's `allowed_methods` + claims for context. If a group lacks the `deploy` claim, the `deploy` checkbox is shown in step 2 as opt-in but the form warns that this won't take effect unless the group's `GroupAccess` also includes `deploy` (mismatch is rejected server-side with a 400).
+- **Function mode** — radio:
+  - *All functions allowed* (default) — `functions = null` server-side; the group can call every method the contract exposes (subject to the allowlist).
+  - *Specific functions only* — opens a function picker (uses the contract's ABI if registered); selected functions become `FunctionRule[]`. Each rule can pin address-typed params (`must_be: self`, `must_be: <hex>`) via the param-constraint UI.
+- **Claims checkboxes** (RD-872 follow-up) — `deploy` and `upgrade` are now exposed as explicit per-grant checkboxes. They take effect only on this contract for this group; granting `deploy` on a single contract does NOT widen the group's overall deploy claim.
+- **"Next" button** — enabled once a group is selected and (if "specific functions" is chosen) at least one function is added. Advances to step 2.
+
+### Step 2 — Events
+
+- **Event mode** — radio:
+  - *No events visible* (default for new grants) — `event_rules = []` server-side; no event logs are visible to this group.
+  - *All events visible* — `event_rules = "*"` (the wildcard sentinel); every event the contract emits is visible (subject to redaction).
+  - *Specific events only* — opens an event picker populated from the contract's ABI. Each selected event becomes an `EventRule` with an optional `param_rules[]` array constraining address-typed indexed parameters.
+- **Contract without an ABI**: the picker is replaced by a warning that no ABI is registered. The grant can still be saved at "No events visible" or "All events visible", but "Specific events only" is rejected — the proxy cannot decode events without an ABI, so admins are forced to either upload an ABI or set the contract's `metadata.token_type` to a built-in registry value (`"ERC20"` or `"ERC721"`) before specific event rules become saveable.
+- **Save** — labelled "Create Grant" for new grants and "Save Changes" when editing. The button is disabled until the form's validation state is clean.
+
+### Editing an existing grant
+
+Each grant card on a contract's permissions dialog has two pencil icons:
+
+- **Edit function access** — opens the form in `editMode='functions'` with only step 1 content. Group is fixed; functions can be edited; events are preserved unchanged.
+- **Edit event visibility** — opens the form in `editMode='events'` with only step 2 content. Group + functions are preserved; events can be edited.
+
+This split lets reviewers update one axis without the wizard's "are you sure you didn't change anything else?" surface. The full two-step wizard is reachable only via "Add Group Access".
+
+<Callout variant="info" title="Default group is system-protected (RD-877)">
+  The default group on each org is marked `is_system = true`. Its `GroupAccess` row exists at org-create time and represents the baseline permissions for new users. Mutations to the default group's name/description/admin-flag are blocked at the API layer (`409 Conflict` with a "system group" message); only the `GroupAccess` surface (allowed methods, claims, `rpc_api_key`) can be edited, and only by a super-admin or the org's tier-2 admin.
+</Callout>
 
 ---
 
@@ -385,20 +413,20 @@ POST /api/orgs/:org_id/dry-run
 {
   "decision": "allow" | "deny",
   "reason":   "...",
-  "response": <redacted-as-user response, for read methods>,
-  "trace":    <debug_traceCall output, for write methods>,
+  "response": <redacted-as-user response, for non-mutating methods>,
+  "trace":    <debug_traceCall output, for mutating methods>,
   "logs_emitted":          [...],
   "logs_visible_to_user":  [...]
 }
 ```
 
-Read methods (`eth_call`, `eth_getLogs`, `eth_getTransactionReceipt`, `eth_getTransactionByHash`, `eth_getBalance`, `eth_getCode`, `eth_getStorageAt`, `eth_blockNumber`, `eth_chainId`) pass through to the upstream node and return the user's would-be response.
+Non-mutating methods (`eth_call`, `eth_getLogs`, `eth_getTransactionReceipt`, `eth_getTransactionByHash`, `eth_getBalance`, `eth_getCode`, `eth_getStorageAt`, `eth_blockNumber`, `eth_chainId`) pass through to the upstream node and return the user's would-be response.
 
-Write methods (`eth_sendTransaction`) are translated to `debug_traceCall` against the upstream node — current state, no commit. The trace returns nested call frames + emitted logs; the proxy walks the frames and runs the logs through the impersonated user's RBAC view, returning both the full event list (`logs_emitted`) and the subset the user would actually see (`logs_visible_to_user`).
+Mutating methods (`eth_sendTransaction`) are translated to `debug_traceCall` against the upstream node — current state, no commit. The trace returns nested call frames + emitted logs; the proxy walks the frames and runs the logs through the impersonated user's RBAC view, returning both the full event list (`logs_emitted`) and the subset the user would actually see (`logs_visible_to_user`).
 
 ### Operational requirements
 
-- The upstream node must expose `debug_traceCall` for write-method dry-run to work (Geth: `--http.api debug`). If unavailable, write-method calls return a clear error; read methods continue to work.
+- The upstream node must expose `debug_traceCall` for mutating-method dry-run to work (Geth: `--http.api debug`). If unavailable, mutating calls return a clear error; non-mutating methods continue to work.
 - All dry-run calls are recorded in the `impersonation_log` table with the actor's DID, the impersonated user's DID, the method, a SHA-256 hash of the params (raw params are never persisted), the decision, and a correlation ID. Operators are expected to forward this log to their SIEM via the existing `audit-forwarder` integration.
 - Dry-run results have no side effects on chain state, no caching that would survive past the request, and no JWT minting at any point. The "impersonated" identity exists only inside one request handler.
 

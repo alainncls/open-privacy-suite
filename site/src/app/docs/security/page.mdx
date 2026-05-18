@@ -164,7 +164,7 @@ The admin bypass applies per-contract: having admin on contract A does not grant
 **Org admins** (members of a group with `is_org_admin = true`) automatically receive the `admin` claim on all contracts in their organization via the permission resolver. This means org admins see all logs from all org contracts without restriction.
 
 <Callout variant="info" title="Claim hierarchy">
-  The `admin` claim implies `read`, `write`, `deploy`, and `upgrade`. Users without the admin claim do NOT get the admin log bypass -- they are subject to normal event filtering.
+  The `admin` claim implies `deploy` and `upgrade` (the legacy `read`/`write` claims were removed in RD-853). Users without the admin claim do NOT get the admin log bypass — they are subject to normal event filtering.
 </Callout>
 
 ### Cross-Organization Isolation
@@ -332,7 +332,7 @@ Do not increase `AccessTokenTTL` without adding a per-request revocation check
 
 ### RBAC Model
 
-- **Restrictive inheritance**: child groups can only narrow permissions
+- **Flat groups**: groups are siblings, not hierarchical — each group's permissions stand alone, no parent/child traversal (changed in RD-804)
 - **Multi-membership**: union of permissions across memberships
 - **Expiring memberships**: optional expiration timestamps
 - **Immutable audit log**: all changes tracked
@@ -369,10 +369,13 @@ A small set of **claim-free methods** can be called without any JWT token. These
 | `eth_blockNumber` | Latest block height |
 | `eth_chainId` | Chain identifier |
 | `eth_gasPrice` | Current gas price |
-| `eth_feeHistory` | Historical fee data |
 | `net_version` | Network version |
-| `net_peerCount` | Connected peer count |
-| `eth_syncing` | Sync status |
+| `net_listening` | Node listening status |
+| `web3_clientVersion` | Client version string |
+
+This list is seeded by migration 044 and is the exclusive source — admins editing the anonymous group_access surface is super-admin-only (`setGroupAccess` `is_system` gate).
+
+Authenticated users can also call this same set of org-free metadata methods on `/rpc` without an `org_id` in the path (RD-877). KYC and ban gates still apply.
 
 **Everything else requires authentication**, including read-only methods on unowned addresses such as `eth_getBalance`. This is not a theoretical concern -- balance polling is a practical side-channel attack:
 
@@ -382,7 +385,7 @@ A small set of **claim-free methods** can be called without any JWT token. These
 
 The **pre-registration surveillance problem** makes this worse: if Alice's address is pollable today because she has not joined any organization, her entire balance history is already mapped by the time she joins one. Retroactively revoking access cannot undo the data already collected.
 
-Anonymous requests are subject to strict rate limits: **10 requests per second** and **1,000 requests per day**. Unauthenticated requests that target methods outside the claim-free list receive HTTP 401 (not 403), signaling that the client should authenticate rather than that the user lacks permission.
+Unauthenticated requests that target methods outside the claim-free list receive HTTP 401 (not 403), signaling that the client should authenticate rather than that the user lacks permission. No anonymous-tier rate limit is enforced at the RPC layer today; the only hardcoded RPC rate limits are method-level (`debug_trace*` at 1 request per 100 RPS).
 
 ---
 

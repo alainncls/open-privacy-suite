@@ -55,6 +55,29 @@ lsof -i :5432  # PostgreSQL
 lsof -i :8545  # Anvil / Ethereum node
 ```
 
+### `block-explorer-frontend` in restart loop: `host not found in upstream "block-explorer-api"`
+
+Privacy-mode full-stack only. The `block-explorer-frontend` container is configured to attach to **both** `public` and `bff-zone` networks (`docker-compose.privacy.dev.yml`), but on rare daemon-state glitches docker connects only one of the two at startup. With `bff-zone` missing, nginx inside the container can't resolve `block-explorer-api` and the container crashes-and-restarts forever.
+
+Confirm:
+
+```bash
+docker inspect privacy-proxy-block-explorer-frontend-1 \
+  --format '{{range $net,$_ := .NetworkSettings.Networks}}{{$net}} {{end}}'
+# Expected:  privacy-proxy_bff-zone privacy-proxy_public
+# Broken:    privacy-proxy_public                          ← only one
+```
+
+Fix — force-recreate just the frontend (no data loss, the explorer postgres stays up):
+
+```bash
+set -a && source .env.privacy.dev && set +a
+docker compose -f docker-compose.privacy.dev.yml \
+  up -d --force-recreate --no-deps block-explorer-frontend
+```
+
+If the issue recurs on every `make full-stack-dev`, file a ticket — durable causes can include compose-version differences or a stale network entry left behind by a previous compose project. The compose config on `main` is correct; the symptom is daemon-side state, not config.
+
 ---
 
 ## Database Issues
@@ -157,14 +180,11 @@ If the refresh token is also expired, re-authenticate through the web UI.
 
 ### Claims hierarchy
 
-Remember that claims have implied permissions:
+Remember that the `admin` claim has implied permissions:
 
-- `admin` implies `read + write + deploy + upgrade`
-- `deploy` implies `read + write`
-- `upgrade` implies `read + write`
+- `admin` implies `deploy` and `upgrade`
 
-
-A user with `deploy` claim can already read and write -- no need to add those separately.
+The legacy `read` / `write` claims were removed in RD-853 — non-privileged method access is now gated solely by the per-group method allowlist (`GroupAccess.allowed_methods`). Don't try to add `read` or `write` as claims; the resolver no longer recognizes them.
 
 ### Blocked methods
 

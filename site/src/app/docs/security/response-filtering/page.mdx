@@ -162,7 +162,7 @@ Whether `fullTxObjects` is `true` or `false`, the `transactions` array is strict
 ### Block Transaction Counts (eth_getBlockTransactionCountByHash/Number)
 These methods return the hex-encoded integer count of transactions in a block. The proxy intercepts these calls, fetches the full block, counts only the transactions the user is a participant in, and returns that personalized count.
 
-When `fullTxObjects=true`, the `transactions` array contains full transaction objects (the same shape as `eth_getTransactionByHash` responses). The filter iterates over each transaction and removes entries where neither `from` nor `to` matches a linked address. Block-level fields (`number`, `hash`, `gasUsed`, `timestamp`, etc.) are preserved, but **the block-level `logsBloom` is forcefully scrubbed and zeroed out** to prevent it from leaking the existence of redacted logs across the whole block.
+When `fullTxObjects=true`, the `transactions` array contains full transaction objects (the same shape as `eth_getTransactionByHash` responses). The filter iterates over each transaction and removes entries where neither `from` nor `to` matches a linked address. Block-level fields (`number`, `hash`, `timestamp`, `gasLimit`, etc.) are preserved, but **`logsBloom`, `gasUsed`, and `blobGasUsed` are forcefully zeroed** on every block-shaped response, for every viewer — these aggregate fields would otherwise leak the existence of redacted logs and the total gas weight of other-org activity across the block (RD-873 closed `logsBloom`; RD-929 closed `gasUsed` + `blobGasUsed`).
 
 ---
 

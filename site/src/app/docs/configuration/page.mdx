@@ -314,12 +314,35 @@ The client's IP is forwarded to the upstream node via `X-Forwarded-For` for upst
 
 ### Services
 
+Standalone proxy (`docker-compose.yml`, `make run`):
+
 | Service | Port | Purpose |
 |---------|------|---------|
 | `postgres` | 5432 | Database |
 | `proxy-backend` | 8080 | API server |
 | `proxy-frontend` | 5173 | Admin UI |
 | `anvil` | 8545 | Local Ethereum node |
+
+Full-stack privacy mode adds (`docker-compose.privacy.dev.yml`, `make full-stack-dev`):
+
+| Service | Port | Purpose |
+|---------|------|---------|
+| `redis` | — | Per-user rate-limit / session store |
+| `chain-indexer` | 50051 (gRPC) | Block indexer (BFF-side data feed) |
+| `indexer-postgres` | — | Chain-indexer database |
+| `block-explorer-api` | — | Block-explorer BFF (privacy-mode build) |
+| `block-explorer-frontend` | 3001 | Block-explorer UI |
+| `block-explorer-postgres` | — | Block-explorer database |
+
+The prod manifest (`docker-compose.privacy.yml`) pulls the proxy-backend image rather than building from source (RD-922); see [Deployment](/docs/deployment) for the prod topology and trust-zone split.
+
+### Image pinning (privacy mode)
+
+| Env var | Default | Purpose |
+|---------|---------|---------|
+| `INDEXER_VERSION` | `0.1.2` (dev) / `latest` (prod) | Tag pulled from `gatewayfm/chain-indexer` (dev, dockerhub) or `ghcr.io/gateway-fm/chain-indexer` (prod). Verify any new pin with `docker manifest inspect` before changing — the dev default has no `v` prefix because the dockerhub tag doesn't carry one. |
+| `BLOCK_EXPLORER_PATH` | `../block-explorer` | Sibling-clone location for the block-explorer source (dev only — both api and frontend build from this path). |
+| `CHAIN_INDEXER_PATH` | `../chain-indexer` | Sibling-clone location for chain-indexer (only used when overriding the published image with a local build via `docker-compose.override.yml`). |
 
 ### E2E Testing
 

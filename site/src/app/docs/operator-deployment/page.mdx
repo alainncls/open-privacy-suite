@@ -1,0 +1,152 @@
+import { Callout } from "@/components/mdx/callout";
+
+export const metadata = {
+  title: "Operator Deployment",
+  description:
+    "Deploy the Open Privacy Suite in privacy mode: prod and dev compose manifests, trust-zone topology, required secrets, image pinning, and what not to do.",
+};
+
+# Operator Deployment
+
+This page is for **operators rolling out the Open Privacy Suite** itself. If you're a user trying to deploy your own contracts through the proxy, see [Contract Deployment](/docs/deployment) instead.
+
+The canonical reference for the privacy-mode compose layout is `deployments/privacy/README.md` in the repo — that's the file the infra team reads on GitHub when they don't have the docs site running locally. This page is the docs-site mirror: short, link-heavy, no duplication of the compose internals.
+
+---
+
+## Two compose manifests, both sibling-not-overlay
+
+| Manifest | Purpose | Mock auth | Image source |
+|---|---|---|---|
+| `docker-compose.privacy.yml` | Production rollout | Disabled (compiled out) | Pulled from registry (`gatewayfm/privacy-proxy-*`, `gatewayfm/block-explorer-*-privacy`, `ghcr.io/gateway-fm/chain-indexer`) |
+| `docker-compose.privacy.dev.yml` | Local development | Enabled (`ALLOW_MOCK_LOGIN=true`, `MOCK_SIGNATURES=true`) | Backend built locally, chain-indexer pulled, block-explorer built from sibling clone |
+
+Both manifests are **standalone, not overlays**. Do not stack them with each other or with the non-privacy `docker-compose.yml` — see [What not to do](#what-not-to-do) below.
+
+<Callout variant="info" title="Why two manifests instead of one base + overlays?">
+The privacy-mode topology rewires services, networks, and auth in ways that an overlay couldn't express without leaving footguns (`ALLOW_MOCK_LOGIN=true` carrying over, the `shared` network reappearing from the non-privacy base, etc.). Siblings are blunt and verbose; overlays are concise and lossy. Privacy mode picked blunt.
+</Callout>
+
+---
+
+## Bringing it up
+
+### Production
+
+```bash
+# Generate or supply secrets first; see "Required env vars" below.
+docker compose -f docker-compose.privacy.yml up -d
+```
+
+Verify the proxy backend healthcheck before pointing browser traffic at it:
+
+```bash
+docker compose -f docker-compose.privacy.yml ps proxy-backend
+# proxy-backend ... Up X minutes (healthy)
+```
+
+### Local development
+
+```bash
+make full-stack-dev
+# Wraps scripts/privacy-dev-up.sh — generates .env.privacy.dev on first
+# run, validates sibling clones (block-explorer, chain-indexer), waits for
+# the proxy healthcheck, and prints access URLs.
+```
+
+See [Getting Started → Full-stack dev (privacy mode)](/docs/getting-started#full-stack-dev-privacy-mode--proxy--block-explorer--chain-indexer) for the dev walkthrough.
+
+---
+
+## Trust-zone topology
+
+Three Docker networks. `privacy-proxy` is the only legitimate bridge between the two internal ones; the manifest test (`e2e.BridgeService`) fails if any other service attaches to both.
+
+| Zone | Members |
+|---|---|
+| `indexer-zone` (internal) | `privacy-postgres`, `redis`, `anvil` (dev), `chain-indexer`, `indexer-postgres`, `proxy-backend` |
+| `bff-zone` (internal) | `block-explorer-api` (BFF, privacy build), `block-explorer-postgres`, `proxy-backend`, `block-explorer-frontend` (so nginx can resolve the BFF upstream) |
+| `public` | `proxy-frontend`, `proxy-backend` (port `8080`), `block-explorer-frontend` (port `3001`) |
+
+Full architecture diagram and rationale: [Architecture → Privacy-mode topology](/docs/architecture#privacy-mode-topology-rd-855--rd-876).
+
+---
+
+## Required env vars (fail-closed — missing → compose aborts)
+
+| Variable | Purpose |
+|---|---|
+| `JWT_SECRET` | Privacy-proxy access-token signing key. |
+| `JWT_REFRESH_SECRET` | Privacy-proxy refresh-token signing key. Must differ from `JWT_SECRET`. |
+| `ADMIN_API_TOKEN` | Bootstrap super-admin token (sent as `X-Admin-Token` header on admin endpoints). |
+| `PRIVACY_POSTGRES_PASSWORD` | Privacy-proxy's postgres role. |
+| `INDEXER_POSTGRES_PASSWORD` | Chain-indexer's postgres role. |
+| `REDIS_PASSWORD` | Privacy-proxy's redis. |
+| `BLOCK_EXPLORER_POSTGRES_PASSWORD` | BFF's postgres (contract verifications only). |
+
+The dev script (`scripts/privacy-dev-up.sh`) auto-generates these into `.env.privacy.dev` on first run. For production, source from your secret store (AWS Secrets Manager, Vault, etc.) — see [Audit Log Integrity → Credential lifecycle](/docs/security/audit-integrity#recommended-aws-secrets-manager-via-irsa-canonical) for the recommended IRSA pattern.
+
+---
+
+## Optional env vars (sane defaults)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `HOST_BIND` | `127.0.0.1` | Interface for published host ports. Never set to `0.0.0.0` on a production host without an upstream firewall. |
+| `HOST_PORT_PROXY` / `HOST_PORT_UI` / `HOST_PORT_EXPLORER` | `8080` / `5173` / `3001` | Published host ports for the proxy API, admin UI, and explorer UI. |
+| `CORS_ALLOWED_ORIGINS` | `(empty)` | Comma-separated list of extra browser origins to allow. The origin derived from `BASE_URL` is always allowed. |
+| `PROXY_VERSION` | `latest` | Registry tag for `gatewayfm/privacy-proxy-{backend,frontend}`. Pin to a release tag in production (e.g. `v0.7.0`). |
+| `EXPLORER_VERSION` | `latest` | Registry tag for the block-explorer images. The privacy compose pulls the `-privacy`-suffixed API image only — the standalone image is for non-privacy deployments. |
+| `INDEXER_VERSION` | `latest` (prod), `0.1.2` (dev) | Registry tag for chain-indexer. Note: the dockerhub tag has no `v` prefix; verify with `docker manifest inspect` before changing. |
+| `BLOCK_EXPLORER_PATH` / `CHAIN_INDEXER_PATH` | `../block-explorer` / `../chain-indexer` | Sibling-clone paths. Consumed by the **dev** compose only. |
+| `ENABLE_OP_DEPOSITS` | `false` | Toggle OP-Stack indexing in chain-indexer. |
+
+---
+
+## Super-admin maintenance endpoints
+
+A few admin endpoints are gated to the super-admin (`X-Admin-Token`) only — they change policy for every tenant in the cluster and JWT org admins, even tier-2 with full admin rights in their own org, cannot touch them. Operators are the audience.
+
+| Surface | Purpose | Endpoints |
+|---|---|---|
+| **Shared infrastructure** (`shared_infrastructure`) | Whitelist of public-utility contracts the runtime trace validator can skip when checking cross-org calls (Uniswap V3 Router, Multicall3, ENS resolver, CREATE3 factory, etc.). Entries are global — no `org_id`. | `GET POST /api/v1/admin/shared-infrastructure`<br/>`GET PUT DELETE /api/v1/admin/shared-infrastructure/:address`<br/>`POST /api/v1/admin/shared-infrastructure/:address/refresh-codehash` |
+| **Base currency** | Sets the compliance pricing currency for every org. | `GET PUT /api/v1/admin/compliance/currency` |
+| **Azure tenant CRUD** | Tenant-pinning configuration for SSO. | `/api/v1/admin/azure-tenants/...` |
+| **Anonymous group_access edit** | Editing the anonymous allowlist (the six metadata methods seeded by migration 044). | `PUT /api/v1/admin/orgs/<anon-org>/groups/<anon-group>/access` (rejected if not super-admin via the `is_system` gate) |
+
+### Shared infrastructure: when to use `refresh-codehash`
+
+The whitelist supports an optional `codehash` pin. If set, the runtime trace validator fetches `eth_getCode(address, "latest")` on every cross-org call, keccaks it, and compares to the stored value. **Mismatch → treats the contract as untagged → runs the full trace.** This is intentional: if upstream rotates the bytecode (e.g. governance-upgrade of Uniswap V3 Router), the policy needs operator review before the skip resumes.
+
+The flow:
+
+1. Operator notices the trace validator now denies (or audit-logs warnings about) calls to a whitelisted address that used to pass.
+2. Operator confirms the upgrade was expected (the upstream's release notes, a governance vote, etc.).
+3. Operator hits `POST /shared-infrastructure/:address/refresh-codehash` — handler fetches `eth_getCode` and stores the new keccak.
+4. Subsequent traces match and the skip resumes.
+
+Leaving `codehash` empty means "skip without bytecode pinning" — convenient during setup, but loses the integrity guarantee. The recommended pattern is to set `codehash` for every production entry and rely on `refresh-codehash` for governance-driven rotations.
+
+### Auditability
+
+Every mutation on these endpoints writes an `rbac_audit_log` row (`ResourceTypeSharedInfra` / `ResourceTypeAzureTenant` / etc.). Operators can trace who added, rotated, or removed which entry via `GET /api/v1/admin/audit-logs`. Combined with the [hash-chain integrity](/docs/security/audit-integrity) on `rbac_audit_log`, the audit trail for these super-admin actions is tamper-evident.
+
+---
+
+## What not to do
+
+- **Do not stack this manifest with the non-privacy compose files.** `docker compose -f docker-compose.yml -f docker-compose.privacy.yml up` reintroduces the `shared` network, which lets block-explorer components attach and re-open the bypass path the privacy mode was designed to close. No supported hybrid exists.
+- **Do not publish a host port for `chain-indexer:50051`.** If clients can reach the indexer directly, redaction is bypassed. There is no legitimate external access path in privacy mode.
+- **Do not mount the block-explorer repo's own nginx config** into the `block-explorer-frontend` container. The repo's default config routes `/ws` and `/api/*` to a service name (`api`) that doesn't exist in the privacy compose and doesn't enforce the `/ws → 404` privacy rule. The privacy-mode config in `deployments/privacy/nginx.privacy.conf` is the authoritative one.
+- **Do not deploy `block-explorer-api` from an image built without `--target privacy`.** The default (standalone) image links the chain-indexer gRPC client; with network egress to the indexer, it bypasses redaction. The compose uses `target: privacy` for exactly this reason.
+
+---
+
+## Further reading
+
+- [`deployments/privacy/README.md`](https://github.com/gateway-fm/privacy-proxy/blob/main/deployments/privacy/README.md) — canonical compose reference (the file most operators end up reading on GitHub).
+- [Architecture → Privacy-mode topology](/docs/architecture#privacy-mode-topology-rd-855--rd-876) — full diagram and per-network invariants.
+- [Configuration](/docs/configuration) — env-var catalog beyond the operator-facing subset above.
+- [Security](/docs/security) — what the deployment is structurally defending against and what it deliberately doesn't.
+- [Audit Log Integrity](/docs/security/audit-integrity) — role-separation patterns (`privacy_proxy_app` vs `privacy_proxy_admin` postgres roles) that pair with this deployment.
+- [Troubleshooting](/docs/troubleshooting) — common compose / network issues.
