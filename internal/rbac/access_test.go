@@ -3473,6 +3473,93 @@ func TestAnonymousAccess_DeploymentBlocked(t *testing.T) {
 	}
 }
 
+// TestOrgFreeMetadataMethods verifies that authenticated users can call the 6
+// chain-metadata methods (same set as the anonymous allowlist) on /rpc without
+// an explicit org_id in the path. These methods carry no user or org state;
+// requiring org context for them would break standard tools (Hardhat, wallets).
+// Ban and KYC gates must still fire — only org-resolution is skipped.
+func TestOrgFreeMetadataMethods(t *testing.T) {
+	store := NewMockCrossOrgStore()
+	controller := NewAccessController(store, 5*time.Minute)
+	ctx := context.Background()
+
+	// User with no org membership at all.
+	user := &User{ID: "user-no-org", ExternalID: "did:test:no-org", KYC: true, Banned: false}
+	store.users[user.ExternalID] = user
+
+	orgFreeMethods := []string{
+		"eth_blockNumber",
+		"eth_chainId",
+		"eth_gasPrice",
+		"net_version",
+		"net_listening",
+		"web3_clientVersion",
+	}
+
+	for _, method := range orgFreeMethods {
+		t.Run("allowed/"+method, func(t *testing.T) {
+			res, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+				UserExternalID: user.ExternalID,
+				Method:         method,
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !res.Allowed {
+				t.Errorf("expected allowed, got denied: %s", res.Reason)
+			}
+		})
+	}
+
+	// Non-metadata methods still require org context.
+	for _, method := range []string{"eth_getBalance", "eth_call", "eth_sendTransaction"} {
+		t.Run("denied/"+method, func(t *testing.T) {
+			res, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+				UserExternalID: user.ExternalID,
+				Method:         method,
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if res.Allowed {
+				t.Errorf("expected denied, got allowed")
+			}
+		})
+	}
+
+	// Banned user is blocked even for org-free methods.
+	t.Run("banned user blocked", func(t *testing.T) {
+		banned := &User{ID: "user-banned", ExternalID: "did:test:banned-no-org", KYC: true, Banned: true}
+		store.users[banned.ExternalID] = banned
+		res, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+			UserExternalID: banned.ExternalID,
+			Method:         "eth_blockNumber",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if res.Allowed {
+			t.Errorf("expected banned user to be denied")
+		}
+	})
+
+	// KYC-failed user is blocked even for org-free methods.
+	t.Run("no-KYC user blocked", func(t *testing.T) {
+		noKYC := &User{ID: "user-nokyc", ExternalID: "did:test:nokyc-no-org", KYC: false, Banned: false}
+		store.users[noKYC.ExternalID] = noKYC
+		res, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+			UserExternalID: noKYC.ExternalID,
+			Method:         "eth_blockNumber",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if res.Allowed {
+			t.Errorf("expected no-KYC user to be denied")
+		}
+	})
+}
+
 // TestFunctionSelectorGateOnlyForCallMethods covers the bug where the
 // "function selector required" check was incorrectly applied to methods
 // that never produce a function selector (eth_getCode). This caused
