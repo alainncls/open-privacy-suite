@@ -103,6 +103,36 @@ The dev script (`scripts/privacy-dev-up.sh`) auto-generates these into `.env.pri
 
 ---
 
+## Super-admin maintenance endpoints
+
+A few admin endpoints are gated to the super-admin (`X-Admin-Token`) only — they change policy for every tenant in the cluster and JWT org admins, even tier-2 with full admin rights in their own org, cannot touch them. Operators are the audience.
+
+| Surface | Purpose | Endpoints |
+|---|---|---|
+| **Shared infrastructure** (`shared_infrastructure`) | Whitelist of public-utility contracts the runtime trace validator can skip when checking cross-org calls (Uniswap V3 Router, Multicall3, ENS resolver, CREATE3 factory, etc.). Entries are global — no `org_id`. | `GET POST /api/v1/admin/shared-infrastructure`<br/>`GET PUT DELETE /api/v1/admin/shared-infrastructure/:address`<br/>`POST /api/v1/admin/shared-infrastructure/:address/refresh-codehash` |
+| **Base currency** | Sets the compliance pricing currency for every org. | `GET PUT /api/v1/admin/compliance/currency` |
+| **Azure tenant CRUD** | Tenant-pinning configuration for SSO. | `/api/v1/admin/azure-tenants/...` |
+| **Anonymous group_access edit** | Editing the anonymous allowlist (the six metadata methods seeded by migration 044). | `PUT /api/v1/admin/orgs/<anon-org>/groups/<anon-group>/access` (rejected if not super-admin via the `is_system` gate) |
+
+### Shared infrastructure: when to use `refresh-codehash`
+
+The whitelist supports an optional `codehash` pin. If set, the runtime trace validator fetches `eth_getCode(address, "latest")` on every cross-org call, keccaks it, and compares to the stored value. **Mismatch → treats the contract as untagged → runs the full trace.** This is intentional: if upstream rotates the bytecode (e.g. governance-upgrade of Uniswap V3 Router), the policy needs operator review before the skip resumes.
+
+The flow:
+
+1. Operator notices the trace validator now denies (or audit-logs warnings about) calls to a whitelisted address that used to pass.
+2. Operator confirms the upgrade was expected (the upstream's release notes, a governance vote, etc.).
+3. Operator hits `POST /shared-infrastructure/:address/refresh-codehash` — handler fetches `eth_getCode` and stores the new keccak.
+4. Subsequent traces match and the skip resumes.
+
+Leaving `codehash` empty means "skip without bytecode pinning" — convenient during setup, but loses the integrity guarantee. The recommended pattern is to set `codehash` for every production entry and rely on `refresh-codehash` for governance-driven rotations.
+
+### Auditability
+
+Every mutation on these endpoints writes an `rbac_audit_log` row (`ResourceTypeSharedInfra` / `ResourceTypeAzureTenant` / etc.). Operators can trace who added, rotated, or removed which entry via `GET /api/v1/admin/audit-logs`. Combined with the [hash-chain integrity](/docs/security/audit-integrity) on `rbac_audit_log`, the audit trail for these super-admin actions is tamper-evident.
+
+---
+
 ## What not to do
 
 - **Do not stack this manifest with the non-privacy compose files.** `docker compose -f docker-compose.yml -f docker-compose.privacy.yml up` reintroduces the `shared` network, which lets block-explorer components attach and re-open the bypass path the privacy mode was designed to close. No supported hybrid exists.
