@@ -113,9 +113,11 @@ services:
   chain-indexer:
     # Pull a published image rather than building from a sibling clone
     # so the dev stack is runnable without a chain-indexer checkout.
-    # Pin via INDEXER_VERSION (e.g. v0.1.2). docker-compose.override.yml
-    # can swap to `build:` for source iteration.
-    image: gatewayfm/chain-indexer:${INDEXER_VERSION:-v0.1.2}
+    # Pin via INDEXER_VERSION (e.g. 0.1.2). docker-compose.override.yml
+    # can swap to `build:` for source iteration. Note: dockerhub tags this
+    # image without the `v` prefix (verify with `docker manifest inspect
+    # gatewayfm/chain-indexer:<tag>` before changing the default).
+    image: gatewayfm/chain-indexer:${INDEXER_VERSION:-0.1.2}
     environment:
       - RPC_URL=http://anvil:8545
       - DATABASE_URL=postgres://postgres:${INDEXER_POSTGRES_PASSWORD:?INDEXER_POSTGRES_PASSWORD is required in privacy mode}@indexer-postgres:5432/chain_indexer?sslmode=disable
