@@ -85,6 +85,42 @@ graph TD
 | PostgreSQL | `5432` | Policy storage, RBAC, audit logs |
 | Ethereum Node (Anvil/Erigon) | `8545` | JSON-RPC execution layer |
 
+## Privacy-mode topology (RD-855 / RD-876)
+
+In privacy mode the deployment adds a block-explorer fronted by a BFF (Backend-for-Frontend) and a chain-indexer feeding the BFF. The compose manifest splits the trust surface into two internal Docker networks plus a public one — `privacy-proxy` is the only legitimate bridge between them.
+
+```mermaid
+graph LR
+    Client[Browser]
+    EXPF[block-explorer-frontend<br/><small>nginx — public + bff-zone</small>]
+    BFF[block-explorer-api<br/><small>BFF — bff-zone only</small>]
+    PROXY[privacy-proxy<br/><small>public + bff-zone + indexer-zone</small>]
+    NODE[Ethereum node]
+    IDX[chain-indexer<br/><small>indexer-zone only</small>]
+    EXPDB[(block-explorer-postgres)]
+    IDXDB[(indexer-postgres)]
+    PXDB[(privacy-postgres)]
+
+    Client --> EXPF
+    EXPF --"/api/* to BFF"--> BFF
+    BFF --"chain reads"--> PROXY
+    BFF --> EXPDB
+    PROXY --> NODE
+    PROXY --> IDX
+    PROXY --> PXDB
+    IDX --> IDXDB
+    IDX --"polls"--> NODE
+```
+
+Key invariants:
+
+- **`indexer-zone`** holds the chain-indexer and its postgres. Only `privacy-proxy` attaches to this network.
+- **`bff-zone`** holds the block-explorer BFF and its postgres. `privacy-proxy` and the explorer-frontend (for nginx upstream resolution) attach here.
+- **`public`** carries browser ingress only — `privacy-proxy` (port `8080`), `privacy-proxy` frontend (port `5173`), and `block-explorer-frontend` (port `3001`).
+- The BFF is built with the `privacy` Go build tag — the chain-indexer client is compiled out entirely, so even if a future env-var override sets `INDEXER_URL`, the BFF cannot reach `chain-indexer`. A static manifest test enforces by name that no other service may attach to both `indexer-zone` and `bff-zone` at once.
+
+The prod compose (`docker-compose.privacy.yml`) pulls the proxy and chain-indexer as published images rather than building from source (RD-922); the dev compose (`docker-compose.privacy.dev.yml`) builds the proxy locally and pulls the chain-indexer.
+
 ## Key Directories
 
 | Directory | Purpose |

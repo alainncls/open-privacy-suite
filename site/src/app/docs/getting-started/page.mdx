@@ -52,6 +52,67 @@ Click the flask icon below the QR code for instant mock login. Mock users are au
 | postgres | 5432 | Database |
 | anvil | 8545 | Local Ethereum node |
 
+## Full-stack dev (privacy mode — proxy + block-explorer + chain-indexer)
+
+`make run` only brings up the proxy itself. For an end-to-end privacy-mode environment that includes the **block-explorer** (frontend + BFF), the **chain-indexer**, and a second postgres for the explorer, use `make full-stack-dev`:
+
+```bash
+make full-stack-dev
+```
+
+This calls `scripts/privacy-dev-up.sh`, which:
+
+1. Resolves the sibling-repo paths (`BLOCK_EXPLORER_PATH`, `CHAIN_INDEXER_PATH`) and verifies they exist.
+2. Generates `.env.privacy.dev` on first run (random secrets — POSTGRES passwords, JWT secrets, `ADMIN_API_TOKEN`). Delete the file to rotate (run `down -v` first to drop encrypted volumes).
+3. Auto-creates `rpc-namespaces.json` from the example so the `EXTRA_RPC_NAMESPACES_FILE` mount doesn't fail (RD-919).
+4. Brings the stack up via `docker-compose.privacy.dev.yml`, then waits for the `proxy-backend` healthcheck.
+
+### Required layout (sibling clones)
+
+```
+/your/dev/dir/
+  ├── privacy-proxy/       ← you are here
+  ├── block-explorer/      ← clone of gateway-fm/block-explorer
+  └── chain-indexer/       ← clone of gateway-fm/chain-indexer (optional;
+                             the dev compose pulls the published image
+                             by default — see Configuration → INDEXER_VERSION)
+```
+
+Override paths if your layout differs:
+
+```bash
+BLOCK_EXPLORER_PATH=/path/to/block-explorer \
+CHAIN_INDEXER_PATH=/path/to/chain-indexer \
+  make full-stack-dev
+```
+
+### Services started
+
+| Service | Port | Source | Description |
+|---------|------|--------|-------------|
+| proxy-backend | 8080 | local build | Privacy-proxy API (mock-login + mock-signatures enabled) |
+| proxy-frontend | 5173 | local build | Privacy-proxy admin UI |
+| privacy-postgres | — | image | Privacy-proxy database |
+| anvil | 8545 | image | Local Ethereum node |
+| redis | — | image | Per-user rate limit + session store |
+| chain-indexer | 50051 (gRPC) | published image, tag `INDEXER_VERSION` (default `0.1.2`) | Block indexer feeding the BFF |
+| indexer-postgres | — | image | Chain-indexer database |
+| block-explorer-api | — | local build from `BLOCK_EXPLORER_PATH/backend` | Block-explorer BFF (privacy-mode build, chain-indexer client compiled out) |
+| block-explorer-frontend | 3001 | local build from `BLOCK_EXPLORER_PATH/frontend` | Block-explorer UI (nginx) |
+| block-explorer-postgres | — | image | Block-explorer database |
+
+URLs after start:
+
+- Privacy-proxy backend → `http://localhost:8080`
+- Privacy-proxy frontend → `http://localhost:5173` (mock-login)
+- Block-explorer frontend → `http://localhost:3001`
+
+<Callout variant="warning" title="Dev only — mock auth is on">
+  This stack uses `ALLOW_MOCK_LOGIN=true` and `MOCK_SIGNATURES=true`. Both are runtime-gated AND require the `mockauth` build tag (`-tags mockauth`). The prod compose (`docker-compose.privacy.yml`) compiles them out entirely. Do not point the dev manifest at any customer-facing environment.
+</Callout>
+
+Stop with `docker compose -f docker-compose.privacy.dev.yml down`. Add `-v` to wipe all volumes.
+
 ## Useful Commands
 
 | Command | Description |

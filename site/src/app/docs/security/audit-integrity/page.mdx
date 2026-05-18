@@ -10,7 +10,7 @@ export const metadata = {
 
 The proxy protects its audit trail against silent tampering with a SHA-256 hash chain. Every row in `access_logs` and `rbac_audit_log` includes `entry_hash = SHA-256(prev_row.entry_hash || canonical_row_content)`. If anyone edits a row in place, the hash no longer matches and the verifier flags it. If anyone deletes a row from the middle, the next row's hash no longer matches and the verifier flags it. If anyone replaces a row and recomputes every downstream hash, the tail no longer matches the SIEM-forwarded tail snapshot.
 
-<Callout variant="warn" title="Threat model — be honest about what this defends against">
+<Callout variant="warning" title="Threat model — be honest about what this defends against">
   The DB-resident hash chain catches accidental corruption, lazy tampering (delete a row, forget to recompute), and any attacker with DB read access but not write. It does NOT defend against an attacker with DB write credentials AND knowledge of the chain seed: SHA-256 is standard, they can recompute every downstream hash in seconds. The defenses that raise the bar against a write-capable attacker — role separation, SIEM-forwarded tail, S3 Object Lock anchor, HSM-signed entries — are documented further down. The hash chain alone is the floor, not the ceiling.
 </Callout>
 
@@ -98,7 +98,7 @@ The migration `058_audit_role_separation.sql` creates two Postgres roles with an
 
 This raises the bar against an attacker who compromises the proxy host: they get the app credential, which by itself cannot rewrite admin-action or compliance history. They'd need a separate compromise to acquire admin credentials.
 
-<Callout variant="warn" title="New-table checklist for future migration authors">
+<Callout variant="warning" title="New-table checklist for future migration authors">
   Adding a new table in a future migration? You **must** add a `GRANT` block in the same migration:
 
   - **Audit / forever-append**: `GRANT SELECT, INSERT ON <table> TO privacy_proxy_app;`
@@ -148,7 +148,7 @@ GRANT rds_iam TO privacy_proxy_app, privacy_proxy_admin;
 
 Then update the proxy's `DATABASE_URL` to use `privacy_proxy_app`. The admin role stays unused by the app and is activated by operators when they need it.
 
-<Callout variant="warn" title="Migrations need the admin role">
+<Callout variant="warning" title="Migrations need the admin role">
   `make db-migrate` runs DDL and requires the admin role. Plan for this in your CI/CD: the deploy pipeline assumes the operator IAM role to run migrations, then drops back to the app credential for runtime. Don't give the app role permanent DDL — that defeats the separation.
 </Callout>
 

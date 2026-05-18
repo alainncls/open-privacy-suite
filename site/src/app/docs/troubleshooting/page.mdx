@@ -55,6 +55,29 @@ lsof -i :5432  # PostgreSQL
 lsof -i :8545  # Anvil / Ethereum node
 ```
 
+### `block-explorer-frontend` in restart loop: `host not found in upstream "block-explorer-api"`
+
+Privacy-mode full-stack only. The `block-explorer-frontend` container is configured to attach to **both** `public` and `bff-zone` networks (`docker-compose.privacy.dev.yml`), but on rare daemon-state glitches docker connects only one of the two at startup. With `bff-zone` missing, nginx inside the container can't resolve `block-explorer-api` and the container crashes-and-restarts forever.
+
+Confirm:
+
+```bash
+docker inspect privacy-proxy-block-explorer-frontend-1 \
+  --format '{{range $net,$_ := .NetworkSettings.Networks}}{{$net}} {{end}}'
+# Expected:  privacy-proxy_bff-zone privacy-proxy_public
+# Broken:    privacy-proxy_public                          ← only one
+```
+
+Fix — force-recreate just the frontend (no data loss, the explorer postgres stays up):
+
+```bash
+set -a && source .env.privacy.dev && set +a
+docker compose -f docker-compose.privacy.dev.yml \
+  up -d --force-recreate --no-deps block-explorer-frontend
+```
+
+If the issue recurs on every `make full-stack-dev`, file a ticket — durable causes can include compose-version differences or a stale network entry left behind by a previous compose project. The compose config on `main` is correct; the symptom is daemon-side state, not config.
+
 ---
 
 ## Database Issues

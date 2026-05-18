@@ -96,20 +96,12 @@ graph TD
     admin["admin"]
     deploy["deploy"]
     upgrade["upgrade"]
-    read["read"]
-    write["write"]
 
     admin --> deploy
     admin --> upgrade
-    admin --> read
-    admin --> write
-    deploy --> read
-    deploy --> write
-    upgrade --> read
-    upgrade --> write
 ```
 
-`ExpandClaims()` normalizes implied claims before saving on the backend.
+`ExpandClaims()` normalizes implied claims before saving on the backend. Only three claims gate behavior today; the legacy `read` and `write` claims were removed in RD-853 — non-privileged method access is now the exclusive job of the per-group method allowlist.
 
 | Claim | Purpose | Required For |
 |-------|---------|--------------|
@@ -117,13 +109,13 @@ graph TD
 | `admin` | Full administrative access | All operations including deployment; implies `deploy` + `upgrade` |
 | `upgrade` | Upgrade proxy contracts | `upgradeTo()`, `upgradeToAndCall()` on proxy contracts |
 
-Read and write access is controlled entirely by the method allowlist. If `eth_call` is in a group's allowed methods, members can read contract data. If `eth_sendTransaction` is in the list, members can send transactions. No additional claim is needed.
+Non-privileged method access (reads + non-mutating calls + ordinary writes) is controlled entirely by the method allowlist. If `eth_call` is in a group's allowed methods, members can read contract data. If `eth_sendTransaction` is in the list, members can send transactions. No additional claim is needed.
 
 <Callout variant="info" title="Method-claim validation">
 
 The system enforces consistency between allowed methods and claims. For example, allowing
 `debug_traceTransaction` without the `deploy` claim returns a 400 Bad Request error.
-Read/write methods do not require claims.
+Methods that don't require `admin`/`deploy`/`upgrade` are gated solely by the allowlist.
 
 </Callout>
 
@@ -167,7 +159,7 @@ graph TD
 
 <Callout variant="info" title="How permissions are computed">
 
-1. **Group has methods + claims** via GroupAccess: `{ methods: [...], claims: [deploy] }`. The method list controls read/write; claims gate deployment and upgrades.
+1. **Group has methods + claims** via GroupAccess: `{ methods: [...], claims: [deploy] }`. The method list is the sole gate for non-privileged methods; the `admin`, `deploy`, and `upgrade` claims gate the corresponding privileged operations.
 2. **Unregistered contracts**: denied (private by default). Only EVM precompiles (0x01-0x09) are accessible. All other contracts must be registered to an org.
 3. **Registered contracts**: require a `ContractGrant` on the user's group. The `admin` and `deploy` claims alone do **not** unlock registered contracts — tier 3 admins get RBAC bypass only on contracts explicitly granted to their group (per the 3-tier admin model). Functions can be restricted via `FunctionRule`. Parameters can be constrained via `ParamRule`.
 4. **Deployer contract grant**: when a user deploys a contract, a `contract_grant` is added to their existing deploy group. The admin must pre-create a group with the `deploy` claim and add deployers to it.
@@ -385,20 +377,20 @@ POST /api/orgs/:org_id/dry-run
 {
   "decision": "allow" | "deny",
   "reason":   "...",
-  "response": <redacted-as-user response, for read methods>,
-  "trace":    <debug_traceCall output, for write methods>,
+  "response": <redacted-as-user response, for non-mutating methods>,
+  "trace":    <debug_traceCall output, for mutating methods>,
   "logs_emitted":          [...],
   "logs_visible_to_user":  [...]
 }
 ```
 
-Read methods (`eth_call`, `eth_getLogs`, `eth_getTransactionReceipt`, `eth_getTransactionByHash`, `eth_getBalance`, `eth_getCode`, `eth_getStorageAt`, `eth_blockNumber`, `eth_chainId`) pass through to the upstream node and return the user's would-be response.
+Non-mutating methods (`eth_call`, `eth_getLogs`, `eth_getTransactionReceipt`, `eth_getTransactionByHash`, `eth_getBalance`, `eth_getCode`, `eth_getStorageAt`, `eth_blockNumber`, `eth_chainId`) pass through to the upstream node and return the user's would-be response.
 
-Write methods (`eth_sendTransaction`) are translated to `debug_traceCall` against the upstream node — current state, no commit. The trace returns nested call frames + emitted logs; the proxy walks the frames and runs the logs through the impersonated user's RBAC view, returning both the full event list (`logs_emitted`) and the subset the user would actually see (`logs_visible_to_user`).
+Mutating methods (`eth_sendTransaction`) are translated to `debug_traceCall` against the upstream node — current state, no commit. The trace returns nested call frames + emitted logs; the proxy walks the frames and runs the logs through the impersonated user's RBAC view, returning both the full event list (`logs_emitted`) and the subset the user would actually see (`logs_visible_to_user`).
 
 ### Operational requirements
 
-- The upstream node must expose `debug_traceCall` for write-method dry-run to work (Geth: `--http.api debug`). If unavailable, write-method calls return a clear error; read methods continue to work.
+- The upstream node must expose `debug_traceCall` for mutating-method dry-run to work (Geth: `--http.api debug`). If unavailable, mutating calls return a clear error; non-mutating methods continue to work.
 - All dry-run calls are recorded in the `impersonation_log` table with the actor's DID, the impersonated user's DID, the method, a SHA-256 hash of the params (raw params are never persisted), the decision, and a correlation ID. Operators are expected to forward this log to their SIEM via the existing `audit-forwarder` integration.
 - Dry-run results have no side effects on chain state, no caching that would survive past the request, and no JWT minting at any point. The "impersonated" identity exists only inside one request handler.
 

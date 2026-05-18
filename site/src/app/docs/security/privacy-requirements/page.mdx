@@ -67,6 +67,8 @@ Event log visibility depends on the privacy level of the **emitting contract**, 
 
 For anonymous Solidity events (declared with the `anonymous` keyword), `topics[0]` may contain an indexed address and is scanned as well.
 
+For events with a **dynamic-typed payload** (e.g. `bytes`, `string`, or dynamic arrays in `data`), the proxy cannot statically prove every embedded address has been scrubbed. The default behaviour is fail-closed — such logs are denied. Operators who explicitly accept the trade-off can opt-in **per contract** via the `allow_dynamic_payload_events` flag on the contract record (M15 follow-up). The flag is per-contract by design: it never globalises, and admin viewers still go through the contract-grant check before bypass applies.
+
 <Callout type="note">
   ABI registration is **mandatory** for any contract whose events should be
   visible: without one the proxy cannot decode non-indexed `address` parameters
