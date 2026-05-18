@@ -132,7 +132,13 @@ func TestExplorerRedactorWiring_FullStack(t *testing.T) {
 	accessCtrl := rbac.NewAccessController(database, 1*time.Minute)
 	t.Cleanup(accessCtrl.Stop)
 	engine := explorer.NewRedactionEngine(noopContractStore{}, database)
-	wireExplorerRedactor(engine, database, accessCtrl)
+	// RD-939: wireExplorerRedactor now also wires the log-participant
+	// store. The test asserts wiring completeness via reflection
+	// (expectedSetters below); to satisfy SetLogParticipantStore we pass
+	// a stub that returns "no participants" for every query — this test
+	// isn't exercising the log path (RedactTransactions tests cover
+	// that), only the wiring.
+	wireExplorerRedactor(engine, database, accessCtrl, noopLogParticipantStore{})
 
 	// ----- (1) Wiring completeness check. ------------------------------
 	// Enumerate every interface-typed Set* method on *RedactionEngine
@@ -140,7 +146,7 @@ func TestExplorerRedactorWiring_FullStack(t *testing.T) {
 	// resolver-style setter to RedactionEngine without updating
 	// wireExplorerRedactor (and this list), this assertion fires —
 	// before the gap can ship as another silently-disabled resolver.
-	expectedSetters := []string{"SetABIResolver", "SetAdminContractsResolver", "SetDynamicPayloadAllowedResolver", "SetEventRuleChecker", "SetVisibleToUnlockResolver"}
+	expectedSetters := []string{"SetABIResolver", "SetAdminContractsResolver", "SetDynamicPayloadAllowedResolver", "SetEventRuleChecker", "SetLogParticipantStore", "SetVisibleToUnlockResolver"}
 	require.Equal(t, sortedStrings(expectedSetters), interfaceTypedSetters(engine),
 		"wireExplorerRedactor must wire every interface-typed Set* method on RedactionEngine; mismatch means a setter was added/removed without updating the helper. See wireExplorerRedactor doc-comment.")
 
@@ -303,4 +309,15 @@ type noopContractStore struct{}
 
 func (noopContractStore) GetContract(_ context.Context, _ string) (*explorer.Contract, error) {
 	return nil, nil
+}
+
+// noopLogParticipantStore satisfies explorer.LogParticipantStore for the
+// wiring test. RD-939's RedactTransactions tests live in
+// internal/explorer/redactor_test.go and exercise the real signal; this
+// stub exists only so wireExplorerRedactor sees a non-nil dependency
+// during the wiring-completeness check.
+type noopLogParticipantStore struct{}
+
+func (noopLogParticipantStore) FindLogParticipantTxs(_ context.Context, _ []string, _ []string) (map[string]bool, error) {
+	return map[string]bool{}, nil
 }

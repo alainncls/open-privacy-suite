@@ -37,9 +37,10 @@ func resolveViewerInternalID(ctx context.Context, store rbac.Store, viewerDID st
 //
 // The helper is a no-op when redactor is nil (explorer disabled). Each
 // individual Set* call requires its own dependency to be non-nil
-// (store for ABI, accessCtrl for admin + event rules); a missing
-// dependency leaves *that* resolver unset rather than panicking, so
-// an in-progress test rig can still exercise RedactionEngine.
+// (store for ABI, accessCtrl for admin + event rules, explorerBackend
+// for log-participant detection); a missing dependency leaves *that*
+// resolver unset rather than panicking, so an in-progress test rig
+// can still exercise RedactionEngine.
 //
 // If you find yourself adding a fourth resolver to RedactionEngine,
 // add it here too. The companion test
@@ -47,7 +48,7 @@ func resolveViewerInternalID(ctx context.Context, store rbac.Store, viewerDID st
 // explorer_redactor_wiring_integration_test.go) loops over the public
 // Set*Resolver methods via reflection to detect any new resolver that
 // wasn't wired here.
-func wireExplorerRedactor(redactor *explorer.RedactionEngine, store rbac.Store, accessCtrl *rbac.AccessController) {
+func wireExplorerRedactor(redactor *explorer.RedactionEngine, store rbac.Store, accessCtrl *rbac.AccessController, logParticipants explorer.LogParticipantStore) {
 	if redactor == nil {
 		return
 	}
@@ -59,6 +60,15 @@ func wireExplorerRedactor(redactor *explorer.RedactionEngine, store rbac.Store, 
 		redactor.SetAdminContractsResolver(newDBAdminContractsResolver(accessCtrl))
 		redactor.SetEventRuleChecker(newDBEventRuleChecker(accessCtrl))
 		redactor.SetVisibleToUnlockResolver(newDBVisibleToUnlockResolver(accessCtrl))
+	}
+	if logParticipants != nil {
+		// RD-939 Stage A. In production this is the explorer backend
+		// itself — FindLogParticipantTxs is on the ExplorerBackend
+		// interface so the gRPC client and SQL store both satisfy
+		// LogParticipantStore. Accepting the narrower interface here
+		// lets tests substitute a minimal stub without re-implementing
+		// the full backend surface.
+		redactor.SetLogParticipantStore(logParticipants)
 	}
 }
 

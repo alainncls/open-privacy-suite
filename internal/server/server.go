@@ -175,11 +175,11 @@ func (s *Server) explorerReconnectLoop(dbURL string, rbacDB *db.DB, indexerURL s
 		s.explorerMu.Lock()
 		s.explorerStore = backend
 		s.explorerRedactor = explorer.NewRedactionEngine(backend, rbacDB)
-		// Wire ABI / admin / event-rule resolvers so the explorer
-		// redactor mirrors RPC-layer decisions (RD-875 / RD-889 / RD-890
-		// / event-rule wiring fix). One call site, one helper — see
-		// wireExplorerRedactor for why this is consolidated.
-		wireExplorerRedactor(s.explorerRedactor, rbacDB, s.rbacAccessCtrl)
+		// Wire ABI / admin / event-rule / log-participant resolvers so the
+		// explorer redactor mirrors RPC-layer decisions (RD-875 / RD-889 /
+		// RD-890 / RD-939 / event-rule wiring fix). One call site, one
+		// helper — see wireExplorerRedactor for why this is consolidated.
+		wireExplorerRedactor(s.explorerRedactor, rbacDB, s.rbacAccessCtrl, backend)
 		s.explorerMu.Unlock()
 		slog.Info("explorer backend connected — explorer endpoints now available")
 		return
@@ -418,7 +418,14 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	// from RD-875. Without this, the explorer endpoints would still
 	// leak non-indexed addresses from event data on contracts without
 	// a custom ABI.
-	wireExplorerRedactor(s.explorerRedactor, database, s.rbacAccessCtrl)
+	//
+	// RD-939 Stage A: also wires the log-participant store so the
+	// redactor recognises viewers as tx participants when they appear
+	// in indexed address topics of accepted event signatures (Transfer,
+	// Approval, ApprovalForAll, TransferSingle/Batch, Deposit,
+	// Withdrawal). Closes the over-redaction bug where custom-selector
+	// mints to the viewer left them unable to see their own tx.
+	wireExplorerRedactor(s.explorerRedactor, database, s.rbacAccessCtrl, explorerBackend)
 
 	// Start background explorer DB reconnection if initial connection failed
 	if cfg.ExplorerDatabaseURL != "" && explorerSQL == nil {
