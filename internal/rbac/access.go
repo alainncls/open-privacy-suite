@@ -175,6 +175,18 @@ var GlobalBlockedMethods = map[string]bool{
 	strings.ToLower(MethodUninstallFilter):             true,
 }
 
+// orgFreeMetadataMethods are chain-level metadata methods that carry no user or org state.
+// Authenticated users may call these on /rpc without an org_id in the path — the same set
+// the anonymous group allows. Banning and KYC still gate access above this check.
+var orgFreeMetadataMethods = map[string]bool{
+	"eth_blocknumber":    true,
+	"eth_chainid":        true,
+	"eth_gasprice":       true,
+	"net_version":        true,
+	"net_listening":      true,
+	"web3_clientversion": true,
+}
+
 // blockedMethodPrefixes is used for future-proofing (checked after exact match fails)
 var blockedMethodPrefixes = []string{
 	"debug_",
@@ -527,6 +539,12 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		}
 	}
 
+	// Org-free metadata methods (same set as anonymous allowlist) require no org context.
+	// Any valid authenticated user may call these on /rpc without an explicit org_id.
+	if orgFreeMetadataMethods[strings.ToLower(strings.TrimSpace(req.Method))] {
+		return &AccessCheckResult{Allowed: true, UserID: user.ID}, nil
+	}
+
 	// Create OrgContext - handles cross-org isolation from the start
 	// This replaces the scattered getUserOrganizationIDs + getOrgContextForTarget calls
 	targetAddr := strings.ToLower(strings.TrimSpace(req.TargetAddress))
@@ -595,15 +613,36 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 			}, nil
 		}
 	} else {
-		// No explicit org - derive from target address ownership.
+		// No explicit org - derive from target address ownership first,
+		// then fall back to implicit single-org resolution.
 		org = orgCtx.Org()
 		if org == nil {
-			// No target-based org context and no explicit org_id.
-			// Fail closed: the caller must specify an org via /rpc/:org_id.
-			return &AccessCheckResult{
-				Allowed: false,
-				Reason:  "org context required: use /rpc/:org_id or target a registered contract",
-			}, nil
+			userOrgs := orgCtx.UserOrgIDs()
+			if len(userOrgs) == 1 {
+				// Exactly one org: unambiguous — use it without requiring org_id in the path.
+				// Wallets and tools that use a plain /rpc URL work out of the box for
+				// single-org users. Multi-org users must specify /rpc/:org_id.
+				var singleOrgID string
+				for id := range userOrgs {
+					singleOrgID = id
+				}
+				org, err = c.store.GetOrganization(ctx, singleOrgID)
+				if err != nil {
+					return nil, fmt.Errorf("failed to get organization: %w", err)
+				}
+				if org == nil {
+					return &AccessCheckResult{
+						Allowed: false,
+						Reason:  "access denied",
+					}, nil
+				}
+			} else {
+				// 0 orgs: already caught above; 2+ orgs: caller must specify.
+				return &AccessCheckResult{
+					Allowed: false,
+					Reason:  "multiple organizations: use /rpc/:org_id to specify which org",
+				}, nil
+			}
 		}
 	}
 
