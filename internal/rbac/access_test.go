@@ -3560,6 +3560,142 @@ func TestOrgFreeMetadataMethods(t *testing.T) {
 	})
 }
 
+// TestSingleOrgImplicitFallback verifies that a user in exactly one org can call
+// non-metadata methods on /rpc (no org_id in path) and the proxy resolves the
+// org automatically. Users in 2+ orgs must specify /rpc/:org_id.
+func TestSingleOrgImplicitFallback(t *testing.T) {
+	store := NewMockCrossOrgStore()
+	controller := NewAccessController(store, 5*time.Minute)
+	ctx := context.Background()
+
+	// Org and group setup
+	org := &Organization{ID: "org-single", Slug: "single", Name: "Single Org"}
+	store.organizations["org-single"] = org
+	group := &Group{ID: "grp-single", OrgID: "org-single"}
+	store.groupAccess["grp-single"] = &GroupAccess{
+		ID:             "ga-single",
+		GroupID:        "grp-single",
+		AllowedMethods: []string{"eth_getBalance", "eth_call", "eth_blockNumber"},
+		Claims:         []Claim{},
+	}
+
+	// Single-org user
+	user := &User{ID: "u-single", ExternalID: "did:test:single-org", KYC: true, Banned: false}
+	store.users[user.ExternalID] = user
+	store.memberships["u-single"] = []*MembershipWithDetails{
+		{Membership: &UserMembership{ID: "m1", UserID: "u-single", GroupID: "grp-single"}, Group: group},
+	}
+	store.cachedPermissions["u-single:org-single"] = &EffectivePermissions{
+		ID:             "ep-single",
+		UserID:         "u-single",
+		OrgID:          "org-single",
+		AllowedMethods: []string{"eth_getBalance", "eth_call", "eth_blockNumber"},
+		Claims:         []Claim{},
+	}
+
+	t.Run("single-org user: eth_blockNumber without org_id", func(t *testing.T) {
+		res, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+			UserExternalID: user.ExternalID,
+			Method:         "eth_blockNumber",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !res.Allowed {
+			t.Errorf("expected allowed, got denied: %s", res.Reason)
+		}
+	})
+
+	t.Run("single-org user: eth_getBalance without org_id", func(t *testing.T) {
+		res, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+			UserExternalID: user.ExternalID,
+			Method:         "eth_getBalance",
+			Params:         []any{"0x1234567890123456789012345678901234567890", "latest"},
+			TargetAddress:  "0x1234567890123456789012345678901234567890",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !res.Allowed {
+			t.Errorf("expected allowed, got denied: %s", res.Reason)
+		}
+	})
+
+	t.Run("single-org user: explicit org_id still works", func(t *testing.T) {
+		res, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+			UserExternalID: user.ExternalID,
+			OrgID:          "org-single",
+			Method:         "eth_getBalance",
+			Params:         []any{"0x1234567890123456789012345678901234567890", "latest"},
+			TargetAddress:  "0x1234567890123456789012345678901234567890",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !res.Allowed {
+			t.Errorf("expected allowed, got denied: %s", res.Reason)
+		}
+	})
+
+	// Multi-org user — must specify org_id
+	org2 := &Organization{ID: "org-second", Slug: "second", Name: "Second Org"}
+	store.organizations["org-second"] = org2
+	group2 := &Group{ID: "grp-second", OrgID: "org-second"}
+	store.groupAccess["grp-second"] = &GroupAccess{
+		ID:             "ga-second",
+		GroupID:        "grp-second",
+		AllowedMethods: []string{"eth_getBalance"},
+		Claims:         []Claim{},
+	}
+	multiUser := &User{ID: "u-multi", ExternalID: "did:test:multi-org", KYC: true, Banned: false}
+	store.users[multiUser.ExternalID] = multiUser
+	store.memberships["u-multi"] = []*MembershipWithDetails{
+		{Membership: &UserMembership{ID: "m2", UserID: "u-multi", GroupID: "grp-single"}, Group: group},
+		{Membership: &UserMembership{ID: "m3", UserID: "u-multi", GroupID: "grp-second"}, Group: group2},
+	}
+
+	t.Run("multi-org user: eth_getBalance without org_id is denied", func(t *testing.T) {
+		res, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+			UserExternalID: multiUser.ExternalID,
+			Method:         "eth_getBalance",
+			Params:         []any{"0x1234567890123456789012345678901234567890", "latest"},
+			TargetAddress:  "0x1234567890123456789012345678901234567890",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if res.Allowed {
+			t.Errorf("expected denied for multi-org user without org_id")
+		}
+		if !strings.Contains(res.Reason, "multiple organizations") {
+			t.Errorf("expected 'multiple organizations' in reason, got: %s", res.Reason)
+		}
+	})
+
+	t.Run("multi-org user: explicit org_id is allowed", func(t *testing.T) {
+		store.cachedPermissions["u-multi:org-single"] = &EffectivePermissions{
+			ID:             "ep-multi-a",
+			UserID:         "u-multi",
+			OrgID:          "org-single",
+			AllowedMethods: []string{"eth_getBalance"},
+			Claims:         []Claim{},
+		}
+		res, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+			UserExternalID: multiUser.ExternalID,
+			OrgID:          "org-single",
+			Method:         "eth_getBalance",
+			Params:         []any{"0x1234567890123456789012345678901234567890", "latest"},
+			TargetAddress:  "0x1234567890123456789012345678901234567890",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !res.Allowed {
+			t.Errorf("expected allowed with explicit org_id, got denied: %s", res.Reason)
+		}
+	})
+}
+
 // TestFunctionSelectorGateOnlyForCallMethods covers the bug where the
 // "function selector required" check was incorrectly applied to methods
 // that never produce a function selector (eth_getCode). This caused

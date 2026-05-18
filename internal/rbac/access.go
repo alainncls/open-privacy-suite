@@ -613,15 +613,36 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 			}, nil
 		}
 	} else {
-		// No explicit org - derive from target address ownership.
+		// No explicit org - derive from target address ownership first,
+		// then fall back to implicit single-org resolution.
 		org = orgCtx.Org()
 		if org == nil {
-			// No target-based org context and no explicit org_id.
-			// Fail closed: the caller must specify an org via /rpc/:org_id.
-			return &AccessCheckResult{
-				Allowed: false,
-				Reason:  "org context required: use /rpc/:org_id or target a registered contract",
-			}, nil
+			userOrgs := orgCtx.UserOrgIDs()
+			if len(userOrgs) == 1 {
+				// Exactly one org: unambiguous — use it without requiring org_id in the path.
+				// Wallets and tools that use a plain /rpc URL work out of the box for
+				// single-org users. Multi-org users must specify /rpc/:org_id.
+				var singleOrgID string
+				for id := range userOrgs {
+					singleOrgID = id
+				}
+				org, err = c.store.GetOrganization(ctx, singleOrgID)
+				if err != nil {
+					return nil, fmt.Errorf("failed to get organization: %w", err)
+				}
+				if org == nil {
+					return &AccessCheckResult{
+						Allowed: false,
+						Reason:  "access denied",
+					}, nil
+				}
+			} else {
+				// 0 orgs: already caught above; 2+ orgs: caller must specify.
+				return &AccessCheckResult{
+					Allowed: false,
+					Reason:  "multiple organizations: use /rpc/:org_id to specify which org",
+				}, nil
+			}
 		}
 	}
 
