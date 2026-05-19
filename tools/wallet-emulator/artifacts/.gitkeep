@@ -1,0 +1,4 @@
+# Placeholder so `tools/wallet-emulator/artifacts/` exists on a fresh
+# clone. The actual circuit assets (`authV2.wasm`, `authV2.zkey`) are
+# fetched by `make wallet-emulator-fetch-artifacts` (Phase 1b) and
+# gitignored.

@@ -1,0 +1,9 @@
+# Circuit artifacts (auth-v2 .wasm + .zkey). ~175 MB total — fetched
+# from the public Privado/Polygon ID CDN by `make
+# wallet-emulator-fetch-artifacts`. SHA-256 checked by the Makefile.
+artifacts/*
+!artifacts/.gitkeep
+
+# Identity files: contain a private key. Never commit, even for tests.
+*identity*.json
+!example-identity.json
