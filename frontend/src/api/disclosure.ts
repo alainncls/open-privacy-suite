@@ -114,6 +114,11 @@ export const disclosureApi = {
     listRequestsWithFilter: async (filter?: DisclosureFilter) => {
       const params = new URLSearchParams();
       if (filter) {
+        // org_id MUST be passed first (RD-944) — for jwt-admin callers
+        // the backend now defaults to the caller's first admin org when
+        // omitted, but multi-org admins need to specify explicitly to
+        // avoid silent scoping to the wrong org.
+        if (filter.org_id) params.append('org_id', filter.org_id);
         if (filter.status) params.append('status', filter.status);
         if (filter.target_user_id) params.append('target_user_id', filter.target_user_id);
         if (filter.requester_did) params.append('requester_did', filter.requester_did);
@@ -185,6 +190,9 @@ export const disclosureApi = {
     listGrantsWithFilter: async (filter?: DisclosureFilter) => {
       const params = new URLSearchParams();
       if (filter) {
+        // org_id MUST be passed first (RD-944) — see listRequestsWithFilter
+        // for the rationale and backend behaviour.
+        if (filter.org_id) params.append('org_id', filter.org_id);
         if (filter.status) params.append('status', filter.status);
         if (filter.target_user_id) params.append('target_user_id', filter.target_user_id);
         if (filter.requester_did) params.append('requester_did', filter.requester_did);

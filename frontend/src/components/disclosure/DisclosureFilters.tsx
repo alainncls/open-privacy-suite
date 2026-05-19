@@ -25,6 +25,12 @@ interface DisclosureFiltersProps {
   onFilterChange: (filter: DisclosureFilter) => void;
   showStatusFilter?: boolean;
   statusOptions?: DisclosureRequestStatus[];
+  // orgOptions, when supplied with more than one entry, renders an
+  // org switcher above the filter row. The admin disclosure dashboard
+  // populates this from the caller's admin_org_ids ∪
+  // readonly_admin_org_ids; user-side disclosure pages don't pass it
+  // and the switcher stays hidden (RD-944).
+  orgOptions?: { id: string; label: string }[];
 }
 
 const DEFAULT_STATUS_OPTIONS: DisclosureRequestStatus[] = [
@@ -40,6 +46,7 @@ export function DisclosureFilters({
   onFilterChange,
   showStatusFilter = true,
   statusOptions = DEFAULT_STATUS_OPTIONS,
+  orgOptions,
 }: DisclosureFiltersProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -48,7 +55,10 @@ export function DisclosureFilters({
   };
 
   const clearFilters = () => {
-    onFilterChange({});
+    // Preserve org_id — clearing it would silently flip the request to
+    // the backend's first-admin-org default and confuse multi-org
+    // admins who deliberately switched (RD-944).
+    onFilterChange({ org_id: filter.org_id });
   };
 
   const hasActiveFilters =
@@ -58,8 +68,38 @@ export function DisclosureFilters({
     filter.date_from ||
     filter.date_to;
 
+  // Show the org switcher only when the caller actually has a choice.
+  // For single-org admins (or user-side pages that don't pass orgOptions),
+  // the filter.org_id is set by the parent and the user can't change it
+  // here. RD-944.
+  const showOrgSwitcher = (orgOptions?.length ?? 0) > 1;
+
   return (
     <div className="space-y-4">
+      {/* Org switcher (multi-org admins only) */}
+      {showOrgSwitcher && (
+        <div className="flex items-center gap-3">
+          <label className="text-xs text-neutral-500 uppercase tracking-wide">
+            Organisation
+          </label>
+          <Select
+            value={filter.org_id ?? ''}
+            onValueChange={(value) => updateFilter({ org_id: value || undefined })}
+          >
+            <SelectTrigger className="max-w-md">
+              <SelectValue placeholder="Select org" />
+            </SelectTrigger>
+            <SelectContent>
+              {orgOptions!.map((o) => (
+                <SelectItem key={o.id} value={o.id}>
+                  {o.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+
       {/* Main filter bar */}
       <div className="flex items-center gap-3">
         <div className="relative flex-1 max-w-sm">
