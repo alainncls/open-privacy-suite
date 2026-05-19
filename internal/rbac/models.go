@@ -379,6 +379,22 @@ func (r *AccessCheckRequest) EffectiveMethod() string {
 }
 
 // AccessCheckResult represents the result of an access check.
+//
+// SECURITY (RD-934): The Reason field is an OPERATOR-ONLY diagnostic.
+// It is populated with the specific cause of a denial (cardinality of
+// org memberships, missing claim names, target-org context, etc.) so
+// admins can debug RBAC failures from the access log. It MUST NOT be
+// echoed verbatim in a client-facing response body — doing so leaks
+// structural information about the caller's account (number of orgs,
+// claim presence/absence, existence of resources) that an attacker can
+// chain. Past leaks of this class: RD-916, RD-942, RD-944.
+//
+// The /rpc wire path strips this field automatically (jsonrpc_processor
+// returns a fixed "method not found" regardless of Reason). The admin
+// `test-request` endpoint is the only intentional surface that returns
+// it, and only to localhost + X-Admin-Token callers. Anything else
+// that consumes this field should slog it for the operator and
+// respond with a generic opaque message to the client.
 type AccessCheckResult struct {
 	Allowed           bool               `json:"allowed"`
 	AuthRequired      bool               `json:"auth_required,omitempty"`       // True when denial is due to missing authentication (401 vs 403)
