@@ -171,14 +171,36 @@ func (s *Server) createDisclosureRequest(c *gin.Context) {
 // Audit C3: pre-fix the ?org_id= query was honoured without scope
 // check, leaking any org's request list to any tier-2 admin. Now
 // clamped to caller's org_id set.
+//
+// RD-944: when no `org_id` is supplied, JWT admins default to their first
+// full-admin org (matching listDisclosureGrants below) rather than the
+// system default org — the latter is structurally unreachable for any
+// tier-2 admin and always 403s, which broke the dashboard's Disclosure
+// tab in prod. Super-admin / dev mode keeps the system-default fallback
+// for backward compatibility with admin scripts.
 func (s *Server) listDisclosureRequests(c *gin.Context) {
 	filter := &disclosure.DisclosureFilter{}
 
-	// Parse org_id
+	// Parse org_id with the same caller-scope fallback as
+	// listDisclosureGrants — see RD-944.
 	if orgID := c.Query("org_id"); orgID != "" {
 		filter.OrgID = orgID
+	} else if c.GetString("auth_method") == "jwt_admin" {
+		// Default to the first full-admin org. If the caller has none
+		// (RO-only) and supplies no org_id, deny — same shape as the
+		// grants endpoint so the frontend gets symmetric behaviour
+		// across the two parallel requests it fires.
+		if ids, ok := c.Get("admin_org_ids"); ok {
+			if list, ok := ids.([]string); ok && len(list) > 0 {
+				filter.OrgID = list[0]
+			}
+		}
+		if filter.OrgID == "" {
+			respondBadRequest(c, "org_id query parameter is required")
+			return
+		}
 	} else {
-		filter.OrgID = "00000000-0000-0000-0000-000000000001" // Default org
+		filter.OrgID = "00000000-0000-0000-0000-000000000001" // Default org (super-admin / dev)
 	}
 
 	// Cross-org gate: the requested org must be in caller's scope.
