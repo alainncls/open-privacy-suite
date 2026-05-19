@@ -518,17 +518,28 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 		}
 	}
 
-	// Ensure user exists in RBAC system and get their KYC status
-	// New users default to KYC=false; KYC status is updated through admin API
+	// Ensure user exists in RBAC system and get their KYC status. New users
+	// default to KYC=false; KYC status is updated through admin API.
+	//
+	// RD-945 — fail-closed on persistence failure. Pre-fix, an `EnsureUserExists`
+	// error was logged and the auth flow continued, so the caller received a
+	// signed JWT for a DID that has no row in `users`. Downstream code paths
+	// that look up the user by DID then silently degrade (RBAC checks against
+	// a non-existent user, RD-877 metadata methods bypassed because there is
+	// no user to read KYC / ban state from, etc.). Treat persistence failure
+	// the same as any other create-then-issue error in this file: return 500,
+	// no token. The caller will retry.
 	kyc := false
 	var user *rbac.User
 	if s.rbacAccessCtrl != nil {
 		var err error
 		user, err = s.rbacAccessCtrl.EnsureUserExists(c.Request.Context(), userDID, kyc, false)
 		if err != nil {
-			// Log error but continue - auth can proceed without RBAC user creation
-			slog.Warn("failed to ensure RBAC user exists", "user", userDID, "error", err)
-		} else if user != nil {
+			slog.Error("auth: failed to ensure RBAC user exists", "user", userDID, "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to persist user record"})
+			return nil, fmt.Errorf("ensure user exists: %w", err)
+		}
+		if user != nil {
 			if user.Banned {
 				c.JSON(http.StatusForbidden, gin.H{"error": "account is banned"})
 				return nil, fmt.Errorf("account is banned")

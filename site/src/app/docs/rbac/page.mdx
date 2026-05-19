@@ -379,7 +379,40 @@ The list groups endpoint supports optional filters:
 ### Roles and Memberships
 
 <ApiEndpoint method="POST" path="/api/orgs/:org_id/roles" description="Create role with claims" />
-<ApiEndpoint method="POST" path="/api/users/:id/memberships" description="Assign user to a group with a role" />
+<ApiEndpoint method="POST" path="/api/users/:id/memberships" description="Assign user to a group with a role (by user UUID)" />
+<ApiEndpoint method="POST" path="/api/orgs/:org_id/memberships/by-did" description="Onboard by DID — tier-2 admin pulls a DID into their own org without a super-admin handoff (RD-945)" />
+
+#### Onboarding by DID
+
+`POST /api/v1/admin/orgs/:org_id/memberships/by-did` is the canonical path for a tier-2 org admin to add a user to their own org when they only know the user's DID. Before RD-945 the only way to do this was to ask a super-admin to look up the DID's UUID and pass it back — tier-2 admins were structurally blocked even though the action was within their authority.
+
+Request:
+
+```json
+{
+  "did":      "did:iden3:privado:main:2SaubQ6...",
+  "group_id": "<group in :org_id>"
+}
+```
+
+Responses:
+
+| Status | When | Body |
+|---|---|---|
+| `201` | Success | `{"user_id": "...", "membership": {...}}` — `user_id` is the DID's resolved UUID (existing or freshly provisioned); `membership` is the row that was just inserted |
+| `400` | Body missing `did` or `group_id`, or malformed JSON | `{"error": "invalid request body"}` |
+| `403` | Caller does not full-admin `:org_id`, OR `group_id` lives in a different org | Opaque deny — never reveals whether the group exists in another org |
+| `409` | DID is already a member of `group_id` (idempotent repeat) | `{"error": "user is already a member of this group"}` |
+| `500` | DB / RBAC controller failure, or defensive nil-user path | Generic; details in proxy logs only |
+
+**Banned users return 201, not a distinguishable error.** Ban is global state an org admin shouldn't be able to enumerate by probing this endpoint — if a banned DID produced a unique status code, the endpoint would become a ban-status oracle. The membership row is inserted normally; the ban gate fires at auth-time (`auth.go` rejects token issuance for banned users), so the membership is dormant until the ban is lifted.
+
+**Semantics**:
+
+- **ADD, not MOVE.** The endpoint inserts a single membership row. It does NOT touch the user's `default`-org membership if one exists. Removing the user later is a separate DELETE — no cross-org cleanup, no implicit re-add to `default`.
+- **Auto-provisioning.** A previously-unseen DID is created via `EnsureUserExists` with `skipDefaultGroup=true`, so the user lands in the caller's group only. If the same DID later self-authenticates, the auth flow sees an existing row and does not duplicate the default-group assignment.
+- **Cross-org isolation.** The caller is gated on `admin_org_ids` containing `:org_id` (full admin, not read-only). The target `group_id` is re-verified to live in `:org_id` so a malformed group_id from another org is rejected with the opaque deny shape.
+- **Audit log.** Every successful onboarding writes an `rbac_audit_log` entry (`AuditAction=assign`, `ResourceType=membership`) with the actor's DID, the target DID, and `onboarded_via: by-did` in the metadata. Combined with the hash-chain integrity ([Audit Log Integrity](/docs/security/audit-integrity)), every onboarding is tamper-evident.
 
 ## Admin dry-run / impersonation
 
