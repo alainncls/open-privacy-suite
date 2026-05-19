@@ -725,8 +725,14 @@ func TestMembership_JWTAdminCannotAddUserToForeignOrgGroup(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
+	// RD-942 Finding 1: the user-scope gate added at the top of
+	// createUserMembership fires FIRST. Bob has no memberships in alice's
+	// scope (no overlap with admin_org_ids), so requireUserInFullAdminScope
+	// returns errTargetForeignOrg before the group lookup that would have
+	// returned errMembershipForeignOrg. Both protections are in place; the
+	// gate ordering is the documented assertion here.
 	assert.Equal(t, http.StatusForbidden, w.Code)
-	assert.Contains(t, w.Body.String(), errMembershipForeignOrg)
+	assert.Contains(t, w.Body.String(), errTargetForeignOrg)
 
 	// Verify no membership row was inserted.
 	memberships, err := srv.db.ListUserMemberships(ctx, targetUser.ID)
@@ -769,7 +775,10 @@ func TestMembership_JWTAdminCannotRemoveForeignOrgMembership(t *testing.T) {
 
 func TestMembership_JWTAdminCanAddUserToOwnOrgGroup(t *testing.T) {
 	// Positive path: tier-2 admin of orgA can add a user to a normal group
-	// in orgA.
+	// in orgA. RD-942 Finding 1 requires the user to already be in alice's
+	// full-admin scope before she can manage their memberships — Bob must
+	// have at least one membership in orgA already (typically seeded via
+	// the by-did onboarding endpoint, but here we set it up directly).
 	srv, router := setupTieredAdminTestServer(t, "secret")
 	ctx := t.Context()
 
@@ -777,10 +786,24 @@ func TestMembership_JWTAdminCanAddUserToOwnOrgGroup(t *testing.T) {
 	aliceToken, err := srv.jwtService.IssueAccessToken(aliceDID, true)
 	require.NoError(t, err)
 
-	normalGroup := &rbac.Group{ID: uuid.New().String(), OrgID: orgID, Slug: "team", Name: "Team", Path: "team"}
-	require.NoError(t, srv.db.CreateGroup(ctx, normalGroup))
+	// A first group in orgA — Bob's initial membership puts him in alice's
+	// scope. Without this the new requireUserInFullAdminScope gate would
+	// (correctly) reject the request before the group lookup runs.
+	seedGroup := &rbac.Group{ID: uuid.New().String(), OrgID: orgID, Slug: "seed", Name: "Seed", Path: "seed"}
+	require.NoError(t, srv.db.CreateGroup(ctx, seedGroup))
+
 	bob := &rbac.User{ID: uuid.New().String(), ExternalID: "did:test:bob-" + uuid.New().String()[:8], KYC: true}
 	require.NoError(t, srv.db.CreateUser(ctx, bob))
+	require.NoError(t, srv.db.CreateMembership(ctx, &rbac.UserMembership{
+		ID:      uuid.New().String(),
+		UserID:  bob.ID,
+		GroupID: seedGroup.ID,
+		Source:  rbac.MembershipSourceAdmin,
+	}))
+
+	// The actual add: a second group in the same org.
+	normalGroup := &rbac.Group{ID: uuid.New().String(), OrgID: orgID, Slug: "team", Name: "Team", Path: "team"}
+	require.NoError(t, srv.db.CreateGroup(ctx, normalGroup))
 
 	body := map[string]interface{}{"group_id": normalGroup.ID}
 	bodyBytes, _ := json.Marshal(body)
@@ -792,6 +815,100 @@ func TestMembership_JWTAdminCanAddUserToOwnOrgGroup(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusCreated, w.Code)
+}
+
+// TestMembership_JWTAdminCannotAddUnknownUserUUID is the RD-942 Finding 1
+// pinning test: probing with a randomly-generated UUID that has no row in
+// `users` must return 403 errTargetForeignOrg, NOT a 500 FK-violation that
+// would distinguish "user does not exist" from other error codes. Pre-fix,
+// the response-code path was a user-enumeration oracle:
+//
+//	201 Created                  → user exists, not yet in group
+//	409 Conflict                 → user exists and is in group
+//	500 Internal Server Error    → user does NOT exist (FK failed)
+//
+// Post-fix the user-scope gate fires first and returns the same opaque
+// errTargetForeignOrg shape regardless of whether the UUID names a real
+// user or random garbage.
+func TestMembership_JWTAdminCannotAddUnknownUserUUID(t *testing.T) {
+	srv, router := setupTieredAdminTestServer(t, "secret")
+	ctx := t.Context()
+
+	aliceDID, orgID, _ := createOrgAndAdminUser(t, srv)
+	aliceToken, err := srv.jwtService.IssueAccessToken(aliceDID, true)
+	require.NoError(t, err)
+
+	normalGroup := &rbac.Group{ID: uuid.New().String(), OrgID: orgID, Slug: "team-unknown", Name: "Team", Path: "team-unknown"}
+	require.NoError(t, srv.db.CreateGroup(ctx, normalGroup))
+
+	// A UUID that has no row in `users`. Pre-fix this would have surfaced
+	// as a 500 FK-fail, leaking the existence boundary.
+	unknownUUID := uuid.New().String()
+
+	body := map[string]interface{}{"group_id": normalGroup.ID}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/users/"+unknownUUID+"/memberships", bytes.NewReader(bodyBytes))
+	req.Header.Set("Authorization", "Bearer "+aliceToken)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, w.Body.String(), errTargetForeignOrg)
+}
+
+// TestMembership_JWTAdminCannotAddCrossOrgUserUUID — the more pointed leak:
+// a tier-2 admin of orgA learns (somehow — log, support ticket, screenshot)
+// a real user UUID that belongs only to orgB. They must not be able to
+// confirm the UUID is real by attempting an add. Same opaque response shape
+// as "UUID doesn't exist anywhere".
+func TestMembership_JWTAdminCannotAddCrossOrgUserUUID(t *testing.T) {
+	srv, router := setupTieredAdminTestServer(t, "secret")
+	ctx := t.Context()
+
+	aliceDID, orgID, _ := createOrgAndAdminUser(t, srv)
+	aliceToken, err := srv.jwtService.IssueAccessToken(aliceDID, true)
+	require.NoError(t, err)
+
+	normalGroup := &rbac.Group{ID: uuid.New().String(), OrgID: orgID, Slug: "team-cross", Name: "Team", Path: "team-cross"}
+	require.NoError(t, srv.db.CreateGroup(ctx, normalGroup))
+
+	// Bob lives only in orgB — not in alice's scope.
+	orgB := &rbac.Organization{ID: uuid.New().String(), Slug: "org-b-" + uuid.New().String()[:8], Name: "Org B"}
+	require.NoError(t, srv.db.CreateOrganization(ctx, orgB))
+	orgBGroup := &rbac.Group{ID: uuid.New().String(), OrgID: orgB.ID, Slug: "b-grp", Name: "B Grp", Path: "b-grp"}
+	require.NoError(t, srv.db.CreateGroup(ctx, orgBGroup))
+	bob := &rbac.User{ID: uuid.New().String(), ExternalID: "did:test:bob-cross-" + uuid.New().String()[:8], KYC: true}
+	require.NoError(t, srv.db.CreateUser(ctx, bob))
+	require.NoError(t, srv.db.CreateMembership(ctx, &rbac.UserMembership{
+		ID:      uuid.New().String(),
+		UserID:  bob.ID,
+		GroupID: orgBGroup.ID,
+		Source:  rbac.MembershipSourceAdmin,
+	}))
+
+	// Alice tries to add Bob (orgB-only user) to her own org's group. Pre-
+	// fix this returned 201 since there was no user-scope check; post-fix
+	// the gate rejects with the same opaque shape as an unknown-UUID probe.
+	body := map[string]interface{}{"group_id": normalGroup.ID}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/users/"+bob.ID+"/memberships", bytes.NewReader(bodyBytes))
+	req.Header.Set("Authorization", "Bearer "+aliceToken)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, w.Body.String(), errTargetForeignOrg)
+
+	// And no membership was inserted in alice's group.
+	memberships, err := srv.db.ListUserMemberships(ctx, bob.ID)
+	require.NoError(t, err)
+	for _, m := range memberships {
+		assert.NotEqual(t, normalGroup.ID, m.GroupID, "blocked add must not have inserted a row in alice's group")
+	}
 }
 
 // ---------------------------------------------------------------------------

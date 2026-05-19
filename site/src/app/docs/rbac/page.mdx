@@ -379,8 +379,22 @@ The list groups endpoint supports optional filters:
 ### Roles and Memberships
 
 <ApiEndpoint method="POST" path="/api/orgs/:org_id/roles" description="Create role with claims" />
-<ApiEndpoint method="POST" path="/api/users/:id/memberships" description="Assign user to a group with a role (by user UUID)" />
+<ApiEndpoint method="POST" path="/api/users/:id/memberships" description="Assign user to a group with a role (by user UUID; target user must already be in caller's full-admin scope — RD-942)" />
 <ApiEndpoint method="POST" path="/api/orgs/:org_id/memberships/by-did" description="Onboard by DID — tier-2 admin pulls a DID into their own org without a super-admin handoff (RD-945)" />
+
+#### User-scope gate on `POST /users/:id/memberships` (RD-942)
+
+The by-UUID membership endpoint requires the target user to already be in the caller's full-admin scope: at least one of the user's existing memberships must live in an org the caller `is_org_admin` of. Pre-fix, the handler's response codes formed a user-enumeration oracle —
+
+| Response | Meaning |
+| -- | -- |
+| `201 Created` | UUID exists, not yet in group |
+| `409 Conflict` | UUID exists and is already in group |
+| `500 Internal Server Error` | UUID does NOT exist (FK violation) |
+
+— so a tier-2 admin who learned a foreign UUID (via logs, support ticket, screenshot) could verify "this user exists" by attempting an add. UUID space (128 bits) was the only barrier and the response-code distinction turned the handler into a clean primitive for any future leak.
+
+Post-fix the gate fires at the top of the handler and returns the opaque `errTargetForeignOrg` shape for both "UUID doesn't exist anywhere" and "UUID exists in another org you don't admin". Onboarding a previously-unseen DID into your org goes through `POST /orgs/:org_id/memberships/by-did` instead — that endpoint auto-provisions the user and inserts the membership in one round trip, no UUID and no super-admin handoff.
 
 #### Onboarding by DID
 
