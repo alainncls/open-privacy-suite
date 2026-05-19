@@ -295,7 +295,10 @@ func TestBatchMoveCrossOrgRejection(t *testing.T) {
 
 	var result map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
-	assert.Contains(t, result["error"], "does not belong")
+	// RD-934: response is opaque ("batch move failed: invalid request").
+	// The specific "does not belong" reason is logged server-side via slog,
+	// not exposed on the wire — preserving cross-org enumeration resistance.
+	assert.Contains(t, result["error"], "batch move failed")
 }
 
 func TestBatchDeleteGroups(t *testing.T) {
