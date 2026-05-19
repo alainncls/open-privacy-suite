@@ -106,10 +106,12 @@ func TestRD944_ListRequests_JWTAdmin_NoOrgID_PicksOwnOrg(t *testing.T) {
 	assert.Len(t, resp.Requests, 1, "should see the seeded request in caller's own org")
 }
 
-// AC #2 — multi-org tier-2 admin without org_id silently picks one of their orgs
-// (matches listDisclosureGrants' pre-existing list[0] behaviour). Frontend should
-// pass explicit org_id for multi-org admins; tested below.
-func TestRD944_ListRequests_JWTAdmin_MultiOrg_NoOrgID_PicksFirst(t *testing.T) {
+// AC #2 — multi-org tier-2 admin without org_id MUST be rejected with
+// an explicit 400, not silently scoped to one of their orgs. This is
+// the corrected behaviour after the user pushback on the first cut of
+// this PR: implicit fall-back is only acceptable when there is exactly
+// one valid choice; 2+ choices means the caller must pick explicitly.
+func TestRD944_ListRequests_JWTAdmin_MultiOrg_NoOrgID_400(t *testing.T) {
 	srv, _, database := setupTestServerForDisclosure(t)
 	defer database.Close()
 
@@ -124,12 +126,9 @@ func TestRD944_ListRequests_JWTAdmin_MultiOrg_NoOrgID_PicksFirst(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	require.Equal(t, http.StatusOK, w.Code, "multi-org admin without org_id should NOT 403 — default to first full-admin org")
-	var resp disclosure.DisclosureListResult
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	// Should see exactly one request (from list[0] = orgA), not both — this
-	// is the same shape as listDisclosureGrants today.
-	assert.Len(t, resp.Requests, 1, "multi-org admin default picks the first admin org only")
+	require.Equalf(t, http.StatusBadRequest, w.Code,
+		"multi-org admin without org_id must get 400 — silently scoping to first admin org was the bug we just removed. body=%s",
+		w.Body.String())
 }
 
 // AC #2 continued — explicit org_id allows multi-org admin to choose their other org.
@@ -191,21 +190,104 @@ func TestRD944_ListRequests_SuperAdmin_NoOrgID_UsesSystemDefault(t *testing.T) {
 	require.Equalf(t, http.StatusOK, w.Code, "super-admin / dev caller without org_id must still succeed (falls back to system default). body=%s", w.Body.String())
 }
 
-// AC #5 — RO-admin only (no full admin orgs) without org_id is denied
-// with a clear 400, not silently scoped to a random org.
-func TestRD944_ListRequests_ROAdminOnly_NoOrgID_400(t *testing.T) {
+// AC #5 — single-RO-admin without org_id: single valid choice → fall
+// back. RO-admin in EXACTLY one org is the same shape as full-admin in
+// exactly one org from the resolver's perspective. Cross-org gate
+// downstream still re-verifies via requireTargetInScope.
+func TestRD944_ListRequests_SingleROAdmin_NoOrgID_PicksTheROOrg(t *testing.T) {
 	srv, _, database := setupTestServerForDisclosure(t)
 	defer database.Close()
 
-	orgA := createTestOrgForHandler(t, database, "rd944-ro-only")
-	_ = orgA
+	orgA := createTestOrgForHandler(t, database, "rd944-ro-single")
+	_ = seedRequest(t, database, orgA)
 
-	// admin_org_ids = empty slice (no full-admin orgs), readonly_admin_org_ids = [orgA]
 	router := setupDisclosureRouterWithAuth(srv, fakeAdminAuth("jwt_admin", []string{}, []string{orgA}))
 
 	req := httptest.NewRequest("GET", "/api/disclosure/requests", nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	require.Equalf(t, http.StatusBadRequest, w.Code, "RO-admin only without org_id must get 400, not silent system-default fallback. body=%s", w.Body.String())
+	require.Equalf(t, http.StatusOK, w.Code,
+		"single-RO-admin (exactly one scoped org) without org_id falls back to that org. body=%s", w.Body.String())
+	var resp disclosure.DisclosureListResult
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Len(t, resp.Requests, 1)
+}
+
+// AC #6 — mixed scope (full admin in orgA + RO admin in orgB): TWO
+// distinct orgs in scope. Caller must specify which one.
+func TestRD944_ListRequests_FullPlusROAdmin_NoOrgID_400(t *testing.T) {
+	srv, _, database := setupTestServerForDisclosure(t)
+	defer database.Close()
+
+	orgA := createTestOrgForHandler(t, database, "rd944-mixed-full")
+	orgB := createTestOrgForHandler(t, database, "rd944-mixed-ro")
+
+	router := setupDisclosureRouterWithAuth(srv, fakeAdminAuth("jwt_admin", []string{orgA}, []string{orgB}))
+
+	req := httptest.NewRequest("GET", "/api/disclosure/requests", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equalf(t, http.StatusBadRequest, w.Code,
+		"full+RO admin (2 distinct orgs in scope) without org_id must get 400, same as multi-full-admin. body=%s",
+		w.Body.String())
+}
+
+// AC #7 — RO-only with no orgs at all (shouldn't happen given the
+// middleware established jwt_admin, but defensive): 400 not a panic.
+func TestRD944_ListRequests_NoAdminScope_NoOrgID_400(t *testing.T) {
+	srv, _, database := setupTestServerForDisclosure(t)
+	defer database.Close()
+
+	router := setupDisclosureRouterWithAuth(srv, fakeAdminAuth("jwt_admin", []string{}, []string{}))
+
+	req := httptest.NewRequest("GET", "/api/disclosure/requests", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code,
+		"jwt_admin with no admin scope at all (defensive) must 400 without panicking")
+}
+
+// AC #8 — listDisclosureGrants applies the same explicit-over-implicit
+// rule. Pre-fix it silently picked admin_org_ids[0] for multi-org admins;
+// post-fix multi-org admins without `org_id` get 400 here too, so the
+// dashboard's two parallel requests behave symmetrically.
+func TestRD944_ListGrants_JWTAdmin_MultiOrg_NoOrgID_400(t *testing.T) {
+	srv, _, database := setupTestServerForDisclosure(t)
+	defer database.Close()
+
+	orgA := createTestOrgForHandler(t, database, "rd944-grants-multiA")
+	orgB := createTestOrgForHandler(t, database, "rd944-grants-multiB")
+	_ = orgA
+	_ = orgB
+
+	router := setupDisclosureRouterWithAuth(srv, fakeAdminAuth("jwt_admin", []string{orgA, orgB}, nil))
+
+	req := httptest.NewRequest("GET", "/api/disclosure/grants", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equalf(t, http.StatusBadRequest, w.Code,
+		"multi-org admin without org_id on /grants must get 400 — symmetric with /requests. body=%s",
+		w.Body.String())
+}
+
+// AC #9 — listDisclosureGrants single-org admin without org_id: fall
+// back to caller's only org (the legitimate use of the implicit pick).
+func TestRD944_ListGrants_JWTAdmin_SingleOrg_NoOrgID_OK(t *testing.T) {
+	srv, _, database := setupTestServerForDisclosure(t)
+	defer database.Close()
+
+	orgA := createTestOrgForHandler(t, database, "rd944-grants-singleA")
+
+	router := setupDisclosureRouterWithAuth(srv, fakeAdminAuth("jwt_admin", []string{orgA}, nil))
+
+	req := httptest.NewRequest("GET", "/api/disclosure/grants", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equalf(t, http.StatusOK, w.Code,
+		"single-org admin without org_id on /grants falls back to caller's only org. body=%s", w.Body.String())
 }
