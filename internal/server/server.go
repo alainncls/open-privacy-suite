@@ -1404,7 +1404,12 @@ type TestRequestResponse struct {
 func (s *Server) handleTestRequest(c *gin.Context) {
 	var input TestRequestInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		// gin validator messages name struct fields — that's fine for a
+		// localhost-only admin endpoint, but echo the error type only,
+		// not err.Error() verbatim (which would also surface wrapped
+		// chains on custom validators). RD-934.
+		slog.Warn("test-request: invalid body", "err", err, "ip", c.ClientIP())
+		respondBadRequest(c, "invalid request body")
 		return
 	}
 
@@ -1413,7 +1418,10 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 	if input.JWTToken != "" {
 		claims, err := s.jwtService.ValidateAccessToken(input.JWTToken)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JWT: " + err.Error()})
+			// JWT validator errors can include token-shape internals; do
+			// not echo. RD-934.
+			slog.Warn("test-request: jwt validate failed", "err", err, "ip", c.ClientIP())
+			respondBadRequest(c, "invalid JWT")
 			return
 		}
 		testIdentity = claims.Subject
@@ -1436,16 +1444,25 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 	result, err := s.rbacAccessCtrl.CheckAccess(c.Request.Context(), accessReq)
 	if err != nil {
 		s.db.LogAccess(c.Request.Context(), testIdentity, input.Method, http.StatusInternalServerError, c.ClientIP())
+		// CheckAccess errors expose RBAC internals (DB shape, cache
+		// state, store-layer codes) — operator-only. RD-934.
+		slog.Error("test-request: CheckAccess errored", "identity", testIdentity, "method", input.Method, "err", err)
 		c.JSON(http.StatusInternalServerError, TestRequestResponse{
-			Error:    "access check failed: " + err.Error(),
+			Error:    "access check failed",
 			Identity: testIdentity,
 		})
 		return
 	}
 	if !result.Allowed {
 		s.db.LogAccess(c.Request.Context(), testIdentity, input.Method, http.StatusForbidden, c.ClientIP())
+		// AccessCheckResult.Reason is operator-only by contract (see
+		// the type's doc-comment in internal/rbac/models.go). The
+		// previous behaviour echoed it verbatim, which would leak the
+		// RD-877 cardinality-guard message ("multiple organizations…")
+		// and similar diagnostics to admin scripts. RD-934.
+		slog.Info("test-request: RBAC denied", "identity", testIdentity, "method", input.Method, "reason", result.Reason)
 		c.JSON(http.StatusForbidden, TestRequestResponse{
-			Error:    result.Reason,
+			Error:    "access denied",
 			Identity: testIdentity,
 		})
 		return
