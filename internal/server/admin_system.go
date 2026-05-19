@@ -102,7 +102,8 @@ func (s *Server) handlePostEthCallTracing(c *gin.Context) {
 
 	var req systemEthCallTracingToggleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequestAndLog(c, "invalid request body",
+			"admin_system: invalid eth-call-tracing toggle body", "err", err)
 		return
 	}
 	if req.Enabled == nil {

@@ -177,7 +177,8 @@ func (s *Server) listRBACUsers(c *gin.Context) {
 
 	users, total, err := s.db.ListUsersFilteredPaginated(c.Request.Context(), filter, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalErrorAndLog(c, "failed to list users",
+			"admin_rbac_user: ListUsersFilteredPaginated failed", "err", err)
 		return
 	}
 
@@ -188,7 +189,8 @@ func (s *Server) listRBACUsers(c *gin.Context) {
 
 	memberships, err := s.db.ListGroupMembershipsForUsers(c.Request.Context(), userIDs, filter.ScopedOrgIDs)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalErrorAndLog(c, "failed to list users",
+			"admin_rbac_user: ListGroupMembershipsForUsers failed", "err", err)
 		return
 	}
 
@@ -246,7 +248,8 @@ func (s *Server) updateRBACUser(c *gin.Context) {
 		Metadata map[string]any `json:"metadata"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequestAndLog(c, "invalid request body",
+			"admin_rbac_user: invalid update body", "user_id", userID, "err", err)
 		return
 	}
 
@@ -323,7 +326,8 @@ func (s *Server) getUserLinkedAddresses(c *gin.Context) {
 	// Get linked ETH addresses
 	links, err := s.db.GetEthAddressesByDID(c.Request.Context(), user.ExternalID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalErrorAndLog(c, "failed to read linked addresses",
+			"admin_rbac_user: GetEthAddressesByDID failed", "user_id", user.ID, "err", err)
 		return
 	}
 

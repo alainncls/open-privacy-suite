@@ -304,14 +304,17 @@ func (s *Server) handleAzureCallback(c *gin.Context) {
 	// Issue access token (short-lived)
 	accessToken, err := s.jwtService.IssueAccessToken(subject, kyc)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to issue access token: " + err.Error()})
+		// JWT signing errors expose key-material state; never to client. RD-934.
+		respondInternalErrorAndLog(c, "failed to issue access token",
+			"auth_azure: IssueAccessToken failed", "subject", subject, "err", err)
 		return
 	}
 
 	// Issue refresh token (long-lived)
 	refreshToken, err := s.jwtService.IssueRefreshToken(subject)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to issue refresh token: " + err.Error()})
+		respondInternalErrorAndLog(c, "failed to issue refresh token",
+			"auth_azure: IssueRefreshToken failed", "subject", subject, "err", err)
 		return
 	}
 
@@ -319,7 +322,8 @@ func (s *Server) handleAzureCallback(c *gin.Context) {
 	tokenHash := auth.HashToken(refreshToken)
 	expiresAt := time.Now().Add(RefreshTokenTTL)
 	if err := s.db.SaveRefreshToken(c.Request.Context(), tokenHash, subject, expiresAt); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save refresh token: " + err.Error()})
+		respondInternalErrorAndLog(c, "failed to save refresh token",
+			"auth_azure: SaveRefreshToken failed", "subject", subject, "err", err)
 		return
 	}
 

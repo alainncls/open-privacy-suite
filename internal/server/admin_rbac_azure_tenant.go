@@ -47,7 +47,8 @@ func (s *Server) createAzureTenant(c *gin.Context) {
 		AutoProvision  *bool   `json:"auto_provision"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		respondBadRequest(c, err.Error())
+		respondBadRequestAndLog(c, "invalid request body",
+			"admin_rbac_azure_tenant: invalid create body", "err", err)
 		return
 	}
 
@@ -156,7 +157,8 @@ func (s *Server) updateAzureTenant(c *gin.Context) {
 		AutoProvision  *bool   `json:"auto_provision"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		respondBadRequest(c, err.Error())
+		respondBadRequestAndLog(c, "invalid request body",
+			"admin_rbac_azure_tenant: invalid update body", "err", err)
 		return
 	}
 

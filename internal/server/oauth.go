@@ -565,7 +565,11 @@ func (s *Server) handleOAuthCallback(c *gin.Context) {
 				})
 				return
 			}
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "JWZ verification failed: " + err.Error()})
+			// JWZ verifier errors include iden3 / circuit internals (state
+			// contract resolver state, proof shape, issuer DID) that we
+			// don't expose to unauthenticated callers. RD-934.
+			slog.Warn("oauth: JWZ verification failed", "err", err, "ip", c.ClientIP())
+			respondUnauthorized(c, "verification failed")
 			return
 		}
 	}
