@@ -3,7 +3,7 @@
 	contracts-install contracts-build contracts-deploy authproxy \
 	stop restart logs status \
 	demo demo-record demo-process demo-all demo-setup demo-clean \
-	setup-hooks ensure-hooks
+	setup-hooks ensure-hooks wallet-emulator-fetch-artifacts
 
 # Auto-install hooks on first make usage (works in worktrees where .git is a file)
 GIT_DIR := $(shell git rev-parse --git-dir)
@@ -345,3 +345,54 @@ proto-gen:
 proto-lint:
 	@which buf > /dev/null || (echo "buf not installed"; exit 1)
 	buf lint
+
+## wallet-emulator-fetch-artifacts: Download authV2 circuit .wasm + .zkey
+##   into tools/wallet-emulator/artifacts/ and verify SHA-256 checksums.
+##
+##   Source: canonical iden3 / Polygon ID public artifact bucket. See README.md.
+##
+##   NOTE (RD-947 Phase 1c): the SHA-256 values below are placeholders.
+##   Pin them to the real published hashes before merging to a release
+##   branch — running with TODO_PIN_SHA256 will intentionally fail the
+##   checksum step. This is by design: we will NOT silently accept an
+##   unverified artifact.
+WALLET_EMULATOR_ARTIFACTS_DIR := tools/wallet-emulator/artifacts
+# TODO(RD-947 Phase 1c): confirm canonical source. The polygonid/circuits
+# release page on GitHub also publishes pinned tarballs — once we pick a
+# specific release, update WASM_URL/ZKEY_URL to that release asset.
+WALLET_EMULATOR_WASM_URL := https://iden3-circuits-bucket.s3.eu-west-1.amazonaws.com/authV2/circuit.wasm
+WALLET_EMULATOR_ZKEY_URL := https://iden3-circuits-bucket.s3.eu-west-1.amazonaws.com/authV2/circuit_final.zkey
+# TODO(RD-947 Phase 1c): replace with real SHA-256 hashes. Until then the
+# target will fail (intentionally) on the checksum step.
+WALLET_EMULATOR_WASM_SHA256 := TODO_PIN_SHA256
+WALLET_EMULATOR_ZKEY_SHA256 := TODO_PIN_SHA256
+
+.PHONY: wallet-emulator-fetch-artifacts
+wallet-emulator-fetch-artifacts:
+	@mkdir -p $(WALLET_EMULATOR_ARTIFACTS_DIR)
+	@echo "Downloading authV2.wasm ..."
+	@curl -fSL "$(WALLET_EMULATOR_WASM_URL)" -o "$(WALLET_EMULATOR_ARTIFACTS_DIR)/authV2.wasm"
+	@echo "Downloading authV2.zkey ..."
+	@curl -fSL "$(WALLET_EMULATOR_ZKEY_URL)" -o "$(WALLET_EMULATOR_ARTIFACTS_DIR)/authV2.zkey"
+	@echo "Verifying SHA-256 ..."
+	@actual_wasm=$$(shasum -a 256 "$(WALLET_EMULATOR_ARTIFACTS_DIR)/authV2.wasm" | awk '{print $$1}'); \
+	 if [ "$$actual_wasm" != "$(WALLET_EMULATOR_WASM_SHA256)" ]; then \
+	   echo "FAIL: authV2.wasm sha256 mismatch"; \
+	   echo "  expected: $(WALLET_EMULATOR_WASM_SHA256)"; \
+	   echo "  actual:   $$actual_wasm"; \
+	   echo "  hint: if expected is TODO_PIN_SHA256, this target is Phase 1c — pin the real hash in the Makefile."; \
+	   rm -f "$(WALLET_EMULATOR_ARTIFACTS_DIR)/authV2.wasm" "$(WALLET_EMULATOR_ARTIFACTS_DIR)/authV2.zkey"; \
+	   exit 1; \
+	 fi
+	@actual_zkey=$$(shasum -a 256 "$(WALLET_EMULATOR_ARTIFACTS_DIR)/authV2.zkey" | awk '{print $$1}'); \
+	 if [ "$$actual_zkey" != "$(WALLET_EMULATOR_ZKEY_SHA256)" ]; then \
+	   echo "FAIL: authV2.zkey sha256 mismatch"; \
+	   echo "  expected: $(WALLET_EMULATOR_ZKEY_SHA256)"; \
+	   echo "  actual:   $$actual_zkey"; \
+	   echo "  hint: if expected is TODO_PIN_SHA256, this target is Phase 1c — pin the real hash in the Makefile."; \
+	   rm -f "$(WALLET_EMULATOR_ARTIFACTS_DIR)/authV2.wasm" "$(WALLET_EMULATOR_ARTIFACTS_DIR)/authV2.zkey"; \
+	   exit 1; \
+	 fi
+	@wasm_size=$$(wc -c < "$(WALLET_EMULATOR_ARTIFACTS_DIR)/authV2.wasm" | tr -d ' '); \
+	 zkey_size=$$(wc -c < "$(WALLET_EMULATOR_ARTIFACTS_DIR)/authV2.zkey" | tr -d ' '); \
+	 echo "OK: $(WALLET_EMULATOR_ARTIFACTS_DIR)/authV2.wasm ($$wasm_size bytes), $(WALLET_EMULATOR_ARTIFACTS_DIR)/authV2.zkey ($$zkey_size bytes)"

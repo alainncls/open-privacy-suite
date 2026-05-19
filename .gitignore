@@ -107,6 +107,12 @@ out/
 # Git worktrees
 .worktrees/
 
+# Wallet-emulator circuit artifacts (large binaries, fetched via Makefile)
+tools/wallet-emulator/artifacts/*.wasm
+tools/wallet-emulator/artifacts/*.zkey
+# Wallet-emulator built binary
+tools/wallet-emulator/wallet-emulator
+
 # Built binaries (root level)
 /privacy-proxy
 /server
