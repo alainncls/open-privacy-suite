@@ -400,11 +400,12 @@ Responses:
 | Status | When | Body |
 |---|---|---|
 | `201` | Success | `{"user_id": "...", "membership": {...}}` — `user_id` is the DID's resolved UUID (existing or freshly provisioned); `membership` is the row that was just inserted |
-| `400` | Body missing `did` or `group_id` | `{"error": "invalid request body"}` |
+| `400` | Body missing `did` or `group_id`, or malformed JSON | `{"error": "invalid request body"}` |
 | `403` | Caller does not full-admin `:org_id`, OR `group_id` lives in a different org | Opaque deny — never reveals whether the group exists in another org |
-| `404` | Banned DID, or `EnsureUserExists` returned no user (defensive) | `{"error": "user not found"}` — never surfaces ban status to the caller |
 | `409` | DID is already a member of `group_id` (idempotent repeat) | `{"error": "user is already a member of this group"}` |
-| `500` | DB / RBAC controller failure | Generic; details in proxy logs only |
+| `500` | DB / RBAC controller failure, or defensive nil-user path | Generic; details in proxy logs only |
+
+**Banned users return 201, not a distinguishable error.** Ban is global state an org admin shouldn't be able to enumerate by probing this endpoint — if a banned DID produced a unique status code, the endpoint would become a ban-status oracle. The membership row is inserted normally; the ban gate fires at auth-time (`auth.go` rejects token issuance for banned users), so the membership is dormant until the ban is lifted.
 
 **Semantics**:
 

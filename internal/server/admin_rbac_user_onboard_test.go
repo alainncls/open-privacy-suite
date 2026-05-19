@@ -182,9 +182,13 @@ func TestOnboardByDID_Repeat_409(t *testing.T) {
 	assert.Contains(t, w2.Body.String(), "already a member")
 }
 
-func TestOnboardByDID_BannedUser_404(t *testing.T) {
-	// A banned user must look identical to an absent user from the org
-	// admin's perspective — never surface ban status to a tier-2 admin.
+func TestOnboardByDID_BannedUser_NoStatusLeak(t *testing.T) {
+	// A banned user must NOT be distinguishable from a non-banned user via
+	// this endpoint — ban is global state an org admin shouldn't enumerate
+	// by probing. We accept the membership row; the auth-time ban gate
+	// (auth.go's Banned check) keeps the banned user from actually using
+	// it. Response shape and body must match an unbanned 201 byte-for-byte
+	// except for the unique IDs.
 	srv, router := setupTieredAdminTestServer(t, "secret")
 	ctx := t.Context()
 
@@ -200,10 +204,23 @@ func TestOnboardByDID_BannedUser_404(t *testing.T) {
 	require.NoError(t, srv.db.CreateUser(ctx, bannedUser))
 
 	w := postOnboardByDID(t, router, orgID, aliceToken, onboardBody{DID: bannedDID, GroupID: normalGroup.ID})
-	assert.Equal(t, http.StatusNotFound, w.Code)
-	// Ban status must not leak — body should say "user not found", never "banned".
-	assert.Contains(t, w.Body.String(), "user not found")
+
+	// 201 — banned status is invisible to the caller. No "banned" string
+	// must appear in the body either.
+	require.Equal(t, http.StatusCreated, w.Code, "ban status must not produce a distinguishable response; body: %s", w.Body.String())
 	assert.NotContains(t, w.Body.String(), "banned")
+
+	// The membership row was created — ban gate fires at auth-time, not
+	// here. Verify the row exists.
+	memberships, err := srv.db.ListUserMemberships(ctx, bannedUser.ID)
+	require.NoError(t, err)
+	var found bool
+	for _, m := range memberships {
+		if m.GroupID == normalGroup.ID {
+			found = true
+		}
+	}
+	assert.True(t, found, "membership must be created even for banned user (ban gate is at auth-time)")
 }
 
 func TestOnboardByDID_BadBody_400(t *testing.T) {

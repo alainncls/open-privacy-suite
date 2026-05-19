@@ -601,18 +601,19 @@ func (s *Server) createMembershipByDID(c *gin.Context) {
 		return
 	}
 	if user == nil {
-		// Defensive: EnsureUserExists shouldn't return (nil, nil). Treat as
-		// not-found rather than panicking; opaque shape per the
-		// information-leak rules in the ticket.
-		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		// Defensive: EnsureUserExists shouldn't return (nil, nil). If it
+		// somehow does, treat as a server-side failure rather than leaking
+		// it as a distinguishable 404 — the caller can retry on 500.
+		slog.Error("onboard-by-did: ensure user returned nil without error", "did", input.DID, "org_id", orgID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to onboard user"})
 		return
 	}
-	if user.Banned {
-		// Do not surface ban status to an org admin who may be probing.
-		// The same opaque "not found" deny shape as an unknown DID.
-		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
-		return
-	}
+	// We deliberately do NOT special-case banned users here. Ban is global
+	// state an org admin shouldn't be able to enumerate by probing this
+	// endpoint (201 vs 404 would distinguish "active" from "banned"). A
+	// banned user can be inserted into a group; the ban gate fires at
+	// auth-time (auth.go's Banned check rejects token issuance) and the
+	// membership row is dormant until the ban is lifted.
 
 	membership := &rbac.UserMembership{
 		ID:      uuid.New().String(),
