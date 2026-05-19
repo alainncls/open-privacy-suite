@@ -70,6 +70,12 @@ func (s *Server) registerRBACRoutes(api *gin.RouterGroup) {
 	api.POST("/users/:user_id/memberships", s.createUserMembership)
 	api.DELETE("/users/:user_id/memberships/:membership_id", s.deleteUserMembership)
 
+	// RD-945: tier-2 onboard-by-DID. Lets a full-admin of :org_id pull a
+	// known DID into their own org without a super-admin handoff. Same
+	// cross-org gate as createUserMembership; calls EnsureUserExists so
+	// not-yet-seen DIDs are provisioned on first onboarding.
+	api.POST("/orgs/:org_id/memberships/by-did", s.createMembershipByDID)
+
 	// Audit Logs
 	api.GET("/audit-logs", s.listAuditLogs)
 

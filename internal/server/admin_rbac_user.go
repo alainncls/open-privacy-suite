@@ -518,6 +518,140 @@ func (s *Server) createUserMembership(c *gin.Context) {
 	c.JSON(http.StatusCreated, membership)
 }
 
+// createMembershipByDID is the tier-2 onboarding path: an org admin can pull
+// a known DID into their own org without going through super-admin. The DID
+// → user_id translation that `createUserMembership` skips is done here by
+// calling `EnsureUserExists` — so a not-yet-seen DID is provisioned on first
+// onboarding instead of requiring a separate auth event first.
+//
+// Cross-org isolation (RD-945):
+//
+//   - Caller must full-admin :org_id (jwt_admin gate). Super-admin and dev
+//     callers bypass.
+//   - target group must live in :org_id. A tier-2 admin of Org A passing a
+//     group_id from Org B is rejected with the same opaque "access denied"
+//     string used by the sibling membership endpoints — never reveal
+//     whether the group exists in another org.
+//
+// Information-leak safety: the response never echoes the user's existing
+// memberships in other orgs (we return user_id + the membership row we just
+// created, nothing more). A banned user is treated as not-found rather than
+// surfacing the ban status to an org admin who may not be entitled to it.
+//
+// Default-group semantics: when EnsureUserExists creates a brand-new user
+// here, we pass skipDefaultGroup=true. Users onboarded directly into a
+// caller's group should not also land in `default` — the membership goes
+// only where the admin asked. If the user already exists with a `default`
+// membership (e.g. they previously self-authenticated on a different org's
+// surface), this endpoint does not touch that membership. ADD semantics, not
+// MOVE — symmetric with the existing remove path.
+func (s *Server) createMembershipByDID(c *gin.Context) {
+	orgID := c.Param("org_id")
+
+	var input struct {
+		DID     string `json:"did" binding:"required"`
+		GroupID string `json:"group_id" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+
+	// Cross-org gate. Same shape as the sibling createUserMembership: full
+	// admin in :org_id, super-admin / dev bypass.
+	if allowedOrgIDs, isSuperOrDev := jwtAdminFullAdminOrgIDs(c); !isSuperOrDev {
+		if !slices.Contains(allowedOrgIDs, orgID) {
+			c.JSON(http.StatusForbidden, gin.H{"error": errTargetForeignOrg})
+			return
+		}
+	}
+
+	// Target group must live in :org_id. Look it up and verify directly —
+	// never trust the path-param org_id alone (a malformed group_id from
+	// another org would otherwise sneak in under the caller's admin scope).
+	group, err := s.db.GetGroup(c.Request.Context(), input.GroupID)
+	if err != nil {
+		slog.Error("onboard-by-did: get group failed", "group_id", input.GroupID, "org_id", orgID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create membership"})
+		return
+	}
+	if group == nil || group.OrgID != orgID {
+		// Opaque "not in your scope" — collapses "group exists in another
+		// org" with "group does not exist at all" so org admins cannot
+		// probe foreign-org group IDs.
+		c.JSON(http.StatusForbidden, gin.H{"error": errMembershipForeignOrg})
+		return
+	}
+
+	// DID → user_id translation. If the DID is not yet in `users`, create the
+	// row (mirroring first-login behaviour). KYC starts false; KYC remains
+	// admin-managed. skipDefaultGroup=true so the user does not also end up
+	// in `default` — the admin explicitly chose which group to put them in.
+	if s.rbacAccessCtrl == nil {
+		// No RBAC controller wired (test scaffolding). Treat as internal
+		// error rather than silently succeeding with a phantom user.
+		slog.Error("onboard-by-did: rbac controller not configured")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create membership"})
+		return
+	}
+	user, err := s.rbacAccessCtrl.EnsureUserExists(c.Request.Context(), input.DID, false, true)
+	if err != nil {
+		slog.Error("onboard-by-did: ensure user", "did", input.DID, "org_id", orgID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to onboard user"})
+		return
+	}
+	if user == nil {
+		// Defensive: EnsureUserExists shouldn't return (nil, nil). Treat as
+		// not-found rather than panicking; opaque shape per the
+		// information-leak rules in the ticket.
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+	if user.Banned {
+		// Do not surface ban status to an org admin who may be probing.
+		// The same opaque "not found" deny shape as an unknown DID.
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+
+	membership := &rbac.UserMembership{
+		ID:      uuid.New().String(),
+		UserID:  user.ID,
+		GroupID: input.GroupID,
+		Source:  rbac.MembershipSourceAdmin,
+	}
+
+	if err := s.db.CreateMembership(c.Request.Context(), membership); err != nil {
+		// Idempotent repeat — the user is already in this group. Same 409
+		// shape and message as the sibling endpoint so existing helpers
+		// detect it identically.
+		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
+			c.JSON(http.StatusConflict, gin.H{"error": "user is already a member of this group"})
+			return
+		}
+		slog.Error("onboard-by-did: create membership failed", "user_id", user.ID, "group_id", input.GroupID, "org_id", orgID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create membership"})
+		return
+	}
+
+	s.rbacAccessCtrl.InvalidateUser(c.Request.Context(), user.ID)
+
+	s.recordAuditActionScoped(c, rbac.AuditActionAssign, rbac.ResourceTypeMembership, membership.ID, group.Name, group.OrgID,
+		nil,
+		map[string]any{
+			"user_id":       user.ID,
+			"group_id":      group.ID,
+			"org_id":        group.OrgID,
+			"did":           input.DID,
+			"onboarded_via": "by-did",
+		})
+
+	c.JSON(http.StatusCreated, gin.H{
+		"user_id":    user.ID,
+		"membership": membership,
+	})
+}
+
 func (s *Server) deleteUserMembership(c *gin.Context) {
 	userID := c.Param("user_id")
 	membershipID := c.Param("membership_id")

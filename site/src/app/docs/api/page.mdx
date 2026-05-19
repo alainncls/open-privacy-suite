@@ -341,7 +341,8 @@ Available claims: `deploy`, `admin`, `upgrade`
 | GET | `/api/users/:id` | Get user |
 | PUT | `/api/users/:id` | Update user |
 | GET | `/api/users/:id/memberships` | List memberships |
-| POST | `/api/users/:id/memberships` | Create membership |
+| POST | `/api/users/:id/memberships` | Create membership (by user UUID) |
+| POST | `/api/orgs/:org_id/memberships/by-did` | Onboard by DID — tier-2 admin pulls a known/unknown DID into their own org without a super-admin handoff (RD-945) |
 | DELETE | `/api/users/:id/memberships/:mid` | Delete membership |
 
 **Update user:**
