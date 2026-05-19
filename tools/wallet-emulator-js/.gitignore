@@ -1,0 +1,14 @@
+node_modules/
+dist/
+package-lock.json
+
+# Identity files contain a private key. Never commit, even for tests.
+*identity*.json
+!example-identity.json
+
+# Wallet state directory created by `identity init`.
+.wallet-state/
+
+# Local env overrides.
+.env
+.env.*.local
