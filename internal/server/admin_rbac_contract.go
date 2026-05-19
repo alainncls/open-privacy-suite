@@ -32,7 +32,8 @@ func (s *Server) listContracts(c *gin.Context) {
 
 	contracts, total, err := s.db.ListContractsFiltered(c.Request.Context(), orgID, limit, offset, filter)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalErrorAndLog(c, "failed to list contracts",
+			"admin_rbac_contract: ListContractsFiltered failed", "org_id", orgID, "err", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": contracts, "total": total, "limit": limit, "offset": offset})
@@ -47,7 +48,8 @@ func (s *Server) createContract(c *gin.Context) {
 		Metadata map[string]any `json:"metadata"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequestAndLog(c, "invalid request body",
+			"admin_rbac_contract: invalid createContract body", "org_id", orgID, "err", err)
 		return
 	}
 
@@ -74,7 +76,9 @@ func (s *Server) createContract(c *gin.Context) {
 			c.JSON(http.StatusConflict, gin.H{"error": "contract with this address already exists in this organization"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalErrorAndLog(c, "failed to create contract",
+			"admin_rbac_contract: CreateContract failed",
+			"org_id", orgID, "address", contract.Address, "err", err)
 		return
 	}
 
@@ -87,7 +91,9 @@ func (s *Server) getContract(c *gin.Context) {
 
 	contract, err := s.db.GetContractByAddress(c.Request.Context(), orgID, address)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalErrorAndLog(c, "failed to read contract",
+			"admin_rbac_contract: GetContractByAddress failed (getContract)",
+			"org_id", orgID, "address", address, "err", err)
 		return
 	}
 	if contract == nil {
@@ -103,7 +109,9 @@ func (s *Server) updateContract(c *gin.Context) {
 
 	contract, err := s.db.GetContractByAddress(c.Request.Context(), orgID, address)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalErrorAndLog(c, "failed to read contract",
+			"admin_rbac_contract: GetContractByAddress failed (updateContract)",
+			"org_id", orgID, "address", address, "err", err)
 		return
 	}
 	if contract == nil {
@@ -116,7 +124,9 @@ func (s *Server) updateContract(c *gin.Context) {
 		Metadata map[string]any `json:"metadata"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequestAndLog(c, "invalid request body",
+			"admin_rbac_contract: invalid updateContract body",
+			"org_id", orgID, "address", address, "err", err)
 		return
 	}
 
@@ -128,7 +138,9 @@ func (s *Server) updateContract(c *gin.Context) {
 	}
 
 	if err := s.db.UpdateContract(c.Request.Context(), contract); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalErrorAndLog(c, "failed to update contract",
+			"admin_rbac_contract: UpdateContract failed",
+			"contract_id", contract.ID, "err", err)
 		return
 	}
 
@@ -141,7 +153,9 @@ func (s *Server) deleteContract(c *gin.Context) {
 
 	contract, err := s.db.GetContractByAddress(c.Request.Context(), orgID, address)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalErrorAndLog(c, "failed to read contract",
+			"admin_rbac_contract: GetContractByAddress failed (deleteContract)",
+			"org_id", orgID, "address", address, "err", err)
 		return
 	}
 	if contract == nil {
@@ -153,7 +167,9 @@ func (s *Server) deleteContract(c *gin.Context) {
 	s.rbacAccessCtrl.InvalidateOrg(c.Request.Context(), orgID)
 
 	if err := s.db.DeleteContract(c.Request.Context(), contract.ID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalErrorAndLog(c, "failed to delete contract",
+			"admin_rbac_contract: DeleteContract failed",
+			"contract_id", contract.ID, "err", err)
 		return
 	}
 
@@ -168,7 +184,9 @@ func (s *Server) updateContractABI(c *gin.Context) {
 
 	contract, err := s.db.GetContractByAddress(c.Request.Context(), orgID, address)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalErrorAndLog(c, "failed to read contract",
+			"admin_rbac_contract: GetContractByAddress failed (updateContractABI)",
+			"org_id", orgID, "address", address, "err", err)
 		return
 	}
 	if contract == nil {
@@ -180,7 +198,9 @@ func (s *Server) updateContractABI(c *gin.Context) {
 		ABI string `json:"abi" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequestAndLog(c, "invalid request body",
+			"admin_rbac_contract: invalid updateContractABI body",
+			"contract_id", contract.ID, "err", err)
 		return
 	}
 
@@ -193,12 +213,16 @@ func (s *Server) updateContractABI(c *gin.Context) {
 	// Validate it's valid JSON
 	var abiItems []json.RawMessage
 	if err := json.Unmarshal([]byte(input.ABI), &abiItems); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "abi must be valid JSON: " + err.Error()})
+		respondBadRequestAndLog(c, "abi must be valid JSON",
+			"admin_rbac_contract: ABI JSON unmarshal failed",
+			"contract_id", contract.ID, "err", err)
 		return
 	}
 
 	if err := s.db.UpdateContractABI(c.Request.Context(), contract.ID, input.ABI); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalErrorAndLog(c, "failed to update contract ABI",
+			"admin_rbac_contract: UpdateContractABI failed",
+			"contract_id", contract.ID, "err", err)
 		return
 	}
 
@@ -230,7 +254,9 @@ func (s *Server) updateContractAllowVisibleToUnlock(c *gin.Context) {
 
 	contract, err := s.db.GetContractByAddress(c.Request.Context(), orgID, address)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalErrorAndLog(c, "failed to read contract",
+			"admin_rbac_contract: GetContractByAddress failed (updateContractAllowVisibleToUnlock)",
+			"org_id", orgID, "address", address, "err", err)
 		return
 	}
 	if contract == nil {
@@ -242,7 +268,9 @@ func (s *Server) updateContractAllowVisibleToUnlock(c *gin.Context) {
 		AllowVisibleToUnlock *bool `json:"allow_visibleto_unlock" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequestAndLog(c, "invalid request body",
+			"admin_rbac_contract: invalid updateContractAllowVisibleToUnlock body",
+			"contract_id", contract.ID, "err", err)
 		return
 	}
 	if input.AllowVisibleToUnlock == nil {
@@ -251,7 +279,9 @@ func (s *Server) updateContractAllowVisibleToUnlock(c *gin.Context) {
 	}
 
 	if err := s.db.UpdateContractAllowVisibleToUnlock(c.Request.Context(), contract.ID, *input.AllowVisibleToUnlock); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalErrorAndLog(c, "failed to update flag",
+			"admin_rbac_contract: UpdateContractAllowVisibleToUnlock failed",
+			"contract_id", contract.ID, "err", err)
 		return
 	}
 
@@ -321,7 +351,9 @@ func (s *Server) updateContractEventsAllowDynamicPayload(c *gin.Context) {
 		EventsAllowDynamicPayload *bool `json:"events_allow_dynamic_payload"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequestAndLog(c, "invalid request body",
+			"admin_rbac_contract: invalid updateContractEventsAllowDynamicPayload body",
+			"contract_id", contract.ID, "err", err)
 		return
 	}
 	if input.EventsAllowDynamicPayload == nil {
@@ -366,7 +398,9 @@ func (s *Server) listContractEvents(c *gin.Context) {
 
 	contract, err := s.db.GetContractByAddress(c.Request.Context(), orgID, address)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalErrorAndLog(c, "failed to read contract",
+			"admin_rbac_contract: GetContractByAddress failed (listContractEvents)",
+			"org_id", orgID, "address", address, "err", err)
 		return
 	}
 	if contract == nil {
@@ -382,7 +416,9 @@ func (s *Server) listContractEvents(c *gin.Context) {
 
 	events, err := rbac.ExtractEventSignatures(abiJSON)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to parse ABI: " + err.Error()})
+		respondBadRequestAndLog(c, "failed to parse ABI",
+			"admin_rbac_contract: ExtractEventSignatures failed",
+			"contract_id", contract.ID, "err", err)
 		return
 	}
 
@@ -405,7 +441,9 @@ func (s *Server) checkContractsOnChain(c *gin.Context) {
 
 	contracts, err := s.db.ListContracts(c.Request.Context(), orgID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalErrorAndLog(c, "failed to list contracts",
+			"admin_rbac_contract: ListContracts failed (checkContractsOnChain)",
+			"org_id", orgID, "err", err)
 		return
 	}
 
@@ -466,7 +504,9 @@ func (s *Server) deleteStaleContracts(c *gin.Context) {
 		ContractIDs []string `json:"contract_ids" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequestAndLog(c, "invalid request body",
+			"admin_rbac_contract: invalid deleteStaleContracts body",
+			"org_id", orgID, "err", err)
 		return
 	}
 
@@ -904,7 +944,9 @@ func (s *Server) listContractGrants(c *gin.Context) {
 
 	contract, err := s.db.GetContractByAddress(c.Request.Context(), orgID, address)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalErrorAndLog(c, "failed to read contract",
+			"admin_rbac_contract: GetContractByAddress failed (listContractGrants)",
+			"org_id", orgID, "address", address, "err", err)
 		return
 	}
 	if contract == nil {
@@ -914,7 +956,9 @@ func (s *Server) listContractGrants(c *gin.Context) {
 
 	grants, err := s.db.ListContractGrantsByContract(c.Request.Context(), contract.ID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalErrorAndLog(c, "failed to list grants",
+			"admin_rbac_contract: ListContractGrantsByContract failed",
+			"contract_id", contract.ID, "err", err)
 		return
 	}
 	c.JSON(http.StatusOK, grants)
@@ -926,7 +970,9 @@ func (s *Server) createContractGrant(c *gin.Context) {
 
 	contract, err := s.db.GetContractByAddress(c.Request.Context(), orgID, address)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalErrorAndLog(c, "failed to read contract",
+			"admin_rbac_contract: GetContractByAddress failed (createContractGrant)",
+			"org_id", orgID, "address", address, "err", err)
 		return
 	}
 	if contract == nil {
@@ -940,7 +986,9 @@ func (s *Server) createContractGrant(c *gin.Context) {
 		EventRules *rbac.EventRulesField `json:"event_rules"` // nil = deny, "*" = wildcard, [...] = allowlist
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequestAndLog(c, "invalid request body",
+			"admin_rbac_contract: invalid createContractGrant body",
+			"contract_id", contract.ID, "err", err)
 		return
 	}
 
@@ -991,7 +1039,9 @@ func (s *Server) createContractGrant(c *gin.Context) {
 	// Verify group exists and belongs to the same org
 	group, err := s.db.GetGroup(c.Request.Context(), input.GroupID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalErrorAndLog(c, "failed to read group",
+			"admin_rbac_contract: GetGroup failed (createContractGrant)",
+			"group_id", input.GroupID, "err", err)
 		return
 	}
 	if group == nil || group.OrgID != orgID {
@@ -1008,7 +1058,9 @@ func (s *Server) createContractGrant(c *gin.Context) {
 	}
 
 	if err := s.db.CreateContractGrant(c.Request.Context(), grant); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalErrorAndLog(c, "failed to create grant",
+			"admin_rbac_contract: CreateContractGrant failed",
+			"contract_id", contract.ID, "group_id", input.GroupID, "err", err)
 		return
 	}
 
@@ -1025,7 +1077,9 @@ func (s *Server) updateContractGrant(c *gin.Context) {
 
 	contract, err := s.db.GetContractByAddress(c.Request.Context(), orgID, address)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalErrorAndLog(c, "failed to read contract",
+			"admin_rbac_contract: GetContractByAddress failed (updateContractGrant)",
+			"org_id", orgID, "address", address, "err", err)
 		return
 	}
 	if contract == nil {
@@ -1035,7 +1089,9 @@ func (s *Server) updateContractGrant(c *gin.Context) {
 
 	grant, err := s.db.GetContractGrantByContractAndGroup(c.Request.Context(), contract.ID, groupID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalErrorAndLog(c, "failed to read grant",
+			"admin_rbac_contract: GetContractGrantByContractAndGroup failed",
+			"contract_id", contract.ID, "group_id", groupID, "err", err)
 		return
 	}
 	if grant == nil {
@@ -1048,7 +1104,9 @@ func (s *Server) updateContractGrant(c *gin.Context) {
 		EventRules json.RawMessage `json:"event_rules"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequestAndLog(c, "invalid request body",
+			"admin_rbac_contract: invalid updateContractGrant body",
+			"contract_id", contract.ID, "group_id", groupID, "err", err)
 		return
 	}
 
@@ -1132,7 +1190,9 @@ func (s *Server) updateContractGrant(c *gin.Context) {
 	}
 
 	if err := s.db.UpdateContractGrant(c.Request.Context(), grant); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalErrorAndLog(c, "failed to update grant",
+			"admin_rbac_contract: UpdateContractGrant failed",
+			"grant_id", grant.ID, "err", err)
 		return
 	}
 
@@ -1232,7 +1292,9 @@ func (s *Server) getContractGrantSummary(c *gin.Context) {
 	orgID := c.Param("org_id")
 	summary, err := s.db.GetContractGrantSummary(c.Request.Context(), orgID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalErrorAndLog(c, "failed to read grant summary",
+			"admin_rbac_contract: GetContractGrantSummary failed",
+			"org_id", orgID, "err", err)
 		return
 	}
 	c.JSON(http.StatusOK, summary)
@@ -1245,7 +1307,9 @@ func (s *Server) deleteContractGrant(c *gin.Context) {
 
 	contract, err := s.db.GetContractByAddress(c.Request.Context(), orgID, address)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalErrorAndLog(c, "failed to read contract",
+			"admin_rbac_contract: GetContractByAddress failed (deleteContractGrant)",
+			"org_id", orgID, "address", address, "err", err)
 		return
 	}
 	if contract == nil {
@@ -1255,7 +1319,9 @@ func (s *Server) deleteContractGrant(c *gin.Context) {
 
 	grant, err := s.db.GetContractGrantByContractAndGroup(c.Request.Context(), contract.ID, groupID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalErrorAndLog(c, "failed to read grant",
+			"admin_rbac_contract: GetContractGrantByContractAndGroup failed (deleteContractGrant)",
+			"contract_id", contract.ID, "group_id", groupID, "err", err)
 		return
 	}
 	if grant == nil {
@@ -1267,7 +1333,9 @@ func (s *Server) deleteContractGrant(c *gin.Context) {
 	s.rbacAccessCtrl.InvalidateGroup(c.Request.Context(), groupID)
 
 	if err := s.db.DeleteContractGrant(c.Request.Context(), grant.ID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalErrorAndLog(c, "failed to delete grant",
+			"admin_rbac_contract: DeleteContractGrant failed",
+			"grant_id", grant.ID, "err", err)
 		return
 	}
 
@@ -1305,7 +1373,9 @@ func (s *Server) batchMoveContracts(c *gin.Context) {
 		DeleteEmptyAutoGroups bool `json:"delete_empty_auto_groups"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequestAndLog(c, "invalid request body",
+			"admin_rbac_contract: invalid batchMoveContracts body",
+			"org_id", orgID, "err", err)
 		return
 	}
 
@@ -1447,10 +1517,14 @@ func (s *Server) batchMoveContracts(c *gin.Context) {
 	if err != nil {
 		// Distinguish validation errors from internal errors
 		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "does not belong") {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			respondBadRequestAndLog(c, "batch move failed: invalid request",
+				"admin_rbac_contract: batchMoveContracts validation",
+				"org_id", orgID, "err", err)
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalErrorAndLog(c, "batch move failed",
+			"admin_rbac_contract: batchMoveContracts internal error",
+			"org_id", orgID, "err", err)
 		return
 	}
 
