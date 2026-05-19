@@ -450,6 +450,28 @@ func (s *Server) listUserMemberships(c *gin.Context) {
 func (s *Server) createUserMembership(c *gin.Context) {
 	userID := c.Param("user_id")
 
+	// RD-942 Finding 1: gate the handler on the target user being in the
+	// caller's full-admin scope BEFORE we look at the request body. Pre-fix,
+	// the response-code path was a user-enumeration oracle:
+	//
+	//   201 Created                       → user exists, not yet in group
+	//   409 Conflict ("already a member") → user exists and is in group
+	//   500 Internal Server Error         → user does NOT exist (FK failed)
+	//
+	// A tier-2 admin who learned a foreign user UUID via logs / support /
+	// screenshots could verify "this user exists" by attempting an add. UUID
+	// space (128 bits) was the only barrier; the response-code distinction
+	// turned the handler into a clean primitive for any future bug that leaks
+	// a UUID.
+	//
+	// The legitimate "onboard an external user to my org" flow now goes
+	// through POST /orgs/:org_id/memberships/by-did (RD-945), which auto-
+	// provisions a user from a DID and inserts the membership in one round
+	// trip — no super-admin handoff and no UUID-based hack-path.
+	if !s.requireUserInFullAdminScope(c, userID) {
+		return
+	}
+
 	var input struct {
 		GroupID string `json:"group_id" binding:"required"`
 	}
