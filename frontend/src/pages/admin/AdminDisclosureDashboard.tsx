@@ -35,7 +35,9 @@ import {
 import { DisclosureFilters } from '@/components/disclosure/DisclosureFilters';
 import { CreateDisclosureRequestForm } from '@/components/disclosure/CreateDisclosureRequestForm';
 import { useAdmin } from '@/components/auth/RequireAdmin';
+import { useAuth } from '@/contexts/AuthContext';
 import { disclosureApi } from '@/api/disclosure';
+import { userApiMethods, type UserOrg } from '@/api/auth';
 import type {
   DisclosureFilter,
   DisclosureListResult,
@@ -56,13 +58,75 @@ interface AdminDisclosureDashboardProps {
 }
 
 export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardProps) {
-  const { isReadonlyAdmin } = useAdmin();
+  const { isReadonlyAdmin, adminOrgIds, readonlyAdminOrgIds } = useAdmin();
+  const { accessToken } = useAuth();
   const [activeTab, setActiveTab] = useState<TabValue>('pending');
   const [requestsResult, setRequestsResult] = useState<DisclosureListResult | null>(null);
   const [grantsResult, setGrantsResult] = useState<GrantListResult | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState<DisclosureFilter>({});
+
+  // RD-944. The set of orgs the caller can scope disclosure listings to.
+  // De-dupe (a group can flag both is_org_admin and is_org_readonly_admin,
+  // though atypical) while preserving the full-admin-first order so
+  // adminOrgs[0] picks a writable org when possible.
+  const scopedOrgIds = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const id of [...adminOrgIds, ...readonlyAdminOrgIds]) {
+      if (!seen.has(id)) {
+        seen.add(id);
+        out.push(id);
+      }
+    }
+    return out;
+  }, [adminOrgIds, readonlyAdminOrgIds]);
+
+  // Initial filter pre-populated with the caller's first scoped org.
+  // For single-org admins this is the only org they could query anyway;
+  // for multi-org admins the org-switcher in DisclosureFilters lets
+  // them flip to another via the same API contract (backend still
+  // re-verifies via requireTargetInScope — see RD-944 PR).
+  const [filter, setFilter] = useState<DisclosureFilter>(() => ({
+    org_id: scopedOrgIds[0],
+  }));
+
+  // Look up org names for the switcher. Calls /me/orgs which returns
+  // ALL of the caller's org memberships including non-admin ones;
+  // we filter down to scopedOrgIds before rendering.
+  const [myOrgs, setMyOrgs] = useState<UserOrg[]>([]);
+  useEffect(() => {
+    if (!accessToken || scopedOrgIds.length === 0) {
+      return;
+    }
+    let cancelled = false;
+    userApiMethods
+      .getMyOrganizations(accessToken)
+      .then((resp) => {
+        if (!cancelled) {
+          setMyOrgs(resp.organizations);
+        }
+      })
+      .catch(() => {
+        // Non-fatal — the switcher just shows IDs instead of names.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, scopedOrgIds.length]);
+
+  // Build the org options the switcher renders. Lookup by id falls
+  // back to the raw id when the user has admin scope on an org the
+  // /me/orgs response doesn't list (shouldn't happen in practice but
+  // keeps the UI honest if it does).
+  const orgOptions = useMemo(
+    () =>
+      scopedOrgIds.map((id) => {
+        const found = myOrgs.find((o) => o.id === id);
+        return { id, label: found ? `${found.name} (${found.slug})` : id };
+      }),
+    [scopedOrgIds, myOrgs]
+  );
 
   // Action state
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -300,6 +364,7 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
         filter={filter}
         onFilterChange={setFilter}
         showStatusFilter={false}
+        orgOptions={orgOptions}
       />
 
       {/* Tabs */}

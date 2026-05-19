@@ -174,6 +174,14 @@ export const ALL_DISCLOSURE_LEVELS: DisclosureLevel[] = ['full', 'pseudonymous',
 
 // Filter for listing disclosures
 export interface DisclosureFilter {
+  // org_id scopes the list to a single organisation. Admin dashboard
+  // callers MUST pass it — the backend gates cross-org reads via
+  // requireTargetInScope (Audit C3). For tier-2 admins, the dashboard
+  // defaults this to one of their admin orgs at mount; multi-org
+  // admins can switch via the DisclosureFilters org-switcher.
+  // Optional in the type because user-side disclosure pages don't
+  // need it (they're keyed on the caller's own DID).
+  org_id?: string;
   status?: DisclosureRequestStatus;
   target_user_id?: string;
   requester_did?: string;

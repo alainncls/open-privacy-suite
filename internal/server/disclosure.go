@@ -13,6 +13,78 @@ import (
 	"privacy-proxy/internal/rbac"
 )
 
+// resolveAdminListOrgID is the shared "no org_id supplied → which org
+// does the caller mean?" helper used by listDisclosureRequests and
+// listDisclosureGrants (RD-944). It enforces the explicit-over-implicit
+// API contract: a JWT admin gets the fall-back ONLY when there is
+// exactly one valid choice across their full-admin and read-only-admin
+// scope; otherwise the caller must specify `?org_id=` and we surface
+// a 400 rather than silently scoping to one of several.
+//
+// Returns (orgID, ok). When ok is false the helper has already written
+// the response and the caller must return.
+//
+// Behaviour matrix:
+//
+//   * Explicit `?org_id=` supplied (any caller) → use it. Cross-org
+//     authority is verified separately by the caller via
+//     requireTargetInScope; this helper only resolves the *value*.
+//
+//   * JWT admin with exactly 1 distinct org in admin_org_ids ∪
+//     admin_readonly_admin_org_ids → use it (single-valid-case
+//     fall-back; matches the RD-877 single-real-org pattern on /rpc).
+//
+//   * JWT admin with 0 or ≥2 distinct admin orgs and no explicit
+//     org_id → 400 with "org_id query parameter is required".
+//     Frontends should pass org_id explicitly from the active org
+//     in their session; API clients must always pass it.
+//
+//   * Super admin / dev mode (auth_method != "jwt_admin") with no
+//     org_id → system default org. Preserved for backward
+//     compatibility with admin scripts that target the system
+//     defaults.
+func resolveAdminListOrgID(c *gin.Context) (string, bool) {
+	if explicit := c.Query("org_id"); explicit != "" {
+		return explicit, true
+	}
+
+	if c.GetString("auth_method") != "jwt_admin" {
+		// Super-admin / dev mode keeps the pre-RD-944 default.
+		return "00000000-0000-0000-0000-000000000001", true
+	}
+
+	// Build the set of orgs the JWT admin can plausibly target.
+	scope := map[string]struct{}{}
+	if ids, ok := c.Get("admin_org_ids"); ok {
+		if list, ok := ids.([]string); ok {
+			for _, id := range list {
+				scope[id] = struct{}{}
+			}
+		}
+	}
+	if ids, ok := c.Get("admin_readonly_org_ids"); ok {
+		if list, ok := ids.([]string); ok {
+			for _, id := range list {
+				scope[id] = struct{}{}
+			}
+		}
+	}
+
+	if len(scope) != 1 {
+		// 0 (no admin scope at all — shouldn't happen given middleware
+		// already established jwt_admin authority, but defensive) or
+		// 2+ (genuine ambiguity — caller must choose explicitly).
+		respondBadRequest(c, "org_id query parameter is required")
+		return "", false
+	}
+	for id := range scope {
+		return id, true
+	}
+	// Unreachable — keeps the compiler happy.
+	respondBadRequest(c, "org_id query parameter is required")
+	return "", false
+}
+
 // registerDisclosureRoutes registers admin disclosure API endpoints.
 //
 // SECURITY: These endpoints are protected by localhostOnlyMiddleware (applied in server.go).
@@ -171,15 +243,25 @@ func (s *Server) createDisclosureRequest(c *gin.Context) {
 // Audit C3: pre-fix the ?org_id= query was honoured without scope
 // check, leaking any org's request list to any tier-2 admin. Now
 // clamped to caller's org_id set.
+//
+// RD-944: when no `org_id` is supplied, JWT admins fall back to their
+// own admin scope ONLY when there's exactly one valid choice — single
+// admin org → use it; zero or 2+ admin orgs → 400 require explicit
+// `org_id`. The previous behaviour ("default to admin_org_ids[0]")
+// silently scoped multi-org admins to the first of their orgs without
+// surfacing the ambiguity, which violates the explicit-over-implicit
+// principle on the API surface. The dashboard frontend now passes
+// `org_id` explicitly so it never hits the multi-org reject branch.
+// Super-admin / dev mode keeps the system-default fallback for
+// backward compatibility with admin scripts.
 func (s *Server) listDisclosureRequests(c *gin.Context) {
 	filter := &disclosure.DisclosureFilter{}
 
-	// Parse org_id
-	if orgID := c.Query("org_id"); orgID != "" {
-		filter.OrgID = orgID
-	} else {
-		filter.OrgID = "00000000-0000-0000-0000-000000000001" // Default org
+	orgID, ok := resolveAdminListOrgID(c)
+	if !ok {
+		return
 	}
+	filter.OrgID = orgID
 
 	// Cross-org gate: the requested org must be in caller's scope.
 	if !requireTargetInScope(c, filter.OrgID) {
@@ -250,30 +332,23 @@ func (s *Server) listDisclosureRequests(c *gin.Context) {
 
 // listDisclosureGrants lists disclosure grants with filtering support (admin endpoint).
 // Audit C3 — same fix as listDisclosureRequests.
+//
+// RD-944: shares resolveAdminListOrgID with listDisclosureRequests so
+// both endpoints answer the same way to "no org_id supplied" — fall
+// back ONLY when the caller has exactly one admin scope, otherwise 400.
+// Multi-org admins must pass `org_id` explicitly; silently picking
+// `admin_org_ids[0]` was the pre-fix behaviour and violated the
+// explicit-over-implicit principle on the API surface.
 func (s *Server) listDisclosureGrants(c *gin.Context) {
 	filter := &disclosure.DisclosureFilter{}
 
-	// Parse org_id. Pre-fix the empty case left filter.OrgID = "" which
-	// silently meant "any org" at the DB layer. Now JWT admins MUST
-	// supply an org_id (or get clamped to their scope by the cross-org
-	// gate below).
-	if orgID := c.Query("org_id"); orgID != "" {
-		filter.OrgID = orgID
-	} else if c.GetString("auth_method") == "jwt_admin" {
-		// Default to the first full-admin org. If the caller has none
-		// (RO-only) and supplies no org_id, deny.
-		if ids, ok := c.Get("admin_org_ids"); ok {
-			if list, ok := ids.([]string); ok && len(list) > 0 {
-				filter.OrgID = list[0]
-			}
-		}
-		if filter.OrgID == "" {
-			respondBadRequest(c, "org_id query parameter is required")
-			return
-		}
+	orgID, ok := resolveAdminListOrgID(c)
+	if !ok {
+		return
 	}
+	filter.OrgID = orgID
 
-	// Cross-org gate (only enforced when filter.OrgID is set).
+	// Cross-org gate.
 	if filter.OrgID != "" && !requireTargetInScope(c, filter.OrgID) {
 		return
 	}
