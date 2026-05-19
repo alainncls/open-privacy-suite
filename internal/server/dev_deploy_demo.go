@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -90,7 +91,8 @@ func (s *Server) handleDeployDemoERC20(c *gin.Context) {
 	var req DeployDemoERC20Request
 	if c.Request.ContentLength > 0 {
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request: " + err.Error()})
+			respondBadRequestAndLog(c, "invalid request body",
+				"dev_deploy_demo: invalid body", "err", err)
 			return
 		}
 	}
@@ -109,7 +111,8 @@ func (s *Server) handleDeployDemoERC20(c *gin.Context) {
 		"id":      1,
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to get gas price: %v", err)})
+		respondInternalErrorAndLog(c, "failed to get gas price",
+			"dev_deploy_demo: eth_gasPrice failed", "err", err)
 		return
 	}
 	gasPrice := gasPriceResp["result"].(string)
@@ -127,7 +130,8 @@ func (s *Server) handleDeployDemoERC20(c *gin.Context) {
 		"id": 1,
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to estimate gas: %v", err)})
+		respondInternalErrorAndLog(c, "failed to estimate gas",
+			"dev_deploy_demo: eth_estimateGas failed", "err", err)
 		return
 	}
 	gasLimit := estimateResp["result"].(string)
@@ -147,13 +151,18 @@ func (s *Server) handleDeployDemoERC20(c *gin.Context) {
 		"id": 1,
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to send deployment transaction: %v", err)})
+		respondInternalErrorAndLog(c, "failed to send deployment transaction",
+			"dev_deploy_demo: eth_sendTransaction failed", "err", err)
 		return
 	}
 
 	if txResp["error"] != nil {
 		errData, _ := json.Marshal(txResp["error"])
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("deployment transaction failed: %s", string(errData))})
+		// errData is upstream node error verbatim — keep it out of the
+		// wire response. RD-934.
+		slog.Error("dev_deploy_demo: deployment transaction failed",
+			"upstream_error", string(errData))
+		respondInternalError(c, "deployment transaction failed")
 		return
 	}
 
@@ -173,7 +182,9 @@ func (s *Server) handleDeployDemoERC20(c *gin.Context) {
 			"id":      1,
 		})
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to get transaction receipt: %v", err)})
+			respondInternalErrorAndLog(c, "failed to get transaction receipt",
+				"dev_deploy_demo: eth_getTransactionReceipt failed",
+				"tx_hash", txHash, "err", err)
 			return
 		}
 
@@ -201,7 +212,9 @@ func (s *Server) handleDeployDemoERC20(c *gin.Context) {
 		// Verify org exists
 		org, err := s.db.GetOrganization(ctx, req.OrgID)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to look up organization: %v", err)})
+			respondInternalErrorAndLog(c, "failed to look up organization",
+				"dev_deploy_demo: GetOrganization failed",
+				"org_id", req.OrgID, "err", err)
 			return
 		}
 		if org == nil {
@@ -219,7 +232,9 @@ func (s *Server) handleDeployDemoERC20(c *gin.Context) {
 		}
 
 		if err := s.db.CreateContract(ctx, contract); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to register contract: %v", err)})
+			respondInternalErrorAndLog(c, "failed to register contract",
+				"dev_deploy_demo: CreateContract failed",
+				"org_id", req.OrgID, "address", contract.Address, "err", err)
 			return
 		}
 		registered = true
