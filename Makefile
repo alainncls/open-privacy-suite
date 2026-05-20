@@ -362,6 +362,10 @@ staging-create-test-accs:
 ##                           `wallet-emulator-js auth`. No-op when already
 ##                           present + verified. ~32 MB on first run.
 PRIVADO_CIRCUITS_DIR ?= $(HOME)/.privado-circuits
+# PROXY_URL must be passed explicitly by the caller — there is no committed
+# default. It identifies the staging-proxy host the wallet-emulator
+# authenticates against and is environment-specific.
+#   make staging-test-accs PROXY_URL=https://your-staging-proxy.example.com
 AUTHV2_WASM_SHA256 := 70affbca1ad1947d76784ca90f6c4a8fd143119685c9917a2a6fefc15b9ed7c1
 AUTHV2_ZKEY_SHA256 := 6acb096a716f5f5b1e5505a7b7261c7eeb7f0a90597c5194fad7b14f91180ac1
 AUTHV2_VKEY_SHA256 := 79cf543dd8300c0149454ddd200a0a1ac83eed1df4fb49bdceea4b5ebd2cec96
@@ -386,9 +390,35 @@ staging-circuits: wallet-emulator-circuits
 ##                     Ensures circuits + identities exist via deps; safe to
 ##                     run on a fresh clone.
 ##                     Override the proxy with: make staging-auth-users PROXY_URL=https://...
+# `require-PROXY_URL` runs before any auth-bearing target's deps so we
+# fail fast — without it, a forgotten PROXY_URL still triggers the ~500
+# MB circuit download before erroring out.
+.PHONY: require-PROXY_URL
+require-PROXY_URL:
+	@if [ -z "$(PROXY_URL)" ]; then \
+	  echo "error: PROXY_URL is required."; \
+	  echo "       e.g. make staging-test-accs PROXY_URL=https://your-staging-proxy.example.com"; \
+	  exit 2; \
+	fi
+
 .PHONY: staging-auth-users
-staging-auth-users: staging-circuits staging-create-test-accs
+staging-auth-users: require-PROXY_URL staging-circuits staging-create-test-accs
+	@echo "Authenticating against: $(PROXY_URL)"
+	@echo
 	@cd tools/wallet-emulator-js && PROXY_URL="$(PROXY_URL)" PRIVADO_CIRCUITS_DIR="$(PRIVADO_CIRCUITS_DIR)" ./scripts/auth-all.sh
+
+## staging-cleanup: Wipe the fetched circuit artifacts and the persisted
+##                  identity JSON files so the next `make staging-test-accs`
+##                  exercises every step from scratch. Useful for clean-room
+##                  testing; the identities regenerate deterministically so
+##                  the DIDs after a wipe are bit-identical to before.
+.PHONY: staging-cleanup
+staging-cleanup:
+	@echo "Removing $(PRIVADO_CIRCUITS_DIR)/authV2/ ..."
+	@rm -rf "$(PRIVADO_CIRCUITS_DIR)/authV2"
+	@echo "Removing tools/wallet-emulator-js/identities/ ..."
+	@rm -rf tools/wallet-emulator-js/identities
+	@echo "Done. Re-run 'make staging-test-accs' to exercise the full flow."
 
 ## staging-test-accs: Does it all. Init circuits if missing, create identities
 ##                    if missing, authenticate every test user against the

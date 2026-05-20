@@ -5,9 +5,15 @@
 #
 # To capture an actual JWT for use, run scripts/auth-as.sh <name> instead.
 #
-# Env:   PROXY_URL              (default in auth-as.sh: staging devnet proxy)
+# Env:   PROXY_URL              (required — environment-specific, no default)
 #        PRIVADO_CIRCUITS_DIR   (default: ~/.privado-circuits)
 set -euo pipefail
+
+if [[ -z "${PROXY_URL:-}" ]]; then
+  echo "auth-all: PROXY_URL must be set." >&2
+  echo "         e.g. PROXY_URL=https://your-staging-proxy.example.com $0" >&2
+  exit 2
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NAMES=(alice bob carol dave eve)

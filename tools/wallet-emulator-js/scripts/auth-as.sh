@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Authenticate as a named test identity and print the JWT to stdout.
 # Status / log lines go to stderr so the caller can capture only the token:
-#   JWT=$(./scripts/auth-as.sh alice)
+#   PROXY_URL=https://your-proxy.example.com ./scripts/auth-as.sh alice
+#   JWT=$(PROXY_URL=https://your-proxy.example.com ./scripts/auth-as.sh alice)
 #
-# Tokens are short-lived (~5 min on the staging devnet). Re-run this when
-# the previous token expires.
+# Tokens are short-lived (~5 min). Re-run this when the previous token expires.
 #
 # Usage:   ./scripts/auth-as.sh <name>
-# Env:     PROXY_URL              (default: linea-validium-devnet staging proxy)
+# Env:     PROXY_URL              (required — no default; environment-specific)
 #          PRIVADO_CIRCUITS_DIR   (default: ~/.privado-circuits)
 set -euo pipefail
 
@@ -17,7 +17,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 IDENT="$ROOT/identities/$NAME.json"
 
-PROXY_URL="${PROXY_URL:-https://linea-validium-devnet-privacy.dev.eu-north-3.gateway.fm}"
+if [[ -z "${PROXY_URL:-}" ]]; then
+  echo "auth-as: PROXY_URL must be set." >&2
+  echo "         e.g. PROXY_URL=https://your-staging-proxy.example.com $0 $NAME" >&2
+  exit 2
+fi
 PRIVADO_CIRCUITS_DIR="${PRIVADO_CIRCUITS_DIR:-$HOME/.privado-circuits}"
 
 if [[ ! -f "$IDENT" ]]; then
