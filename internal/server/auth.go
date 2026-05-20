@@ -253,14 +253,18 @@ func (s *Server) handleAuthRequest(c *gin.Context) {
 		)
 		if err != nil {
 			s.sessionStore.DeleteSession(sessionID)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create mock auth request: " + err.Error()})
+			respondInternalErrorAndLog(c, "failed to create mock auth request",
+				"auth: CreateAuthorizationRequest (mock) failed",
+				"session_id", sessionID, "err", err)
 			return
 		}
 
 		// Store the mock auth request in the session so callback verification works
 		if err := s.sessionStore.UpdateSession(sessionID, mockAuthReq); err != nil {
 			s.sessionStore.DeleteSession(sessionID)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update session: " + err.Error()})
+			respondInternalErrorAndLog(c, "failed to update session",
+				"auth: UpdateSession (mock) failed",
+				"session_id", sessionID, "err", err)
 			return
 		}
 
@@ -299,14 +303,18 @@ func (s *Server) handleAuthRequest(c *gin.Context) {
 	}
 	if err != nil {
 		s.sessionStore.DeleteSession(sessionID)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create authorization request: " + err.Error()})
+		respondInternalErrorAndLog(c, "failed to create authorization request",
+			"auth: CreateAuthorizationRequest failed",
+			"session_id", sessionID, "err", err)
 		return
 	}
 
 	// Update session with the real auth request
 	if err := s.sessionStore.UpdateSession(sessionID, authReq); err != nil {
 		s.sessionStore.DeleteSession(sessionID)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update session: " + err.Error()})
+		respondInternalErrorAndLog(c, "failed to update session",
+			"auth: UpdateSession failed",
+			"session_id", sessionID, "err", err)
 		return
 	}
 
@@ -436,7 +444,8 @@ func (s *Server) handleAuthCallback(c *gin.Context) {
 func (s *Server) handleAuthVerify(c *gin.Context) {
 	var req AuthVerifyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request: " + err.Error()})
+		respondBadRequestAndLog(c, "invalid request body",
+			"auth: handleAuthVerify invalid body", "err", err)
 		return
 	}
 
@@ -564,14 +573,16 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 	// Issue access token (short-lived)
 	accessToken, err := s.jwtService.IssueAccessToken(userDID, kyc)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to issue access token: " + err.Error()})
+		respondInternalErrorAndLog(c, "failed to issue access token",
+			"auth: IssueAccessToken failed", "user_did", userDID, "err", err)
 		return nil, err
 	}
 
 	// Issue refresh token (long-lived)
 	refreshToken, err := s.jwtService.IssueRefreshToken(userDID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to issue refresh token: " + err.Error()})
+		respondInternalErrorAndLog(c, "failed to issue refresh token",
+			"auth: IssueRefreshToken failed", "user_did", userDID, "err", err)
 		return nil, err
 	}
 
@@ -579,7 +590,8 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 	tokenHash := auth.HashToken(refreshToken)
 	expiresAt := time.Now().Add(RefreshTokenTTL)
 	if err := s.db.SaveRefreshToken(c.Request.Context(), tokenHash, userDID, expiresAt); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save refresh token: " + err.Error()})
+		respondInternalErrorAndLog(c, "failed to save refresh token",
+			"auth: SaveRefreshToken failed", "user_did", userDID, "err", err)
 		return nil, err
 	}
 
@@ -647,7 +659,8 @@ func (s *Server) handleAuthSessionStatus(c *gin.Context) {
 func (s *Server) handleRefresh(c *gin.Context) {
 	var req RefreshRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request: " + err.Error()})
+		respondBadRequestAndLog(c, "invalid request body",
+			"auth: handleRefresh invalid body", "err", err)
 		return
 	}
 
@@ -655,9 +668,11 @@ func (s *Server) handleRefresh(c *gin.Context) {
 	claims, err := s.jwtService.ValidateRefreshToken(req.RefreshToken)
 	if err != nil {
 		if err == auth.ErrExpiredToken {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "refresh token expired"})
+			respondUnauthorized(c, "refresh token expired")
 		} else {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid refresh token: " + err.Error()})
+			// Validator err can include token-shape internals; never echo.
+			slog.Warn("auth: refresh token validation failed", "err", err, "ip", c.ClientIP())
+			respondUnauthorized(c, "invalid refresh token")
 		}
 		return
 	}
@@ -666,7 +681,8 @@ func (s *Server) handleRefresh(c *gin.Context) {
 	tokenHash := auth.HashToken(req.RefreshToken)
 	storedToken, err := s.db.GetRefreshToken(c.Request.Context(), tokenHash)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check refresh token: " + err.Error()})
+		respondInternalErrorAndLog(c, "failed to check refresh token",
+			"auth: GetRefreshToken failed", "err", err)
 		return
 	}
 
@@ -705,7 +721,9 @@ func (s *Server) handleRefresh(c *gin.Context) {
 	// Issue new access token
 	accessToken, err := s.jwtService.IssueAccessToken(claims.Subject, kyc)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to issue access token: " + err.Error()})
+		respondInternalErrorAndLog(c, "failed to issue access token",
+			"auth: refresh→IssueAccessToken failed",
+			"subject", claims.Subject, "err", err)
 		return
 	}
 
@@ -713,7 +731,9 @@ func (s *Server) handleRefresh(c *gin.Context) {
 	// For now, we'll issue a new refresh token and revoke the old one
 	newRefreshToken, err := s.jwtService.IssueRefreshToken(claims.Subject)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to issue new refresh token: " + err.Error()})
+		respondInternalErrorAndLog(c, "failed to issue new refresh token",
+			"auth: refresh→IssueRefreshToken failed",
+			"subject", claims.Subject, "err", err)
 		return
 	}
 
@@ -727,7 +747,9 @@ func (s *Server) handleRefresh(c *gin.Context) {
 	newTokenHash := auth.HashToken(newRefreshToken)
 	newExpiresAt := time.Now().Add(RefreshTokenTTL)
 	if err := s.db.SaveRefreshToken(c.Request.Context(), newTokenHash, claims.Subject, newExpiresAt); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save new refresh token: " + err.Error()})
+		respondInternalErrorAndLog(c, "failed to save new refresh token",
+			"auth: refresh→SaveRefreshToken failed",
+			"subject", claims.Subject, "err", err)
 		return
 	}
 
@@ -817,7 +839,8 @@ func (s *Server) handleIntrospect(c *gin.Context) {
 func (s *Server) handleRevoke(c *gin.Context) {
 	var req RevokeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request: " + err.Error()})
+		respondBadRequestAndLog(c, "invalid request body",
+			"auth: handleRevoke invalid body", "err", err)
 		return
 	}
 
@@ -830,7 +853,9 @@ func (s *Server) handleRevoke(c *gin.Context) {
 			// Token is valid, revoke it by adding to blacklist
 			tokenID := auth.HashToken(req.AccessToken)
 			if err := s.db.RevokeAccessToken(ctx, tokenID, accessClaims.Subject, accessClaims.ExpiresAt.Time); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke access token: " + err.Error()})
+				respondInternalErrorAndLog(c, "failed to revoke access token",
+					"auth: RevokeAccessToken failed",
+					"subject", accessClaims.Subject, "err", err)
 				return
 			}
 		}
@@ -847,7 +872,8 @@ func (s *Server) handleRevoke(c *gin.Context) {
 	// Revoke refresh token
 	tokenHash := auth.HashToken(req.RefreshToken)
 	if err := s.db.RevokeRefreshToken(ctx, tokenHash); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke token: " + err.Error()})
+		respondInternalErrorAndLog(c, "failed to revoke token",
+			"auth: RevokeRefreshToken failed", "err", err)
 		return
 	}
 

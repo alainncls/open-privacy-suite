@@ -538,7 +538,9 @@ func TestGroupAccessValidation(t *testing.T) {
 		err := json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
 
-		assert.Contains(t, response["error"], "deploy claim")
+		// RD-934: response is opaque ("method/claim mismatch"). The specific
+		// "<method> requires <claim>" reason is logged server-side via slog.
+		assert.Contains(t, response["error"], "method/claim mismatch")
 	})
 
 	t.Run("AcceptsMethodsWithNoClaims", func(t *testing.T) {

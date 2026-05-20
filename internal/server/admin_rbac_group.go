@@ -43,7 +43,9 @@ func (s *Server) listGroups(c *gin.Context) {
 
 	groups, total, err := s.db.ListGroupsWithAccessFiltered(c.Request.Context(), orgID, limit, offset, filter)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalErrorAndLog(c, "failed to list groups",
+			"admin_rbac_group: ListGroupsWithAccessFiltered failed",
+			"org_id", orgID, "err", err)
 		return
 	}
 
@@ -73,7 +75,8 @@ func (s *Server) createGroup(c *gin.Context) {
 	}
 	// Note: auto_created is intentionally NOT accepted from API input.
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequestAndLog(c, "invalid request body",
+			"admin_rbac_group: invalid create body", "org_id", orgID, "err", err)
 		return
 	}
 
@@ -417,7 +420,8 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 		RPCAPIKey      *string      `json:"rpc_api_key"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequestAndLog(c, "invalid request body",
+			"admin_rbac_group: invalid setGroupAccess body", "group_id", groupID, "err", err)
 		return
 	}
 
@@ -431,7 +435,12 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 	// Validate that allowed_methods match the claims
 	// e.g., debug_traceTransaction requires "deploy" claim
 	if err := rbac.ValidateMethodsMatchClaims(input.AllowedMethods, input.Claims); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		// Validator message lists the offending method/claim. Safe to
+		// surface — no internal identifiers, just operator-supplied
+		// input — but route through the helper for slog consistency.
+		respondBadRequestAndLog(c, "method/claim mismatch",
+			"admin_rbac_group: ValidateMethodsMatchClaims failed",
+			"group_id", groupID, "err", err)
 		return
 	}
 
@@ -448,7 +457,8 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 	// Check if access already exists
 	existing, err := s.db.GetGroupAccess(c.Request.Context(), groupID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalErrorAndLog(c, "failed to set group access",
+			"admin_rbac_group: GetGroupAccess failed", "group_id", groupID, "err", err)
 		return
 	}
 
@@ -464,13 +474,17 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 	if existing != nil {
 		access.ID = existing.ID
 		if err := s.db.UpdateGroupAccess(c.Request.Context(), access); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			respondInternalErrorAndLog(c, "failed to set group access",
+				"admin_rbac_group: UpdateGroupAccess failed",
+				"group_id", groupID, "err", err)
 			return
 		}
 	} else {
 		access.ID = uuid.New().String()
 		if err := s.db.CreateGroupAccess(c.Request.Context(), access); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			respondInternalErrorAndLog(c, "failed to set group access",
+				"admin_rbac_group: CreateGroupAccess failed",
+				"group_id", groupID, "err", err)
 			return
 		}
 	}
@@ -544,7 +558,8 @@ func (s *Server) batchDeletePreview(c *gin.Context) {
 		GroupIDs []string `json:"group_ids" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequestAndLog(c, "invalid request body",
+			"admin_rbac_group: invalid batchDeletePreview body", "org_id", orgID, "err", err)
 		return
 	}
 
@@ -570,7 +585,9 @@ func (s *Server) batchDeletePreview(c *gin.Context) {
 	for _, gid := range input.GroupIDs {
 		group, err := s.db.GetGroup(c.Request.Context(), gid)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			respondInternalErrorAndLog(c, "failed to read group",
+				"admin_rbac_group: GetGroup failed in batchDeletePreview",
+				"group_id", gid, "err", err)
 			return
 		}
 		// L10: opaque deny — pre-fix the message distinguished "exists
@@ -584,7 +601,9 @@ func (s *Server) batchDeletePreview(c *gin.Context) {
 		// Count grants and get contract addresses
 		grants, err := s.db.ListContractGrantsByGroup(c.Request.Context(), gid)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			respondInternalErrorAndLog(c, "failed to list contract grants",
+				"admin_rbac_group: ListContractGrantsByGroup failed",
+				"group_id", gid, "err", err)
 			return
 		}
 
@@ -596,7 +615,9 @@ func (s *Server) batchDeletePreview(c *gin.Context) {
 			}
 			contracts, err := s.db.GetContractsByIDs(c.Request.Context(), contractIDs)
 			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				respondInternalErrorAndLog(c, "failed to read contracts",
+					"admin_rbac_group: GetContractsByIDs failed",
+					"group_id", gid, "err", err)
 				return
 			}
 			for _, contract := range contracts {
@@ -607,7 +628,9 @@ func (s *Server) batchDeletePreview(c *gin.Context) {
 		// Count members
 		members, err := s.db.ListGroupMembers(c.Request.Context(), gid)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			respondInternalErrorAndLog(c, "failed to list group members",
+				"admin_rbac_group: ListGroupMembers failed",
+				"group_id", gid, "err", err)
 			return
 		}
 
@@ -633,7 +656,8 @@ func (s *Server) batchDeleteGroups(c *gin.Context) {
 		GroupIDs []string `json:"group_ids" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequestAndLog(c, "invalid request body",
+			"admin_rbac_group: invalid batchDeleteGroups body", "org_id", orgID, "err", err)
 		return
 	}
 
@@ -682,10 +706,18 @@ func (s *Server) batchDeleteGroups(c *gin.Context) {
 
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			// The "X not found" error is built by the closure above with
+			// an attacker-supplied group_id concatenated in — surfacing
+			// it would let a tier-2 admin probe foreign group IDs.
+			// Collapse to a generic 400. RD-934.
+			respondBadRequestAndLog(c, "one or more groups not found in this organization",
+				"admin_rbac_group: batchDeleteGroups membership mismatch",
+				"org_id", orgID, "err", err)
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondInternalErrorAndLog(c, "failed to delete groups",
+			"admin_rbac_group: batchDeleteGroups tx failed",
+			"org_id", orgID, "err", err)
 		return
 	}
 

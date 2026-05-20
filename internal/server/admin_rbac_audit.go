@@ -60,7 +60,9 @@ func (s *Server) listAuditLogs(c *gin.Context) {
 	if actorID != "" {
 		logs, err := s.db.ListAuditLogsByActorScoped(ctx, actorID, scopedOrgIDs, limit, offset)
 		if err != nil {
-			respondInternalError(c, err.Error())
+			respondInternalErrorAndLog(c, "failed to read audit log",
+				"admin_rbac_audit: ListAuditLogsByActorScoped failed",
+				"actor_id", actorID, "err", err)
 			return
 		}
 		respondOK(c, logs)
@@ -70,7 +72,9 @@ func (s *Server) listAuditLogs(c *gin.Context) {
 	// Use resource type filter
 	logs, err := s.db.ListAuditLogsScoped(ctx, resourceType, resourceIDPtr, scopedOrgIDs, limit, offset)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		respondInternalErrorAndLog(c, "failed to read audit log",
+			"admin_rbac_audit: ListAuditLogsScoped failed",
+			"resource_type", resourceType, "err", err)
 		return
 	}
 	respondOK(c, logs)

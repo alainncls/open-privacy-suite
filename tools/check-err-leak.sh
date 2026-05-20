@@ -33,9 +33,6 @@
 
 set -euo pipefail
 
-# Use ripgrep via `command rg` so we bypass any shell function alias
-# (e.g. dev-tooling wrappers). Fall back to git grep when ripgrep isn't
-# installed at all.
 # Use `git grep -nP` (Perl regex) — same regex dialect as ripgrep.
 # git is available everywhere we run CI / dev tooling; ripgrep isn't
 # universally installed (and may be shadowed by tooling aliases).
@@ -71,26 +68,6 @@ declare -a patterns=(
   'respond[A-Z][a-zA-Z]+\(\s*c\s*,[^)]*fmt\.Sprintf\([^)]*err'
 )
 
-# Pre-RD-934 known-bad sites are tracked by a non-increasing *count*
-# baseline stored in tools/err-leak-baseline. The lint fails when the
-# current count exceeds the baseline. After every batch of fixes the
-# baseline is lowered to the new (smaller) count. When the baseline
-# hits 0, the audit is complete — delete the baseline file AND the
-# baseline-handling branch below to flip the lint to "must be zero."
-#
-# A count rather than a line-keyed allowlist is robust to edits — line
-# numbers shift constantly while the net leak count tracks the right
-# invariant (going up = regression, going down = progress).
-BASELINE_FILE="$(dirname "$0")/err-leak-baseline"
-baseline=0
-if [ -f "$BASELINE_FILE" ]; then
-  baseline=$(cat "$BASELINE_FILE" 2>/dev/null | tr -d '[:space:]')
-  if ! [[ "$baseline" =~ ^[0-9]+$ ]]; then
-    echo "ERROR: $BASELINE_FILE is corrupt — expected a single non-negative integer."
-    exit 2
-  fi
-fi
-
 current=0
 all_hits=""
 for pattern in "${patterns[@]}"; do
@@ -103,8 +80,8 @@ for pattern in "${patterns[@]}"; do
   fi
 done
 
-if [ "$current" -gt "$baseline" ]; then
-  echo "ERROR: err.Error() leak count rose from $baseline to $current."
+if [ "$current" -gt 0 ]; then
+  echo "ERROR: err.Error() leak in handler response. RD-934 baseline is 0; any new instance must be cleaned up before merge."
   echo
   echo "Offending matches:"
   printf '%s' "$all_hits" | grep . | head -50
@@ -112,22 +89,7 @@ if [ "$current" -gt "$baseline" ]; then
   echo "See internal/server/http_responses.go doc-comment (rule 4) and RD-934."
   echo "Use a generic opaque message + slog.Error for operator diagnostics,"
   echo "or the respondInternalErrorAndLog / respondBadRequestAndLog helpers."
-  echo
-  echo "If you intentionally added a new leak (you should not), bump"
-  echo "tools/err-leak-baseline to $current — but the goal is for that"
-  echo "number to shrink, not grow."
   exit 1
 fi
 
-if [ "$current" -lt "$baseline" ]; then
-  echo "PROGRESS: err.Error() leak count dropped from $baseline to $current."
-  echo "Update tools/err-leak-baseline to $current to lock in the improvement."
-  echo "  echo $current > tools/err-leak-baseline"
-  # Non-fatal — don't break CI on a *good* delta.
-fi
-
-if [ "$current" -eq 0 ]; then
-  echo "ok: no err.Error() leaks in handler responses"
-else
-  echo "ok: $current err.Error() leak(s) still on the audit list (RD-934 in progress; baseline $baseline)."
-fi
+echo "ok: no err.Error() leaks in handler responses"
