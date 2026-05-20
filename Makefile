@@ -389,11 +389,12 @@ staging-circuits: wallet-emulator-circuits
 staging-auth-users: staging-circuits staging-test-accs
 	@cd tools/wallet-emulator-js && PROXY_URL="$(PROXY_URL)" PRIVADO_CIRCUITS_DIR="$(PRIVADO_CIRCUITS_DIR)" ./scripts/auth-all.sh
 
-## staging: Does it all. Init circuits if missing, create identities if
-##          missing, authenticate every test user. Idempotent; daily-driver
-##          target.
-.PHONY: staging
-staging: staging-auth-users
+## setup-test-accs: Does it all. Init circuits if missing, create identities
+##                  if missing, authenticate every test user against the
+##                  staging proxy. Idempotent; the daily-driver target for
+##                  "get the test users working from a fresh clone."
+.PHONY: setup-test-accs
+setup-test-accs: staging-auth-users
 	@echo
 	@echo "Authenticate as one user (prints JWT to stdout):"
 	@echo "  cd tools/wallet-emulator-js && ./scripts/auth-as.sh alice"
