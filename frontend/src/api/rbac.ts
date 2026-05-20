@@ -49,6 +49,18 @@ export const rbacApi = {
     update: (orgId: string, input: UpdateOrganizationInput) =>
       api.put<Organization>(`/orgs/${orgId}`, input),
     delete: (orgId: string) => api.delete(`/orgs/${orgId}`),
+    // Onboard a user by DID into a group within this org (tier-2 admin
+    // surface). Backend creates the user row on first sight, then adds
+    // the membership. Backend gate: caller must be full-admin of orgId
+    // (super-admin / dev callers bypass) and the group must live in orgId.
+    createMembershipByDid: (
+      orgId: string,
+      input: { did: string; group_id: string }
+    ) =>
+      api.post<{ membership: UserMembership; user_id: string }>(
+        `/orgs/${orgId}/memberships/by-did`,
+        input
+      ),
   },
 
   // Groups
