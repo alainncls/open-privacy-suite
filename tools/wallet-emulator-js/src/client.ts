@@ -43,6 +43,25 @@ export async function postAuthVerify(proxyURL: string, sessionId: string, jwzTok
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session_id: sessionId, jwz_token: jwzToken }),
   });
+  return parseTokenResponse(target, resp);
+}
+
+// postAuthCallback submits the JWZ via the production-style callback
+// endpoint: POST /auth/callback?session=<id> with `{"token": "..."}`
+// as body. Mirrors what a real mobile wallet does. The proxy handler
+// also accepts `{"jwz_token": "..."}` for parity (auth.go:407-410), but
+// we send `token` since that's the canonical mobile-wallet shape.
+export async function postAuthCallback(proxyURL: string, sessionId: string, jwzToken: string): Promise<AuthVerifyResponse> {
+  const target = joinURL(proxyURL, `/auth/callback?session=${encodeURIComponent(sessionId)}`);
+  const resp = await fetchWithTimeout(target, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: jwzToken }),
+  });
+  return parseTokenResponse(target, resp);
+}
+
+async function parseTokenResponse(target: string, resp: Response): Promise<AuthVerifyResponse> {
   const body = await resp.text();
   if (!resp.ok) {
     throw new Error(`${target}: ${resp.status} ${resp.statusText} — ${body}`);
@@ -51,10 +70,10 @@ export async function postAuthVerify(proxyURL: string, sessionId: string, jwzTok
   try {
     parsed = JSON.parse(body);
   } catch (err) {
-    throw new Error(`decode auth-verify body: ${(err as Error).message} (body: ${body})`);
+    throw new Error(`decode token-response body: ${(err as Error).message} (body: ${body})`);
   }
   if (!parsed.access_token) {
-    throw new Error(`auth-verify response missing access_token (body: ${body})`);
+    throw new Error(`token-response missing access_token (body: ${body})`);
   }
   return {
     accessToken: parsed.access_token,

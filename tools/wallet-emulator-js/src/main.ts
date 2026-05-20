@@ -22,7 +22,7 @@ const program = new Command();
 program
   .name("wallet-emulator-js")
   .description("Headless iden3 wallet emulator (Node.js). Track A — see RD-948.")
-  .version("0.1.0-phase1a");
+  .version("0.1.0-phase1b");
 
 const identity = program.command("identity");
 
@@ -54,22 +54,45 @@ identity
 
 program
   .command("auth")
-  .description("Run the full Privado auth flow. Prints the issued JWT on success.")
+  .description("Run the full Privado auth flow. Prints the issued JWT (and nothing else) on stdout.")
   .requiredOption("--proxy <url>", "Proxy base URL (e.g. https://staging-proxy.example.com).")
   .requiredOption("--identity <file>", "Path to the identity JSON file.")
   .option(
     "--state-rpc <url>",
     "RPC endpoint for the Privado state contract. Defaults to the canonical Privado mainnet RPC.",
   )
-  .action(async (opts: { proxy: string; identity: string; stateRpc?: string }) => {
-    try {
-      const jwt = await runAuth(opts.proxy, opts.identity, opts.stateRpc);
-      console.log(jwt);
-    } catch (err) {
-      console.error(`auth: ${formatError(err)}`);
-      process.exit(1);
-    }
-  });
+  .option(
+    "--artifacts <dir>",
+    "Directory with AuthV2 circuit artifacts (circuit.wasm, circuit_final.zkey, verification_key.json under <dir>/authV2/). Default: ~/.privado-circuits.",
+  )
+  .option(
+    "--callback",
+    "Use POST /auth/callback?session=<id> instead of POST /auth/verify (mimics a production mobile wallet).",
+    false,
+  )
+  .action(
+    async (opts: {
+      proxy: string;
+      identity: string;
+      stateRpc?: string;
+      artifacts?: string;
+      callback?: boolean;
+    }) => {
+      try {
+        const jwt = await runAuth({
+          proxyURL: opts.proxy,
+          identityPath: opts.identity,
+          stateRpcURL: opts.stateRpc,
+          artifactsDir: opts.artifacts,
+          useCallbackEndpoint: opts.callback ?? false,
+        });
+        console.log(jwt);
+      } catch (err) {
+        console.error(`auth: ${formatError(err)}`);
+        process.exit(1);
+      }
+    },
+  );
 
 function formatError(err: unknown): string {
   if (err instanceof Error) {

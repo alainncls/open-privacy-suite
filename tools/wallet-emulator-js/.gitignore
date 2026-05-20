@@ -1,6 +1,5 @@
 node_modules/
 dist/
-package-lock.json
 
 # Identity files contain a private key. Never commit, even for tests.
 *identity*.json

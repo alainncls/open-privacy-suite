@@ -1,6 +1,6 @@
 {
   "name": "wallet-emulator-js",
-  "version": "0.1.0-phase1a",
+  "version": "0.1.0-phase1b",
   "private": true,
   "description": "Headless iden3 wallet emulator (Node.js) for staging / prod-build auth tests. Track A counterpart of the Go-native emulator at tools/wallet-emulator/ (RD-947 / RD-948).",
   "license": "UNLICENSED",

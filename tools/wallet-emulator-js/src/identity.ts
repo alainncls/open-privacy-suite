@@ -12,18 +12,31 @@
 //     "state":       "0x...",
 //     "created_at":  "2026-05-19T...",
 //     "wallet_state": {
-//       "...SDK-internal state blobs (encrypted keys, claim tree dumps, ...)..."
+//       "babyjub_seed_hex": "...64 hex chars (32 bytes)...",
+//       "did_method":     "iden3",
+//       "did_blockchain": "privado",
+//       "did_network":    "main"
 //     }
 //   }
 //
-// The "wallet_state" blob is whatever the SDK's DataSource serialises.
-// We keep it opaque from the operator's perspective; rotation always
-// means `identity init` again + re-registering the new state on-chain.
+// The BabyJubJub seed is the only persistent secret. `createIdentity` is
+// deterministic given (seed, method, blockchain, networkId, revocation
+// nonce=0) — passing the same persisted seed on a later `auth` run
+// reproduces the same DID, the same trees, and the same genesis state.
+// Verified against
+// node_modules/@0xpolygonid/js-sdk/dist/node/esm/index.js lines
+// 15426-15517 ("opts.seed = opts.seed ?? getRandomBytes2(32);
+// const { authClaim, pubKey } = await this.createAuthCoreClaim(revNonce,
+// opts.seed); ... identifier = Id19.idGenesisFromIdenState(didType,
+// currentState.bigInt())"). Same seed → same currentState → same DID.
+//
+// Security: the seed grants full control over the identity. The file is
+// chmod 0600. README emphasises storing it in a secret manager.
 
+import { randomBytes } from "node:crypto";
 import { writeFile, readFile, chmod } from "node:fs/promises";
 
 import {
-  // High-level wallet types from @0xpolygonid/js-sdk
   IdentityWallet,
   CredentialWallet,
   KMS,
@@ -33,16 +46,16 @@ import {
   InMemoryDataSource,
   InMemoryPrivateKeyStore,
   InMemoryMerkleTreeStorage,
-  // Iden3 primitives (re-exported by the SDK)
   CredentialStorage,
   IdentityStorage,
   type IDataStorage,
   type Identity,
   type Profile,
-  byteEncoder,
   defaultEthConnectionConfig,
   EthStateStorage,
-  // DID method / blockchain / network enums
+  CredentialStatusType,
+  CredentialStatusResolverRegistry,
+  RHSResolver,
   core,
 } from "@0xpolygonid/js-sdk";
 
@@ -52,24 +65,19 @@ export interface IdentityFile {
   state: string;
   created_at: string;
   notes: string;
-  // The SDK's internal state. Opaque — touching this manually breaks
-  // the identity. Operators rotate by running `identity init` again.
   wallet_state: WalletStateBlob;
 }
 
-// WalletStateBlob captures the SDK's in-memory state that we need to
-// re-hydrate the wallet on subsequent `auth` runs. The exact shape
-// depends on the SDK version we ship against (@0xpolygonid/js-sdk
-// 1.27.x); bump `version` in the parent file when the format changes.
+// WalletStateBlob captures the persistent material we need to rebuild
+// the wallet on a later run. The BabyJubJub seed is the only secret;
+// every other piece of identity state is derived from it.
 export interface WalletStateBlob {
-  // Hex-encoded BabyJubJub private key (32 bytes). The SDK regenerates
-  // identity / claim trees / state deterministically from this seed
-  // plus the method / blockchain / networkId tuple, so this single
-  // field is sufficient to restore the wallet.
-  babyjub_private_key: string;
+  // Hex-encoded 32-byte BabyJubJub seed (no 0x prefix). Same seed →
+  // same DID + state via IdentityWallet.createIdentity.
+  babyjub_seed_hex: string;
   // DID-method tuple. Pinned here so an operator who points the
-  // emulator at a different state contract (e.g. Privado test) gets a
-  // clear error rather than a mysteriously-failing on-chain lookup.
+  // emulator at a different state contract gets a clear error rather
+  // than a mysteriously-failing on-chain lookup.
   did_method: "iden3";
   did_blockchain: "privado";
   did_network: "main" | "test";
@@ -77,25 +85,41 @@ export interface WalletStateBlob {
 
 const FILE_MODE = 0o600;
 const FILE_VERSION = 1 as const;
+const SEED_BYTES = 32;
+
+// PrivadoMainStateRPC is the public RPC the iden3 SDK's EthStateStorage
+// reads to compute gist proofs. Keeping it local so an offline
+// `identity init` works without it; only `auth` needs network.
+const PrivadoMainStateRPC = "https://rpc-mainnet.privado.id";
+// PrivadoMainStateContract is the canonical Privado mainnet state
+// contract. Mirrors privacy-proxy's internal/auth/privado.go:33.
+const PrivadoMainStateContract = "0x3C9acB2205Aa72A05F6D77d708b5Cf85FCa3a896";
 
 export async function runIdentityInit(outPath: string): Promise<void> {
-  const { wallet, dataStorage } = await buildEmptyWallet();
+  // 1. Generate the BJJ seed first; the SDK uses it deterministically.
+  const seed = randomBytes(SEED_BYTES);
 
-  // Create a fresh identity. The SDK generates the BabyJubJub keypair
-  // inside the KMS (deterministic from the seed it picks; we then
-  // serialise the seed for persistence below). It also builds the
-  // claims / revocation / roots merkle trees and computes the genesis
-  // state.
-  const { did, credential: _authBJJCredential } = await wallet.createIdentity({
+  // 2. Build a wallet pinned to that seed (KMS gets it pre-imported by
+  //    BjjProvider via the createIdentity call below).
+  const { wallet } = buildWallet();
+
+  // 3. Create the identity. genesisPublishingDisabled=true keeps this
+  //    offline — no RHS / state-contract round-trip from `init`. The
+  //    operator publishes manually after the file is written.
+  const { did } = await wallet.createIdentity({
     method: core.DidMethod.Iden3,
     blockchain: core.Blockchain.Privado,
     networkId: core.NetworkId.Main,
-    // The seed param accepts a 32-byte random Buffer; passing
-    // `undefined` lets the SDK generate one and store it in the KMS.
-    seed: undefined,
+    seed,
     revocationOpts: {
-      type: 0, // SparseMerkleTreeProof — default revocation tree shape.
-      id: "rhsUrl-not-used-in-this-emulator",
+      type: CredentialStatusType.Iden3ReverseSparseMerkleTreeProof,
+      // `id` is the RHS URL embedded in the credential status. We
+      // never resolve it from the emulator (the AuthV2 circuit doesn't
+      // need credential revocation status), but the SDK requires a
+      // non-empty string. Use the canonical Privado RHS URL.
+      id: "https://rhs-staging.polygonid.me",
+      nonce: 0,
+      genesisPublishingDisabled: true,
     },
   });
 
@@ -108,12 +132,20 @@ export async function runIdentityInit(outPath: string): Promise<void> {
     created_at: new Date().toISOString(),
     notes:
       "Generated by wallet-emulator-js (Track A / RD-948). Register the (DID, state) pair on the Privado state contract before using this identity for auth. See tools/wallet-emulator-js/README.md.",
-    wallet_state: await exportWalletState(dataStorage),
+    wallet_state: {
+      babyjub_seed_hex: seed.toString("hex"),
+      did_method: "iden3",
+      did_blockchain: "privado",
+      did_network: "main",
+    },
   };
 
   await writeFile(outPath, JSON.stringify(idf, null, 2));
   await chmod(outPath, FILE_MODE);
 
+  // stdout is intentionally minimal-but-useful: operators tail it via
+  // CI logs and we don't want surprises. The actual secret never lands
+  // in stdout — only the file path does.
   console.log(`Created identity:`);
   console.log(`  DID:   ${idf.did}`);
   console.log(`  State: ${idf.state}`);
@@ -143,60 +175,145 @@ export async function loadIdentity(path: string): Promise<IdentityFile> {
       `unsupported identity-file version ${String(parsed.version)} (this binary expects ${FILE_VERSION}); regenerate with \`identity init\``,
     );
   }
-  if (!parsed.did || !parsed.state || !parsed.wallet_state?.babyjub_private_key) {
-    throw new Error(`identity file ${path} is missing required fields (did / state / wallet_state.babyjub_private_key)`);
+  if (
+    !parsed.did ||
+    !parsed.state ||
+    !parsed.wallet_state?.babyjub_seed_hex ||
+    parsed.wallet_state.babyjub_seed_hex.length !== SEED_BYTES * 2
+  ) {
+    throw new Error(
+      `identity file ${path} is missing required fields (did / state / wallet_state.babyjub_seed_hex)`,
+    );
   }
   return parsed as IdentityFile;
 }
 
-// buildEmptyWallet wires the SDK's in-memory data sources + KMS + key
-// providers for a fresh wallet. Phase 1b will replace InMemoryDataSource
-// with a file-backed equivalent so multiple `auth` invocations against
-// the same identity file don't pay the proof-tree rebuild cost.
-async function buildEmptyWallet(): Promise<{ wallet: IdentityWallet; dataStorage: IDataStorage }> {
+// HydratedWallet is the bundle a caller needs to drive AuthHandler:
+// the IdentityWallet, the CredentialWallet (AuthHandler reaches it via
+// IdentityWallet.credentialWallet but ProofService takes both), the
+// data storage (for ProofService gist proof access), the DID parsed
+// from the persisted file, and the KMS (only exposed in case the
+// caller wants to introspect; not required for the auth flow).
+export interface HydratedWallet {
+  wallet: IdentityWallet;
+  credentialWallet: CredentialWallet;
+  dataStorage: IDataStorage;
+  kms: KMS;
+  did: core.DID;
+  identity: IdentityFile;
+}
+
+// hydrateWalletFromFile rebuilds an in-memory IdentityWallet from the
+// persisted seed. Same seed → identical DID + state. Network is only
+// touched lazily by ProofService when it asks EthStateStorage for the
+// gist proof; `init` never does that, `auth` does.
+//
+// Important: `createIdentity` is the ONLY public path that takes a
+// seed today (verified against
+// node_modules/@0xpolygonid/js-sdk/dist/types/identity/identity-wallet.d.ts
+// — AuthBJJCredentialCreationOptions.seed: Uint8Array). There's no
+// "loadIdentity(did)" symmetric API in 1.27.x. We reuse `createIdentity`
+// as the rehydration primitive; the SDK short-circuits to the existing
+// credential if it finds one matching (x,y) in the in-memory store
+// (bundle line 15474), but since the in-memory store is fresh on every
+// run, it always rebuilds the trees + credential — which is cheap.
+export async function hydrateWalletFromFile(
+  identityPath: string,
+  stateRpcURL: string | undefined,
+): Promise<HydratedWallet> {
+  const idf = await loadIdentity(identityPath);
+  const seed = Buffer.from(idf.wallet_state.babyjub_seed_hex, "hex");
+  if (seed.length !== SEED_BYTES) {
+    throw new Error(
+      `decoded BJJ seed has wrong length: got ${seed.length} bytes, want ${SEED_BYTES}`,
+    );
+  }
+
+  const { wallet, credentialWallet, dataStorage, kms } = buildWallet(stateRpcURL);
+
+  // Recompute the identity from the persisted seed. Must match the
+  // method/blockchain/networkId encoded in the persisted file so the
+  // generated DID matches `idf.did`.
+  const { did } = await wallet.createIdentity({
+    method: core.DidMethod.Iden3,
+    blockchain: core.Blockchain.Privado,
+    networkId: core.NetworkId.Main,
+    seed,
+    revocationOpts: {
+      type: CredentialStatusType.Iden3ReverseSparseMerkleTreeProof,
+      id: "https://rhs-staging.polygonid.me",
+      nonce: 0,
+      genesisPublishingDisabled: true,
+    },
+  });
+
+  // Sanity check: rehydrated DID must match the persisted one. If it
+  // doesn't, the identity file was generated against a different SDK
+  // version or different method/network tuple — bail loudly.
+  if (did.string() !== idf.did) {
+    throw new Error(
+      `rehydrated DID ${did.string()} does not match persisted DID ${idf.did}; ` +
+        `seed/method/network mismatch — regenerate with \`identity init\` against the current SDK`,
+    );
+  }
+  const rehydratedState = await currentStateHex(wallet, did);
+  if (rehydratedState !== idf.state) {
+    throw new Error(
+      `rehydrated state ${rehydratedState} does not match persisted state ${idf.state}; ` +
+        `the SDK appears to have changed its genesis-derivation algorithm — regenerate the identity`,
+    );
+  }
+
+  return { wallet, credentialWallet, dataStorage, kms, did, identity: idf };
+}
+
+// buildWallet wires the SDK's in-memory data sources + KMS + key
+// providers. If `stateRpcURL` is set the EthStateStorage is configured
+// against Privado mainnet — required for `auth` (gist proof). For
+// `identity init` we pass undefined and the storage points at the
+// default localhost RPC, which is fine because `init` never calls it.
+function buildWallet(stateRpcURL?: string): {
+  wallet: IdentityWallet;
+  credentialWallet: CredentialWallet;
+  dataStorage: IDataStorage;
+  kms: KMS;
+} {
   const kms = new KMS();
   const bjjKeyStore = new InMemoryPrivateKeyStore();
   kms.registerKeyProvider(KmsKeyType.BabyJubJub, new BjjProvider(KmsKeyType.BabyJubJub, bjjKeyStore));
   kms.registerKeyProvider(KmsKeyType.Secp256k1, new Sec256k1Provider(KmsKeyType.Secp256k1, bjjKeyStore));
 
+  const ethConfig = {
+    ...defaultEthConnectionConfig,
+    url: stateRpcURL ?? PrivadoMainStateRPC,
+    contractAddress: PrivadoMainStateContract,
+    chainId: 21000, // Privado main chainId
+  };
+
   const dataStorage: IDataStorage = {
     credential: new CredentialStorage(new InMemoryDataSource()),
     identity: new IdentityStorage(new InMemoryDataSource<Identity>(), new InMemoryDataSource<Profile>()),
     mt: new InMemoryMerkleTreeStorage(40),
-    // states is the EthStateStorage configured against the Privado main
-    // state contract. The CLI will only HIT this on `auth` runs (when
-    // building the gist proof); `identity init` doesn't need network.
-    states: new EthStateStorage(defaultEthConnectionConfig),
+    states: new EthStateStorage(ethConfig),
   };
 
-  const credWallet = new CredentialWallet(dataStorage);
-  const wallet = new IdentityWallet(kms, dataStorage, credWallet);
-  return { wallet, dataStorage };
+  // CredentialWallet needs a revocation-status resolver registry. The
+  // RHS resolver covers Iden3ReverseSparseMerkleTreeProof (which is
+  // what `createIdentity` registers above). AuthHandler doesn't
+  // actually fetch revocation status for AuthV2 — but the wallet
+  // constructor expects the registry to be present.
+  const statusRegistry = new CredentialStatusResolverRegistry();
+  statusRegistry.register(
+    CredentialStatusType.Iden3ReverseSparseMerkleTreeProof,
+    new RHSResolver(dataStorage.states),
+  );
+
+  const credentialWallet = new CredentialWallet(dataStorage, statusRegistry);
+  const wallet = new IdentityWallet(kms, dataStorage, credentialWallet);
+  return { wallet, credentialWallet, dataStorage, kms };
 }
 
 async function currentStateHex(wallet: IdentityWallet, did: core.DID): Promise<string> {
   const treeState = await wallet.getDIDTreeModel(did);
-  // treeState.state is a Hash (32 bytes). Stringify via the SDK helper
-  // which produces a 0x-prefixed lowercase hex value identical to what
-  // the proxy verifier resolver consumes on-chain.
   return treeState.state.hex();
-}
-
-async function exportWalletState(dataStorage: IDataStorage): Promise<WalletStateBlob> {
-  // Serialise the BabyJubJub private key so we can rehydrate the wallet
-  // for `auth` runs. The SDK's KMS doesn't expose the raw seed via
-  // public API as of 1.27.x; this is the Phase 1b wiring point — we
-  // probably need to switch from InMemoryPrivateKeyStore to a
-  // filesystem-backed PrivateKeyStore that we control.
-  //
-  // TODO(RD-948 Phase A-1b): wire the persistent KMS key store so the
-  //                           BabyJub private key is recoverable across
-  //                           `identity init` → `auth` invocations.
-  void dataStorage;
-  return {
-    babyjub_private_key: "TODO-phase-1b-persist-bjj-seed",
-    did_method: "iden3",
-    did_blockchain: "privado",
-    did_network: "main",
-  };
 }
