@@ -22,7 +22,7 @@ PRIVADO_CIRCUITS_DIR="${PRIVADO_CIRCUITS_DIR:-$HOME/.privado-circuits}"
 
 if [[ ! -f "$IDENT" ]]; then
   echo "auth-as: no identity at $IDENT" >&2
-  echo "         run 'make staging-test-accs' from the repo root first" >&2
+  echo "         run 'make staging-create-test-accs' from the repo root first" >&2
   exit 2
 fi
 if [[ ! -f "$PRIVADO_CIRCUITS_DIR/authV2/circuit.wasm" ]]; then

@@ -346,13 +346,14 @@ proto-lint:
 	@which buf > /dev/null || (echo "buf not installed"; exit 1)
 	buf lint
 
-## staging-test-accs: Generate the five deterministic staging test identities
-##                    (alice/bob/carol/dave/eve) under
-##                    tools/wallet-emulator-js/identities/. Idempotent + self-
-##                    healing. Files are committed to git on purpose; see the
-##                    script header for the security rationale.
-.PHONY: staging-test-accs
-staging-test-accs:
+## staging-create-test-accs: Generate the five deterministic staging test
+##                           identities (alice/bob/carol/dave/eve) under
+##                           tools/wallet-emulator-js/identities/. Idempotent
+##                           + self-healing. Files are committed to git on
+##                           purpose; see the script header for the security
+##                           rationale.
+.PHONY: staging-create-test-accs
+staging-create-test-accs:
 	@cd tools/wallet-emulator-js && ./scripts/create-test-identities.sh
 
 ## wallet-emulator-circuits: Fetch the auth-v2 ZK circuit artifacts to
@@ -386,15 +387,15 @@ staging-circuits: wallet-emulator-circuits
 ##                     run on a fresh clone.
 ##                     Override the proxy with: make staging-auth-users PROXY_URL=https://...
 .PHONY: staging-auth-users
-staging-auth-users: staging-circuits staging-test-accs
+staging-auth-users: staging-circuits staging-create-test-accs
 	@cd tools/wallet-emulator-js && PROXY_URL="$(PROXY_URL)" PRIVADO_CIRCUITS_DIR="$(PRIVADO_CIRCUITS_DIR)" ./scripts/auth-all.sh
 
-## setup-test-accs: Does it all. Init circuits if missing, create identities
-##                  if missing, authenticate every test user against the
-##                  staging proxy. Idempotent; the daily-driver target for
-##                  "get the test users working from a fresh clone."
-.PHONY: setup-test-accs
-setup-test-accs: staging-auth-users
+## staging-test-accs: Does it all. Init circuits if missing, create identities
+##                    if missing, authenticate every test user against the
+##                    staging proxy. Idempotent; the daily-driver target for
+##                    "get the test users working from a fresh clone."
+.PHONY: staging-test-accs
+staging-test-accs: staging-auth-users
 	@echo
 	@echo "Authenticate as one user (prints JWT to stdout):"
 	@echo "  cd tools/wallet-emulator-js && ./scripts/auth-as.sh alice"
