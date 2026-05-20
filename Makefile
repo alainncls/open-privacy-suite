@@ -372,12 +372,31 @@ wallet-emulator-circuits:
 	  "$(PRIVADO_BUNDLE_URL)" \
 	  "$(AUTHV2_WASM_SHA256)" "$(AUTHV2_ZKEY_SHA256)" "$(AUTHV2_VKEY_SHA256)"
 
-## staging-wallet-setup: One-shot — identities + circuits. Use this if you just
-##                       cloned the repo and want everything ready for `auth`.
-.PHONY: staging-wallet-setup
-staging-wallet-setup: staging-test-accs wallet-emulator-circuits
+## staging-circuits: Alias for `wallet-emulator-circuits`. Initialises just the
+##                   auth-v2 ZK circuit artifacts (~32 MB fetch on first run,
+##                   no-op when already present + SHA-256 verified).
+.PHONY: staging-circuits
+staging-circuits: wallet-emulator-circuits
+
+## staging-auth-users: Authenticate every named test identity (alice/bob/carol/
+##                     dave/eve) against the staging proxy and print a
+##                     name → DID table. Use ./scripts/auth-as.sh <name> from
+##                     tools/wallet-emulator-js/ to grab an actual JWT.
+##                     Ensures circuits + identities exist via deps; safe to
+##                     run on a fresh clone.
+##                     Override the proxy with: make staging-auth-users PROXY_URL=https://...
+.PHONY: staging-auth-users
+staging-auth-users: staging-circuits staging-test-accs
+	@cd tools/wallet-emulator-js && PROXY_URL="$(PROXY_URL)" PRIVADO_CIRCUITS_DIR="$(PRIVADO_CIRCUITS_DIR)" ./scripts/auth-all.sh
+
+## staging: Does it all. Init circuits if missing, create identities if
+##          missing, authenticate every test user. Idempotent; daily-driver
+##          target.
+.PHONY: staging
+staging: staging-auth-users
 	@echo
-	@echo "Ready. Run an auth flow with:"
-	@echo "  cd tools/wallet-emulator-js && npx tsx src/main.ts auth \\"
-	@echo "    --proxy <URL> --identity ./identities/alice.json \\"
-	@echo "    --artifacts $(PRIVADO_CIRCUITS_DIR) --callback"
+	@echo "Authenticate as one user (prints JWT to stdout):"
+	@echo "  cd tools/wallet-emulator-js && ./scripts/auth-as.sh alice"
+	@echo
+	@echo "Capture for reuse:"
+	@echo "  JWT=\$$(cd tools/wallet-emulator-js && ./scripts/auth-as.sh alice)"
