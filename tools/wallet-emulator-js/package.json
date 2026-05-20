@@ -1,0 +1,29 @@
+{
+  "name": "wallet-emulator-js",
+  "version": "0.1.0-phase1b",
+  "private": true,
+  "description": "Headless iden3 wallet emulator (Node.js) for staging / prod-build auth tests. Track A counterpart of the Go-native emulator at tools/wallet-emulator/ (RD-947 / RD-948).",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20"
+  },
+  "type": "module",
+  "bin": {
+    "wallet-emulator-js": "./dist/main.js"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "cli": "tsx src/main.ts",
+    "lint": "tsc --noEmit -p .",
+    "smoke": "tsx src/smoke.ts"
+  },
+  "dependencies": {
+    "@0xpolygonid/js-sdk": "^1.27.0",
+    "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0"
+  }
+}
