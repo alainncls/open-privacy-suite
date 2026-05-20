@@ -427,8 +427,8 @@ staging-cleanup:
 .PHONY: staging-test-accs
 staging-test-accs: staging-auth-users
 	@echo
-	@echo "Authenticate as one user (prints JWT to stdout):"
-	@echo "  cd tools/wallet-emulator-js && ./scripts/auth-as.sh alice"
+	@echo "Refresh a single user's JWT (tokens are ~5 min):"
+	@echo "  PROXY_URL=$(PROXY_URL) tools/wallet-emulator-js/scripts/auth-as.sh alice"
 	@echo
 	@echo "Capture for reuse:"
-	@echo "  JWT=\$$(cd tools/wallet-emulator-js && ./scripts/auth-as.sh alice)"
+	@echo "  JWT=\$$(PROXY_URL=$(PROXY_URL) tools/wallet-emulator-js/scripts/auth-as.sh alice)"

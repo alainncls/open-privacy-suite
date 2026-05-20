@@ -57,9 +57,8 @@ echo
 echo "Identities directory: $OUT_DIR"
 echo "Files committed to git (these are staging-only test accounts; see script header)."
 echo
-echo "Auth as one of them:"
-echo "  npx tsx src/main.ts auth \\"
-echo "    --proxy https://your-proxy.example.com \\"
-echo "    --identity $OUT_DIR/alice.json \\"
-echo "    --artifacts ~/.privado-circuits \\"
-echo "    --callback"
+echo "Authenticate one of them (JWT goes to stdout, logs to stderr):"
+echo "  PROXY_URL=https://your-staging-proxy.example.com ./scripts/auth-as.sh alice"
+echo
+echo "Or run the full pipeline (circuits + identities + auth all 5) from the repo root:"
+echo "  make staging-test-accs PROXY_URL=https://your-staging-proxy.example.com"
