@@ -5,9 +5,10 @@ dist/
 *identity*.json
 !example-identity.json
 
-# Named test identities created by scripts/create-test-identities.sh.
-# Each file holds a BabyJub seed — keep them out of git unconditionally.
-identities/
+# Named test identities created by scripts/create-test-identities.sh are
+# intentionally committed: they are deterministic (seed = sha256("...:<name>"))
+# and exist only for staging/dev. See the script header for the security
+# rationale.
 
 # Wallet state directory created by `identity init`.
 .wallet-state/

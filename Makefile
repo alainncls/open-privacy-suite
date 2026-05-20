@@ -345,3 +345,12 @@ proto-gen:
 proto-lint:
 	@which buf > /dev/null || (echo "buf not installed"; exit 1)
 	buf lint
+
+## staging-test-accs: Generate the five deterministic staging test identities
+##                    (alice/bob/carol/dave/eve) under
+##                    tools/wallet-emulator-js/identities/. Idempotent + self-
+##                    healing. Files are committed to git on purpose; see the
+##                    script header for the security rationale.
+.PHONY: staging-test-accs
+staging-test-accs:
+	@cd tools/wallet-emulator-js && ./scripts/create-test-identities.sh

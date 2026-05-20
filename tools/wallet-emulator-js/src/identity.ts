@@ -97,7 +97,23 @@ const PrivadoMainStateContract = "0x3C9acB2205Aa72A05F6D77d708b5Cf85FCa3a896";
 
 export async function runIdentityInit(outPath: string): Promise<void> {
   // 1. Generate the BJJ seed first; the SDK uses it deterministically.
-  const seed = randomBytes(SEED_BYTES);
+  //    Allow the seed to be supplied via WALLET_EMULATOR_SEED_HEX so callers
+  //    (e.g. scripts/create-test-identities.sh) can derive stable DIDs from
+  //    a deterministic source — same seed everywhere → same DID everywhere.
+  //    No CLI flag for the seed; env-only, so it never lands in shell history
+  //    or `ps`-visible argv.
+  const seedHex = process.env.WALLET_EMULATOR_SEED_HEX;
+  let seed: Buffer;
+  if (seedHex) {
+    if (!/^[0-9a-fA-F]{64}$/.test(seedHex)) {
+      throw new Error(
+        `WALLET_EMULATOR_SEED_HEX must be exactly 64 hex chars (32 bytes); got length ${seedHex.length}`,
+      );
+    }
+    seed = Buffer.from(seedHex, "hex");
+  } else {
+    seed = randomBytes(SEED_BYTES);
+  }
 
   // 2. Build a wallet pinned to that seed (KMS gets it pre-imported by
   //    BjjProvider via the createIdentity call below).
