@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { rbacApi } from '@/api/rbac';
 import type { User, GroupWithAccess, UserRoleFilter } from '@/types/rbac';
 import UserDetail from './UserDetail';
+import OnboardByDIDForm from './OnboardByDIDForm';
 import { useOrgContext } from './RBACManager';
 import { useAdmin } from '@/components/auth/RequireAdmin';
 import { Button } from '@/components/ui/button';
@@ -41,6 +42,7 @@ import {
   Loader2,
   Eye,
   Search,
+  UserPlus,
 } from 'lucide-react';
 
 const ROLE_OPTIONS: { value: UserRoleFilter | 'any'; label: string }[] = [
@@ -63,6 +65,7 @@ export default function UserList() {
   const [offset, setOffset] = useState(0);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [showUpdateError, setShowUpdateError] = useState(false);
+  const [onboardOpen, setOnboardOpen] = useState(false);
 
   // Search state
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -200,13 +203,25 @@ export default function UserList() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <div>
           <h3 className="text-sm font-medium text-neutral-700">Users</h3>
           <p className="text-xs text-neutral-500 mt-0.5">
             Manage user accounts, KYC status, and group memberships
           </p>
         </div>
+        {selectedOrg && !isReadonlyAdmin && (
+          <Button
+            size="sm"
+            onClick={() => setOnboardOpen(true)}
+            className="gap-2"
+            data-testid="onboard-by-did-button"
+            title="Onboard a user by their DID into a group in this organization"
+          >
+            <UserPlus className="w-4 h-4" />
+            Onboard by DID
+          </Button>
+        )}
       </div>
 
       {/* Search + filters */}
@@ -458,6 +473,31 @@ export default function UserList() {
         buttonLabel="OK"
         variant="error"
       />
+
+      {/* Onboard by DID Dialog */}
+      <Dialog open={onboardOpen} onOpenChange={setOnboardOpen}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <UserPlus className="w-5 h-5 text-primary" />
+              Onboard user by DID
+            </DialogTitle>
+          </DialogHeader>
+          {selectedOrg && (
+            <OnboardByDIDForm
+              orgId={selectedOrg.id}
+              groups={groupOptions.map(g => g.group)}
+              onClose={() => setOnboardOpen(false)}
+              onSave={() => {
+                setOnboardOpen(false);
+                // Refresh the user list so the freshly onboarded user
+                // (or a new membership on an existing user) shows up.
+                loadUsers();
+              }}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
