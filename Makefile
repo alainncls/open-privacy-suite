@@ -354,3 +354,30 @@ proto-lint:
 .PHONY: staging-test-accs
 staging-test-accs:
 	@cd tools/wallet-emulator-js && ./scripts/create-test-identities.sh
+
+## wallet-emulator-circuits: Fetch the auth-v2 ZK circuit artifacts to
+##                           PRIVADO_CIRCUITS_DIR (default: ~/.privado-circuits)
+##                           if missing or checksum-drifted. Required by
+##                           `wallet-emulator-js auth`. No-op when already
+##                           present + verified. ~32 MB on first run.
+PRIVADO_CIRCUITS_DIR ?= $(HOME)/.privado-circuits
+AUTHV2_WASM_SHA256 := 70affbca1ad1947d76784ca90f6c4a8fd143119685c9917a2a6fefc15b9ed7c1
+AUTHV2_ZKEY_SHA256 := 6acb096a716f5f5b1e5505a7b7261c7eeb7f0a90597c5194fad7b14f91180ac1
+AUTHV2_VKEY_SHA256 := 79cf543dd8300c0149454ddd200a0a1ac83eed1df4fb49bdceea4b5ebd2cec96
+PRIVADO_BUNDLE_URL ?= https://circuits.privado.id/latest.zip
+
+.PHONY: wallet-emulator-circuits
+wallet-emulator-circuits:
+	@./scripts/fetch-privado-circuits.sh "$(PRIVADO_CIRCUITS_DIR)" \
+	  "$(PRIVADO_BUNDLE_URL)" \
+	  "$(AUTHV2_WASM_SHA256)" "$(AUTHV2_ZKEY_SHA256)" "$(AUTHV2_VKEY_SHA256)"
+
+## staging-wallet-setup: One-shot — identities + circuits. Use this if you just
+##                       cloned the repo and want everything ready for `auth`.
+.PHONY: staging-wallet-setup
+staging-wallet-setup: staging-test-accs wallet-emulator-circuits
+	@echo
+	@echo "Ready. Run an auth flow with:"
+	@echo "  cd tools/wallet-emulator-js && npx tsx src/main.ts auth \\"
+	@echo "    --proxy <URL> --identity ./identities/alice.json \\"
+	@echo "    --artifacts $(PRIVADO_CIRCUITS_DIR) --callback"
