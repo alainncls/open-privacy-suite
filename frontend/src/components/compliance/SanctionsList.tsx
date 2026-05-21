@@ -19,8 +19,9 @@ import type { SanctionedAddress } from '@/types/compliance';
 const PAGE_SIZE = 25;
 
 export default function SanctionsList() {
-  const { organizations } = useComplianceOrgContext();
+  const { selectedOrg, organizations } = useComplianceOrgContext();
   const { isReadonlyAdmin } = useAdmin();
+  const orgId = selectedOrg?.id;
 
   const [addresses, setAddresses] = useState<SanctionedAddress[]>([]);
   const [loading, setLoading] = useState(true);
@@ -34,15 +35,26 @@ export default function SanctionsList() {
   const [formAddress, setFormAddress] = useState('');
   const [formReason, setFormReason] = useState('');
   const [formSource, setFormSource] = useState('');
-  const [formOrgId, setFormOrgId] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const [formSaving, setFormSaving] = useState(false);
 
   const loadAddresses = async (newOffset: number = offset) => {
+    // Backend (admin_compliance.go: listSanctionedAddresses) requires an
+    // explicit `org_id` for JWT-admin callers and rejects empty values with
+    // 400 "org_id query parameter is required". Skip the call when no org is
+    // selected — ComplianceManager already shows a "Select an organization"
+    // empty state in that case.
+    if (!orgId) {
+      setAddresses([]);
+      setTotal(0);
+      setLoading(false);
+      return;
+    }
     try {
       setLoading(true);
       setError(null);
       const response = await complianceApi.sanctions.list({
+        org_id: orgId,
         limit: PAGE_SIZE,
         offset: newOffset,
       });
@@ -64,14 +76,15 @@ export default function SanctionsList() {
   };
 
   useEffect(() => {
+    setOffset(0);
     loadAddresses(0);
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgId]);
 
   const openCreateForm = () => {
     setFormAddress('');
     setFormReason('');
     setFormSource('');
-    setFormOrgId('');
     setFormError(null);
     setShowForm(true);
   };
@@ -79,6 +92,10 @@ export default function SanctionsList() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    if (!orgId) {
+      setFormError('Select an organization before adding sanctions');
+      return;
+    }
     if (!formAddress.trim()) {
       setFormError('Address is required');
       return;
@@ -91,11 +108,15 @@ export default function SanctionsList() {
     try {
       setFormSaving(true);
       setFormError(null);
+      // Sanctions are always added to the currently selected org. Adding a
+      // global (org_id == nil) sanction is super-admin only on the backend
+      // (admin_compliance.go: addSanctionedAddress), so the dashboard never
+      // offers a "Global" option here.
       await complianceApi.sanctions.add({
         address: formAddress.trim().toLowerCase(),
         reason: formReason.trim(),
         source: formSource.trim() || undefined,
-        org_id: formOrgId || undefined,
+        org_id: orgId,
       });
       setShowForm(false);
       loadAddresses(0);
@@ -262,19 +283,12 @@ export default function SanctionsList() {
               <label className="block text-sm font-medium text-neutral-700 mb-1.5">
                 Scope
               </label>
-              <select
-                className="w-full rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-                value={formOrgId}
-                onChange={e => setFormOrgId(e.target.value)}
-              >
-                <option value="">Global (all organizations)</option>
-                {organizations.map(org => (
-                  <option key={org.id} value={org.id}>{org.name}</option>
-                ))}
-              </select>
-              <p className="text-xs text-neutral-400 mt-1">
-                Global sanctions apply to all organizations
-              </p>
+              <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-neutral-100 text-sm text-neutral-700">
+                <Badge variant="outline">{selectedOrg?.name ?? '—'}</Badge>
+                <span className="text-neutral-500 text-xs">
+                  Sanctions are scoped to the currently selected organization.
+                </span>
+              </div>
             </div>
 
             <DialogFooter>
