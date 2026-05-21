@@ -43,10 +43,17 @@ afterAll(() => {
   server.close();
 });
 
-// jsdom provides localStorage/sessionStorage by default - just clear them between tests
+// jsdom provides localStorage/sessionStorage by default — but on unsupported Node
+// versions (e.g. Node 25) the globals may be missing or stubbed without .clear(),
+// turning every cleanup hook into a test failure. Guard so the suite still reports
+// real assertion results; engines.node in package.json pins the supported range.
 afterEach(() => {
-  localStorage.clear();
-  sessionStorage.clear();
+  if (typeof localStorage !== 'undefined' && typeof localStorage.clear === 'function') {
+    localStorage.clear();
+  }
+  if (typeof sessionStorage !== 'undefined' && typeof sessionStorage.clear === 'function') {
+    sessionStorage.clear();
+  }
   vi.clearAllMocks();
 });
 
