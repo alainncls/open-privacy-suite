@@ -697,11 +697,18 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 	// Determine required claim based on the operation
 	requiredClaim := ClassifyOperation(req.EffectiveMethod(), req.Params)
 
-	// Simple value transfers (eth_sendTransaction with no calldata) to unregistered
-	// addresses are treated as EOA transfers. No contract-level access check is
-	// needed since EOAs don't have code to execute; method allowlist already
-	// verified eth_sendTransaction is permitted.
-	if req.EffectiveMethod() == "eth_sendTransaction" && req.TargetAddress != "" && isValueTransferParams(req.Params) {
+	// Simple value transfers (no calldata) to unregistered addresses are treated
+	// as EOA transfers. No contract-level access check is needed since EOAs
+	// don't have code to execute; method allowlist already verified the method
+	// is permitted.
+	//
+	// Covers both eth_sendTransaction (actually sending) and eth_estimateGas
+	// (the pre-flight call standard tooling makes before signing — cast send,
+	// hardhat, ethers, viem all hit estimateGas first). Without the
+	// estimateGas carve-out, every mainstream client breaks at the pre-flight
+	// step even though sendTransaction would have been allowed. RD-969.
+	if (req.EffectiveMethod() == "eth_sendTransaction" || req.EffectiveMethod() == "eth_estimateGas") &&
+		req.TargetAddress != "" && isValueTransferParams(req.Params) {
 		addr := strings.ToLower(req.TargetAddress)
 		// Check if this address is registered as a contract or preregistered address
 		if !perms.IsContractRegistered(addr) {

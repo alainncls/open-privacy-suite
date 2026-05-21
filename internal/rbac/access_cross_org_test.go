@@ -1647,7 +1647,7 @@ func TestCheckAccessEOAValueTransfer(t *testing.T) {
 	store.groupAccess["group-a"] = &GroupAccess{
 		ID: "ga-a", GroupID: "group-a",
 		Claims:         []Claim{},
-		AllowedMethods: []string{"eth_call", "eth_sendTransaction", "eth_getBalance"},
+		AllowedMethods: []string{"eth_call", "eth_sendTransaction", "eth_estimateGas", "eth_getBalance"},
 	}
 	store.groupAccess["group-b"] = &GroupAccess{
 		ID: "ga-b", GroupID: "group-b",
@@ -1659,7 +1659,7 @@ func TestCheckAccessEOAValueTransfer(t *testing.T) {
 		ID:             "perms-writer",
 		UserID:         "write-user",
 		OrgID:          "org-a",
-		AllowedMethods: []string{"eth_call", "eth_sendTransaction", "eth_getBalance"},
+		AllowedMethods: []string{"eth_call", "eth_sendTransaction", "eth_estimateGas", "eth_getBalance"},
 		ContractAccess: map[string]ContractAccess{},
 		Claims:         []Claim{},
 		ComputedAt:     time.Now(),
@@ -1760,6 +1760,70 @@ func TestCheckAccessEOAValueTransfer(t *testing.T) {
 		// Should be denied because user has no explicit grant for this contract
 		if result.Allowed {
 			t.Error("expected value transfer to registered contract to go through contract access check and be denied")
+		}
+	})
+
+	// RD-969: eth_estimateGas is the pre-flight step every mainstream wallet
+	// (cast send, hardhat, ethers, viem) calls before signing. Without these
+	// cases the bypass would refuse the estimate and break the happy path
+	// even though sendTransaction would have been allowed.
+	t.Run("EOA-005: eth_estimateGas on EOA value transfer is allowed (cast send pre-flight)", func(t *testing.T) {
+		req := &AccessCheckRequest{
+			UserExternalID: "did:test:writer",
+			OrgID:          "org-a",
+			Method:         "eth_estimateGas",
+			Params:         []any{map[string]any{"to": eoaAddress, "from": "0x1111111111111111111111111111111111111111", "value": "0xde0b6b3a7640000"}},
+			TargetAddress:  strings.ToLower(eoaAddress),
+		}
+
+		result, err := controller.CheckAccess(ctx, req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !result.Allowed {
+			t.Errorf("expected eth_estimateGas on EOA value transfer to be allowed, got: %s", result.Reason)
+		}
+	})
+
+	t.Run("EOA-006: eth_estimateGas with calldata to unregistered address is denied (carve-out doesn't widen)", func(t *testing.T) {
+		req := &AccessCheckRequest{
+			UserExternalID:   "did:test:writer",
+			OrgID:            "org-a",
+			Method:           "eth_estimateGas",
+			Params:           []any{map[string]any{"to": eoaAddress, "from": "0x1111111111111111111111111111111111111111", "value": "0x0", "data": "0xa9059cbb0000000000000000000000000000000000000000000000000000000000000001"}},
+			TargetAddress:    strings.ToLower(eoaAddress),
+			FunctionSelector: "0xa9059cbb",
+		}
+
+		result, err := controller.CheckAccess(ctx, req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.Allowed {
+			t.Error("expected eth_estimateGas with calldata to unregistered address to be denied (carve-out is value-transfer-only)")
+		}
+	})
+
+	t.Run("EOA-007: eth_estimateGas to registered contract still goes through contract access check", func(t *testing.T) {
+		// EOA-004 covered eth_sendTransaction; this mirrors it for eth_estimateGas
+		// to prove the bypass doesn't open registered-contract access.
+		contractAddr := "0xaaaa000000000000000000000000000000000002"
+		store.contractOwners[strings.ToLower(contractAddr)] = "org-a"
+
+		req := &AccessCheckRequest{
+			UserExternalID: "did:test:writer",
+			OrgID:          "org-a",
+			Method:         "eth_estimateGas",
+			Params:         []any{map[string]any{"to": contractAddr, "from": "0x1111111111111111111111111111111111111111", "value": "0xde0b6b3a7640000"}},
+			TargetAddress:  strings.ToLower(contractAddr),
+		}
+
+		result, err := controller.CheckAccess(ctx, req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.Allowed {
+			t.Error("expected eth_estimateGas to registered contract to go through contract access check and be denied (no grant)")
 		}
 	})
 }
