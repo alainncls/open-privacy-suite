@@ -18,7 +18,6 @@ import {
   ShieldBan,
   ScrollText,
   Building2,
-  Globe,
   Loader2,
   AlertTriangle,
   MapPin,
@@ -143,9 +142,14 @@ export default function ComplianceManager() {
     }
   };
 
-  // Sanctions is global-only; Token Prices shows system prices without org but still has per-org section
-  const showOrgSelector = activeTab !== 'sanctions';
-  const blockedWithoutOrg = showOrgSelector && activeTab !== 'tokens' && !selectedOrg;
+  // Token Prices shows system prices without org but still has a per-org section,
+  // so it stays usable without a selected org. Every other tab — including
+  // Sanctions — is org-scoped: the backend requires an explicit `org_id` for
+  // listing org-scoped sanctions and rejects JWT-admin calls that omit it
+  // (admin_compliance.go: "org_id query parameter is required"). Listing
+  // global sanctions (org_id IS NULL) is super-admin only and not reachable
+  // from the dashboard, so we never present "Global" as a scope option here.
+  const blockedWithoutOrg = activeTab !== 'tokens' && !selectedOrg;
 
   // Single-org admin: lock the dropdown. After RD-916/917 a tier-2 admin
   // sees only orgs they're a member of; with exactly one such org there's
@@ -181,11 +185,6 @@ export default function ComplianceManager() {
                 <div className="flex items-center gap-2 text-neutral-400">
                   <Loader2 className="w-4 h-4 animate-spin" />
                   <span className="text-sm">Loading...</span>
-                </div>
-              ) : !showOrgSelector ? (
-                <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-neutral-100 text-neutral-500">
-                  <Globe className="w-4 h-4" />
-                  <span className="text-sm">Global (all organizations)</span>
                 </div>
               ) : organizations.length === 0 ? (
                 <Badge variant="outline" className="text-neutral-500">
