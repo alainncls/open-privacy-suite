@@ -115,11 +115,11 @@ describe('SanctionsList', () => {
       expect(screen.getByPlaceholderText('OFAC SDN list, etc.')).toBeInTheDocument();
     });
 
-    it('submits new sanctioned address', async () => {
-      let addCalled = false;
+    it('submits new sanctioned address scoped to the selected org', async () => {
+      let submittedBody: Record<string, unknown> | null = null;
       server.use(
-        http.post('/api/v1/admin/compliance/sanctions', async () => {
-          addCalled = true;
+        http.post('/api/v1/admin/compliance/sanctions', async ({ request }) => {
+          submittedBody = (await request.json()) as Record<string, unknown>;
           return HttpResponse.json({
             id: 'sanction-new',
             address: '0xnewbadaddress0000000000000000000000000000',
@@ -149,8 +149,12 @@ describe('SanctionsList', () => {
 
       await user.click(screen.getByRole('button', { name: 'Add to Sanctions' }));
 
+      // Regression guard: the dashboard must scope the create to the
+      // currently selected org. The backend rejects JWT-admin global
+      // (org_id == nil) creates with 403.
       await waitFor(() => {
-        expect(addCalled).toBe(true);
+        expect(submittedBody).not.toBeNull();
+        expect(submittedBody?.org_id).toBe(mockOrganization.id);
       });
     });
 
@@ -208,7 +212,12 @@ describe('SanctionsList', () => {
       }
     });
 
-    it('has scope selector with Global option and orgs', async () => {
+    it('locks scope to the currently selected org (no Global option)', async () => {
+      // Adding a global (org_id == nil) sanction is super-admin only on the
+      // backend (admin_compliance.go: addSanctionedAddress rejects JWT
+      // admins). The form now displays the selected org as a read-only
+      // badge and posts with org_id == selectedOrg.id; the dashboard never
+      // offers a "Global" option to JWT-admin users.
       const user = userEvent.setup();
       renderWithComplianceContext(<SanctionsList />);
 
@@ -222,9 +231,36 @@ describe('SanctionsList', () => {
         expect(screen.getByText('Add Sanctioned Address')).toBeInTheDocument();
       });
 
-      // Check scope dropdown has Global option
-      const scopeSelect = screen.getByText('Global (all organizations)');
-      expect(scopeSelect).toBeInTheDocument();
+      expect(screen.queryByText('Global (all organizations)')).not.toBeInTheDocument();
+      // Scope label is still rendered ("Scope" appears as both the table
+      // column header and the dialog field label), but the dialog renders
+      // the selected org as a read-only badge instead of a picker.
+      expect(screen.getAllByText('Scope').length).toBeGreaterThan(0);
+      expect(
+        screen.getByText(/Sanctions are scoped to the currently selected organization/i)
+      ).toBeInTheDocument();
+      // mockOrganization.name === 'Test Organization' — appears both in the
+      // list (org-scoped rows) and in the dialog scope badge.
+      expect(screen.getAllByText('Test Organization').length).toBeGreaterThan(0);
+    });
+
+    it('passes org_id from the selected org when listing sanctions', async () => {
+      // Regression guard for the original bug: the Sanctions tab called
+      // /admin/compliance/sanctions without an `org_id` query parameter,
+      // triggering 400 "org_id query parameter is required" for JWT admins.
+      let observedOrgId: string | null = 'NOT_SET';
+      server.use(
+        http.get('/api/v1/admin/compliance/sanctions', ({ request }) => {
+          observedOrgId = new URL(request.url).searchParams.get('org_id');
+          return HttpResponse.json({ data: [], total: 0, limit: 25, offset: 0 });
+        })
+      );
+
+      renderWithComplianceContext(<SanctionsList />);
+
+      await waitFor(() => {
+        expect(observedOrgId).toBe(mockOrganization.id);
+      });
     });
   });
 

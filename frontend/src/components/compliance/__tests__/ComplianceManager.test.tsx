@@ -130,11 +130,19 @@ describe('ComplianceManager Integration Tests', () => {
       });
     });
 
-    it('shows Global scope on Sanctions tab', async () => {
+    it('requires an org on the Sanctions tab and never renders a "Global" scope', async () => {
+      // Sanctions used to render as "Global (all organizations)" with no
+      // org selector, which made the frontend call /admin/compliance/sanctions
+      // without ?org_id= — JWT-admin callers now get 400 from the backend
+      // (admin_compliance.go: "org_id query parameter is required"). The tab
+      // must behave like the other org-scoped tabs: show the same org
+      // selector and the "Select an organization" empty state when none is
+      // picked.
       renderComplianceManager('/admin/compliance/sanctions');
 
       await waitFor(() => {
-        expect(screen.getByText('Global (all organizations)')).toBeInTheDocument();
+        expect(screen.queryByText('Global (all organizations)')).not.toBeInTheDocument();
+        expect(screen.getByText('No organization selected')).toBeInTheDocument();
       });
     });
 
