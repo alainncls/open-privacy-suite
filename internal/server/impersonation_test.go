@@ -152,7 +152,7 @@ func setupImpersonationFixture(t *testing.T) *impersonationFixture {
 func TestImpersonation_RejectsSuperAdminToken(t *testing.T) {
 	f := setupImpersonationFixture(t)
 	w := impersonationGET(t, f.srv,
-		"/api/v1/admin/impersonate/"+f.userDID+"/explorer/chain-id",
+		"/api/v1/admin/impersonate/"+f.userDID+"/api/v1/explorer/chain-id",
 		"admin_token", "", nil)
 	assert.Equal(t, http.StatusForbidden, w.Code)
 	assert.Contains(t, w.Body.String(), "super-admin tokens are not authorised")
@@ -161,7 +161,7 @@ func TestImpersonation_RejectsSuperAdminToken(t *testing.T) {
 func TestImpersonation_RejectsUnauthenticated(t *testing.T) {
 	f := setupImpersonationFixture(t)
 	w := impersonationGET(t, f.srv,
-		"/api/v1/admin/impersonate/"+f.userDID+"/explorer/chain-id",
+		"/api/v1/admin/impersonate/"+f.userDID+"/api/v1/explorer/chain-id",
 		"", "", nil)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
@@ -172,7 +172,7 @@ func TestImpersonation_RejectsUnauthenticated(t *testing.T) {
 func TestImpersonation_RejectsReadOnlyAdmin(t *testing.T) {
 	f := setupImpersonationFixture(t)
 	w := impersonationGET(t, f.srv,
-		"/api/v1/admin/impersonate/"+f.userDID+"/explorer/chain-id",
+		"/api/v1/admin/impersonate/"+f.userDID+"/api/v1/explorer/chain-id",
 		"jwt_admin", f.adminDID, []string{} /* no full-admin orgs */)
 	assert.Equal(t, http.StatusForbidden, w.Code)
 	assert.Contains(t, w.Body.String(), "tier-2 admin required")
@@ -181,7 +181,7 @@ func TestImpersonation_RejectsReadOnlyAdmin(t *testing.T) {
 func TestImpersonation_RejectsSelfImpersonation(t *testing.T) {
 	f := setupImpersonationFixture(t)
 	w := impersonationGET(t, f.srv,
-		"/api/v1/admin/impersonate/"+f.adminDID+"/explorer/chain-id",
+		"/api/v1/admin/impersonate/"+f.adminDID+"/api/v1/explorer/chain-id",
 		"jwt_admin", f.adminDID, []string{f.orgID})
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "cannot impersonate yourself")
@@ -193,7 +193,7 @@ func TestImpersonation_RejectsSelfImpersonation(t *testing.T) {
 func TestImpersonation_CrossOrgTargetReturns404(t *testing.T) {
 	f := setupImpersonationFixture(t)
 	w := impersonationGET(t, f.srv,
-		"/api/v1/admin/impersonate/"+f.otherOrgUserDID+"/explorer/chain-id",
+		"/api/v1/admin/impersonate/"+f.otherOrgUserDID+"/api/v1/explorer/chain-id",
 		"jwt_admin", f.adminDID, []string{f.orgID})
 	assert.Equal(t, http.StatusNotFound, w.Code)
 	assert.Contains(t, w.Body.String(), "user not found")
@@ -202,7 +202,7 @@ func TestImpersonation_CrossOrgTargetReturns404(t *testing.T) {
 func TestImpersonation_NonExistentTargetReturns404(t *testing.T) {
 	f := setupImpersonationFixture(t)
 	w := impersonationGET(t, f.srv,
-		"/api/v1/admin/impersonate/did:imp:does-not-exist/explorer/chain-id",
+		"/api/v1/admin/impersonate/did:imp:does-not-exist/api/v1/explorer/chain-id",
 		"jwt_admin", f.adminDID, []string{f.orgID})
 	assert.Equal(t, http.StatusNotFound, w.Code)
 	assert.Contains(t, w.Body.String(), "user not found")
@@ -232,7 +232,7 @@ func TestImpersonation_RejectsWriteMethod(t *testing.T) {
 func TestImpersonation_AllowsSameOrgExplorerGET(t *testing.T) {
 	f := setupImpersonationFixture(t)
 	w := impersonationGET(t, f.srv,
-		"/api/v1/admin/impersonate/"+f.userDID+"/explorer/chain-id",
+		"/api/v1/admin/impersonate/"+f.userDID+"/api/v1/explorer/chain-id",
 		"jwt_admin", f.adminDID, []string{f.orgID})
 	assert.Equal(t, http.StatusOK, w.Code)
 	var body map[string]any
@@ -335,7 +335,7 @@ func TestImpersonation_StripsDefensiveHeaders(t *testing.T) {
 func TestImpersonation_AuditLogRowWritten(t *testing.T) {
 	f := setupImpersonationFixture(t)
 	w := impersonationGET(t, f.srv,
-		"/api/v1/admin/impersonate/"+f.userDID+"/explorer/chain-id",
+		"/api/v1/admin/impersonate/"+f.userDID+"/api/v1/explorer/chain-id",
 		"jwt_admin", f.adminDID, []string{f.orgID})
 	require.Equal(t, http.StatusOK, w.Code)
 
@@ -361,7 +361,7 @@ func TestImpersonation_AuditLogRowWrittenOnDeny(t *testing.T) {
 	f := setupImpersonationFixture(t)
 	// Cross-org target → 404 → "deny" in impersonation_log
 	w := impersonationGET(t, f.srv,
-		"/api/v1/admin/impersonate/"+f.otherOrgUserDID+"/explorer/chain-id",
+		"/api/v1/admin/impersonate/"+f.otherOrgUserDID+"/api/v1/explorer/chain-id",
 		"jwt_admin", f.adminDID, []string{f.orgID})
 	require.Equal(t, http.StatusNotFound, w.Code)
 

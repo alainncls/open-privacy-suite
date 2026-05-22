@@ -79,8 +79,17 @@ const (
 // cannot probe whether `did:foo` exists in Org B.
 var errImpersonationTargetNotFound = errors.New("user not found")
 
-// registerImpersonationRoutes mounts the impersonation surface at
-// /api/v1/admin/impersonate/:target_did/{explorer,rpc}/...
+// registerImpersonationRoutes mounts the impersonation surface as a
+// path-prepend namespace: every existing read-side URL on the proxy is
+// reachable under
+//
+//	/api/v1/admin/impersonate/:target_did<original-url>
+//
+// i.e. an explorer call to /api/v1/explorer/blocks/123 becomes
+// /api/v1/admin/impersonate/<did>/api/v1/explorer/blocks/123, and an RPC
+// call to /rpc becomes /api/v1/admin/impersonate/<did>/rpc. The BFF
+// rewrites paths by simple concatenation — no segment surgery — which keeps
+// the contract robust as new explorer endpoints are added.
 //
 // The route group inherits localhost-only + admin-auth from the parent admin
 // group. impersonationGateMiddleware re-enforces tier-2 admin specifically
@@ -88,8 +97,9 @@ var errImpersonationTargetNotFound = errors.New("user not found")
 // check.
 //
 // Two sub-trees:
-//   - /explorer/* re-uses bindExplorerEndpoints (shared with the production
-//     explorer routes) but with the impersonation gate + viewer override.
+//   - /api/v1/explorer/* re-uses bindExplorerEndpoints (shared with the
+//     production explorer routes) but with the impersonation gate +
+//     viewer override.
 //   - /rpc[/:org_id] re-uses handleJSONRPC.
 //
 // auth.OptionalJWTAuthMiddleware is NOT applied here — the admin gate
@@ -99,14 +109,20 @@ func (s *Server) registerImpersonationRoutes(adminGroup *gin.RouterGroup) {
 	imp := adminGroup.Group("/impersonate/:target_did")
 	imp.Use(s.impersonationGateMiddleware())
 
-	explorerImp := imp.Group("/explorer")
-	// Reuse the same log-redaction middleware production explorer routes
-	// use — the impersonated path values can still embed Ethereum
+	// Explorer subtree is re-mounted at /api/v1/explorer (matching its
+	// production prefix) so the BFF just prepends
+	// /api/v1/admin/impersonate/<did> to whatever explorer URL it was
+	// going to call. Reuse the same log-redaction middleware production
+	// explorer routes use — impersonated paths can still embed Ethereum
 	// addresses we don't want in access logs.
+	explorerImp := imp.Group("/api/v1/explorer")
 	explorerImp.Use(explorerLogRedactionMiddleware())
 	s.bindExplorerEndpoints(explorerImp)
 
 	// RPC subtree: mirror the production /rpc and /rpc/:org_id shapes.
+	// /rpc has no /api/v1 prefix in production so it sits directly under
+	// /api/v1/admin/impersonate/:target_did/rpc here too.
+	//
 	// We register Any() (not GET) so non-GET methods reach the middleware's
 	// 405 check instead of gin's no-route 404 — surfaces the right HTTP
 	// semantics ("method not allowed" not "endpoint missing") to the BFF
