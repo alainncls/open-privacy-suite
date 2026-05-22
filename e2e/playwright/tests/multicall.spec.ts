@@ -92,11 +92,16 @@ test.describe('Multicall Blocking', () => {
     const token = await createUserWithEthCallPermission(request);
 
     // eth_getBalance takes address as first param, not in call object
-    // This should NOT be blocked - only eth_call to Multicall3 is blocked
-    const { status, body } = await makeRPCRequest(request, token, 'eth_getBalance', [
-      MULTICALL3_ADDRESS,
-      'latest',
-    ]);
+    // This should NOT be blocked - only eth_call to Multicall3 is blocked.
+    // RD-877: pass the org explicitly — caller has no default-org membership
+    // and the implicit fallback on `/` was removed.
+    const { status, body } = await makeRPCRequest(
+      request,
+      token,
+      'eth_getBalance',
+      [MULTICALL3_ADDRESS, 'latest'],
+      DEFAULT_ORG_ID,
+    );
 
     expect(status).toBe(200);
     expect(body).toHaveProperty('jsonrpc', '2.0');

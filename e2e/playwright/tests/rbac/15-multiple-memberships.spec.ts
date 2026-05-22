@@ -207,9 +207,14 @@ test.describe('RBAC Multiple Memberships', () => {
     // Separate sibling group
     const sibling = await ctx.fixture.createGroup(org.id, 'sibling');
 
+    // RD-877: avoid the org-free metadata allowlist (eth_blockNumber,
+    // eth_chainId, eth_gasPrice, net_*, web3_*) here — those bypass the
+    // per-group allowlist for any authenticated user, so they can't be
+    // used as the "denied via missing membership" probe.
+
     // Root: A, B, C
     await ctx.rbac.setGroupAccess(org.id, root.id, {
-      allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber'],
+      allowed_methods: ['eth_call', 'eth_getBalance', 'eth_getLogs'],
       claims: ['read', 'write'],
     });
 
@@ -221,7 +226,7 @@ test.describe('RBAC Multiple Memberships', () => {
 
     // Sibling: D, E (completely different)
     await ctx.rbac.setGroupAccess(org.id, sibling.id, {
-      allowed_methods: ['eth_chainId', 'eth_gasPrice'],
+      allowed_methods: ['eth_getCode', 'eth_sendTransaction'],
       claims: ['read', 'write'],
     });
 
@@ -232,10 +237,10 @@ test.describe('RBAC Multiple Memberships', () => {
     await ctx.fixture.addMembership(user.id, sibling.id);
 
     // From child (intersection of root): eth_call, eth_getBalance
-    // From sibling: eth_chainId, eth_gasPrice
-    // Total UNION: eth_call, eth_getBalance, eth_chainId, eth_gasPrice
+    // From sibling: eth_getCode, eth_sendTransaction
+    // Total UNION: eth_call, eth_getBalance, eth_getCode, eth_sendTransaction
 
-    for (const method of ['eth_call', 'eth_getBalance', 'eth_chainId', 'eth_gasPrice']) {
+    for (const method of ['eth_call', 'eth_getBalance', 'eth_getCode', 'eth_sendTransaction']) {
       const result = await ctx.rbac.checkAccess({
         user_external_id: did,
         org_slug: org.slug,
@@ -244,11 +249,11 @@ test.describe('RBAC Multiple Memberships', () => {
       expect(result.allowed).toBe(true);
     }
 
-    // eth_blockNumber removed in child hierarchy, not in sibling
+    // eth_getLogs removed in child hierarchy, not present in sibling
     const resultBlock = await ctx.rbac.checkAccess({
       user_external_id: did,
       org_slug: org.slug,
-      method: 'eth_blockNumber',
+      method: 'eth_getLogs',
     });
     expect(resultBlock.allowed).toBe(false);
   });

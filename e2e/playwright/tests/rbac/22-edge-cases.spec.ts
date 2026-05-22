@@ -71,8 +71,10 @@ test.describe('RBAC Edge Cases - Empty Permissions', () => {
       kyc: true,
     });
 
-    // All methods should be blocked
-    for (const method of ['eth_call', 'eth_getBalance', 'eth_blockNumber']) {
+    // All non-metadata methods should be blocked. eth_blockNumber and the
+    // other 5 chain-metadata methods bypass the allowlist after RD-877,
+    // so probe with methods that still flow through it.
+    for (const method of ['eth_call', 'eth_getBalance', 'eth_getCode']) {
       const result = await ctx.rbac.checkAccess({
         user_external_id: did,
         org_slug: org.slug,
@@ -87,9 +89,11 @@ test.describe('RBAC Edge Cases - Empty Permissions', () => {
     const org = await ctx.fixture.createOrg('noclaimsorg');
     const group = await ctx.fixture.createGroup(org.id, 'noclaimsgroup');
 
-    // All read methods require 'read' claim
+    // RD-877: probe with a non-metadata method. The 6 chain-metadata
+    // methods take a fast-path in CheckAccess that returns {Allowed: true}
+    // with no Claims field — useless for verifying the effective claim set.
     await ctx.rbac.setGroupAccess(org.id, group.id, {
-      allowed_methods: ['eth_blockNumber'],
+      allowed_methods: ['eth_getBalance'],
       claims: ['read'], // Minimal claims - only read
     });
 
@@ -99,11 +103,11 @@ test.describe('RBAC Edge Cases - Empty Permissions', () => {
       kyc: true,
     });
 
-    // eth_blockNumber with read claim should work
+    // eth_getBalance with read claim should work
     const result = await ctx.rbac.checkAccess({
       user_external_id: did,
       org_slug: org.slug,
-      method: 'eth_blockNumber',
+      method: 'eth_getBalance',
     });
     expect(result.allowed).toBe(true);
     // Verify claims array has only read
@@ -115,7 +119,7 @@ test.describe('RBAC Edge Cases - Empty Permissions', () => {
     const claimResult = await ctx.rbac.checkAccess({
       user_external_id: did,
       org_slug: org.slug,
-      method: 'eth_blockNumber',
+      method: 'eth_getBalance',
       required_claims: ['admin'],
     });
     expect(claimResult.allowed).toBe(false);
@@ -188,21 +192,25 @@ test.describe('RBAC Edge Cases - Hierarchy Edge Cases', () => {
     const l4 = await ctx.fixture.createGroup(org.id, 'l4', { parentId: l3.id });
     const l5 = await ctx.fixture.createGroup(org.id, 'l5', { parentId: l4.id });
 
+    // RD-877: only non-metadata methods can serve as denial probes; the
+    // 6 chain-metadata methods bypass the per-group allowlist for any
+    // authenticated user, so they'd always allow regardless of level.
+
     // L1: 5 methods
     await ctx.rbac.setGroupAccess(org.id, l1.id, {
-      allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber', 'eth_chainId', 'eth_gasPrice'],
+      allowed_methods: ['eth_call', 'eth_getBalance', 'eth_getCode', 'eth_getLogs', 'eth_sendTransaction'],
       claims: ['read', 'write'],
     });
 
-    // L2: 4 methods (removes eth_gasPrice)
+    // L2: 4 methods (removes eth_sendTransaction)
     await ctx.rbac.setGroupAccess(org.id, l2.id, {
-      allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber', 'eth_chainId'],
+      allowed_methods: ['eth_call', 'eth_getBalance', 'eth_getCode', 'eth_getLogs'],
       claims: ['read', 'write'],
     });
 
     // L3: 3 methods
     await ctx.rbac.setGroupAccess(org.id, l3.id, {
-      allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber'],
+      allowed_methods: ['eth_call', 'eth_getBalance', 'eth_getCode'],
       claims: ['read', 'write'],
     });
 
@@ -231,7 +239,7 @@ test.describe('RBAC Edge Cases - Hierarchy Edge Cases', () => {
     expect(result.allowed).toBe(true);
 
     // All other methods should be blocked
-    for (const method of ['eth_getBalance', 'eth_blockNumber', 'eth_chainId', 'eth_gasPrice']) {
+    for (const method of ['eth_getBalance', 'eth_getCode', 'eth_getLogs', 'eth_sendTransaction']) {
       result = await ctx.rbac.checkAccess({
         user_external_id: did,
         org_slug: org.slug,
@@ -520,8 +528,12 @@ test.describe('RBAC Edge Cases - Concurrent Operations', () => {
     const org = await ctx.fixture.createOrg('parallelorg');
     const group = await ctx.fixture.createGroup(org.id, 'parallelgroup');
 
+    // RD-877: probe with non-metadata methods so each check flows through the
+    // group's allowlist and inherits the group's rate-limit fields. The 6
+    // chain-metadata methods take a fast-path that returns `Allowed: true`
+    // with no rate-limit metadata.
     await ctx.rbac.setGroupAccess(org.id, group.id, {
-      allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber'],
+      allowed_methods: ['eth_call', 'eth_getBalance', 'eth_getCode'],
       claims: ['read', 'write'],
       rate_limit_rps: 100,
     });
@@ -535,7 +547,7 @@ test.describe('RBAC Edge Cases - Concurrent Operations', () => {
       ctx.rbac.checkAccess({
         user_external_id: did,
         org_slug: org.slug,
-        method: ['eth_call', 'eth_getBalance', 'eth_blockNumber'][i % 3],
+        method: ['eth_call', 'eth_getBalance', 'eth_getCode'][i % 3],
       })
     );
 

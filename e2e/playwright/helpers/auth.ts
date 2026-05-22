@@ -51,18 +51,24 @@ export async function getJWTToken(request: APIRequestContext, userDID: string): 
 }
 
 /**
- * Make an authenticated JSON-RPC request
+ * Make an authenticated JSON-RPC request.
+ *
+ * Pass `orgId` to target `/rpc/:org_id` — required for non-metadata methods
+ * when the caller has no default-org membership (RD-877 removed the implicit
+ * default-org fallback on the org-free `/` and `/rpc` paths).
  */
 export async function makeRPCRequest(
   request: APIRequestContext,
   token: string,
   method: string,
-  params: unknown[] = []
+  params: unknown[] = [],
+  orgId?: string
 ): Promise<{
   status: number;
   body: unknown;
 }> {
-  const response = await request.post('/', {
+  const path = orgId ? `/rpc/${orgId}` : '/';
+  const response = await request.post(path, {
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,

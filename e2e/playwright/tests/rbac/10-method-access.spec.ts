@@ -75,10 +75,15 @@ test.describe('RBAC Method Access Enforcement', () => {
       keepDefaultMembership: false,
     });
 
-    const { status, body } = await makeRPCRequest(request, token, 'eth_getBalance', [
-      '0x0000000000000000000000000000000000000000',
-      'latest',
-    ]);
+    // RD-877: with no default-org membership the implicit org fallback no
+    // longer applies; address the org explicitly via /rpc/:org_id.
+    const { status, body } = await makeRPCRequest(
+      request,
+      token,
+      'eth_getBalance',
+      ['0x0000000000000000000000000000000000000000', 'latest'],
+      DEFAULT_ORG_ID,
+    );
 
     expect(status).toBe(200);
     expect(body).toHaveProperty('jsonrpc', '2.0');
@@ -151,10 +156,12 @@ test.describe('RBAC Method Access Enforcement', () => {
       kyc: true,
     });
 
+    // RD-877: org-free metadata methods (eth_blockNumber, eth_chainId, …) bypass
+    // the per-group allowlist by design, so probe with a non-metadata method.
     const result = await ctx.rbac.checkAccess({
       user_external_id: did,
       org_slug: org.slug,
-      method: 'eth_blockNumber',
+      method: 'eth_getBalance',
     });
 
     expect(result.allowed).toBe(false);
