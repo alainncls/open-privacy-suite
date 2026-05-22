@@ -2,6 +2,13 @@ import { test, expect } from '@playwright/test';
 
 const ADMIN_URL = process.env.ADMIN_URL || process.env.PROXY_URL || 'http://localhost:8080';
 
+// Serialize tests in this file: the global compliance currency is a singleton
+// in the DB, and `fullyParallel: true` lets "returns default USD" race
+// "changes to EUR and back" — the GET sees EUR mid-cycle and the assertion
+// flakes. One worker, in order, makes the swap and reset atomic relative to
+// the GET.
+test.describe.configure({ mode: 'serial' });
+
 test.describe('Currency Settings', () => {
   test('GET /compliance/currency returns default USD', async ({ request }) => {
     const response = await request.get(`${ADMIN_URL}/api/v1/admin/compliance/currency`);

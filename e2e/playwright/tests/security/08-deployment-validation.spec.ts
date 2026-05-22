@@ -10,6 +10,13 @@
 import { test, expect } from '@playwright/test';
 import { getJWTToken } from '../../helpers/auth.js';
 
+// Serialize describes in this file: every describe runs its own `setupUsers`
+// against the same module-scoped deployer/non-deployer/outsider DIDs, and
+// `fullyParallel: true` would otherwise race two workers on user-insert →
+// opaque 500 "failed to persist user record" in beforeAll. Costs a few
+// seconds per file; gains deterministic runs.
+test.describe.configure({ mode: 'serial' });
+
 const API_URL = process.env.PROXY_URL || 'http://localhost:8080';
 
 // User DIDs for this test suite (unique per run)

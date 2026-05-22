@@ -16,6 +16,12 @@ import { test, expect } from '@playwright/test';
 import { getJWTToken } from '../../helpers/auth.js';
 import { randomAddress } from '../../helpers/address.js';
 
+// Serialize tests in this file: the top-level describe seeds shared user/group
+// state in beforeAll, and `fullyParallel: true` would re-run that setup once
+// per worker — racing user-insert and surfacing as opaque 500 "failed to
+// persist user record". One worker, in order, keeps the setup deterministic.
+test.describe.configure({ mode: 'serial' });
+
 const API_URL = process.env.PROXY_URL || 'http://localhost:8080';
 
 // Helper to make authenticated RPC call

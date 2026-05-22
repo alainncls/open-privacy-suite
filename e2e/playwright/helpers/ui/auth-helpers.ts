@@ -65,7 +65,11 @@ export async function mockLoginViaAPI(
   options: { admin?: boolean } = {},
 ): Promise<string> {
   const { admin = true } = options;
-  const did = userDID || `did:privado:dev_${Date.now()}`;
+  // crypto.randomUUID() (not Date.now()) — two workers entering this within
+  // the same millisecond would otherwise mint the same DID and race the
+  // user-insert in /auth/verify, producing a 500 "failed to persist user
+  // record".
+  const did = userDID || `did:privado:dev_${crypto.randomUUID()}`;
 
   // Get tokens via API (also creates the user in the DB)
   const tokens = await getAuthTokens(did);

@@ -103,7 +103,9 @@ test.describe('Test Request Panel', () => {
   test('ERC20 - transfer shows recipient and amount fields', async ({ page }) => {
     await methodCombobox(page).click();
     await page.getByRole('option', { name: 'ERC20 - transfer', exact: true }).click();
-    await expect(methodCombobox(page)).toContainText('ERC20 - transfer');
+    // No combobox-text assertion: it flakes because the trigger label can
+    // re-render after the assertion fires. The form-field checks below
+    // already confirm the right method got selected.
 
     const erc20ContractLabel = page.getByText('Contract Address');
     const txFromLabel = page.getByText('From Address');

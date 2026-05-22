@@ -11,6 +11,13 @@ import { test, expect } from '@playwright/test';
 import { getJWTToken } from '../../helpers/auth.js';
 import { randomAddress } from '../../helpers/address.js';
 
+// Serialize tests in this file: the describe's beforeAll mints two user DIDs
+// and seeds groups/memberships shared by every test. With `fullyParallel: true`,
+// Playwright would run that beforeAll once per worker — racing user-insert and
+// surfacing as opaque 500 "failed to persist user record". One worker, in order,
+// keeps the setup deterministic.
+test.describe.configure({ mode: 'serial' });
+
 const API_URL = process.env.PROXY_URL || 'http://localhost:8080';
 
 // Helper to make authenticated RPC call
