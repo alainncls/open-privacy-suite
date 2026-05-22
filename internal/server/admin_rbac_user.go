@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 	"slices"
@@ -135,35 +136,97 @@ func jwtAdminFullAdminOrgIDs(c *gin.Context) (orgIDs []string, isSuperOrDev bool
 	return []string{}, false
 }
 
+// errScopeMissingAdminOrgIDs is returned by resolveListUsersScope when the
+// caller is a jwt_admin but neither admin_org_ids nor admin_readonly_org_ids
+// is present in the gin context. The middleware sets both atomically, so a
+// missing value means a middleware wiring bug; we fail closed instead of
+// falling through to "no scope" (which would have leaked every user
+// cluster-wide).
+var errScopeMissingAdminOrgIDs = errors.New("admin scope context missing")
+
 // resolveListUsersScope returns the org IDs the caller may see, or nil when
-// the caller is a super-admin (X-Admin-Token) and may see everything.
+// the caller is a super-admin (X-Admin-Token) or dev-mode (no auth
+// configured) and may see everything.
 //
-// JWT org-admins are restricted to the orgs in their admin_org_ids context
-// value, populated by adminAuthMiddleware. An empty slice means the caller
-// has no accessible orgs and the list will be empty.
-func resolveListUsersScope(c *gin.Context) []string {
-	if c.GetString("auth_method") == "admin_token" {
-		return nil
-	}
-	if v, ok := c.Get("admin_org_ids"); ok {
-		if ids, ok := v.([]string); ok {
-			return ids
+// JWT org-admins are restricted to the merged set of admin_org_ids and
+// admin_readonly_org_ids context values, populated by adminAuthMiddleware.
+// Read-only admins see users in their RO scope just like full admins (for
+// list/read endpoints); mutating endpoints have a separate full-admin gate
+// (requireUserInFullAdminScope).
+//
+// Fail-closed semantics:
+//
+//   - jwt_admin with neither key set     -> error (middleware bug; deny).
+//   - jwt_admin with empty merged slice  -> ([], nil) (legitimate: no orgs).
+//   - admin_token                        -> (nil, nil) (super-admin pass-through).
+//   - empty auth_method (dev mode)       -> (nil, nil) (no auth configured).
+//   - any other auth_method              -> error (unexpected; deny).
+func resolveListUsersScope(c *gin.Context) ([]string, error) {
+	switch c.GetString("auth_method") {
+	case "admin_token":
+		// Super-admin (X-Admin-Token): unrestricted.
+		return nil, nil
+	case "":
+		// Dev mode: no admin auth configured, no scope context to read.
+		// Matches the pass-through other helpers (jwtAdminFullAdminOrgIDs,
+		// inScope) give for non-jwt callers.
+		return nil, nil
+	case "jwt_admin":
+		// Merge full + read-only admin orgs, dedup. Both keys must be
+		// present — the middleware always sets them together, even
+		// when one of the slices is empty.
+		fullRaw, fullOK := c.Get("admin_org_ids")
+		roRaw, roOK := c.Get("admin_readonly_org_ids")
+		if !fullOK && !roOK {
+			return nil, errScopeMissingAdminOrgIDs
 		}
+		seen := map[string]struct{}{}
+		merged := make([]string, 0)
+		if fullOK {
+			if ids, ok := fullRaw.([]string); ok {
+				for _, id := range ids {
+					if _, dup := seen[id]; dup {
+						continue
+					}
+					seen[id] = struct{}{}
+					merged = append(merged, id)
+				}
+			}
+		}
+		if roOK {
+			if ids, ok := roRaw.([]string); ok {
+				for _, id := range ids {
+					if _, dup := seen[id]; dup {
+						continue
+					}
+					seen[id] = struct{}{}
+					merged = append(merged, id)
+				}
+			}
+		}
+		return merged, nil
+	default:
+		// Unexpected auth_method — middleware contract violation. Deny.
+		return nil, errScopeMissingAdminOrgIDs
 	}
-	// Dev mode (no auth configured) reaches here when admin_org_ids was
-	// never set. Treat as super-admin: no scope.
-	return nil
 }
 
 func (s *Server) listRBACUsers(c *gin.Context) {
 	limit, offset := parsePaginationParams(c, 50)
+
+	scopedOrgIDs, err := resolveListUsersScope(c)
+	if err != nil {
+		respondInternalErrorAndLog(c, "failed to list users",
+			"admin_rbac_user: resolveListUsersScope failed", "err", err)
+		return
+	}
 
 	filter := db.UserFilter{
 		OrgID:        c.Query("org_id"),
 		Search:       c.Query("search"),
 		GroupIDs:     c.QueryArray("group_id"),
 		Role:         c.Query("role"),
-		ScopedOrgIDs: resolveListUsersScope(c),
+		ScopedOrgIDs: scopedOrgIDs,
 	}
 
 	// Validate role early — unknown values would silently match nothing.
