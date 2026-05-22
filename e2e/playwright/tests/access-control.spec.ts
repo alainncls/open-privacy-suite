@@ -29,10 +29,15 @@ test.describe('Access Control', () => {
       keepDefaultMembership: false,
     });
 
-    const { status, body } = await makeRPCRequest(request, token, 'eth_getBalance', [
-      '0x0000000000000000000000000000000000000000',
-      'latest',
-    ]);
+    // RD-877: org-free `/` no longer falls back to the user's default org;
+    // a user with only a custom-group membership must address the org explicitly.
+    const { status, body } = await makeRPCRequest(
+      request,
+      token,
+      'eth_getBalance',
+      ['0x0000000000000000000000000000000000000000', 'latest'],
+      DEFAULT_ORG_ID,
+    );
 
     expect(status).toBe(200);
     expect(body).toHaveProperty('jsonrpc', '2.0');
@@ -118,7 +123,13 @@ test.describe('Access Control', () => {
       }
     }
 
-    const { status, body } = await makeRPCRequest(request, token, 'eth_blockNumber');
+    // RD-877: the org-free metadata allowlist (eth_blockNumber, eth_chainId, …)
+    // is reachable by any authenticated user regardless of membership. Probe
+    // with a non-metadata method so a missing membership still denies.
+    const { status, body } = await makeRPCRequest(request, token, 'eth_getBalance', [
+      '0x0000000000000000000000000000000000000000',
+      'latest',
+    ]);
 
     expect(status).toBe(404);
     expect(body).toHaveProperty('error');
