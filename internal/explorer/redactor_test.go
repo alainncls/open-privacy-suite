@@ -259,6 +259,53 @@ func TestRedactTransactions_HiddenPlusRedacted_Drops(t *testing.T) {
 	}
 }
 
+func TestRedactTransactions_BothHidden_AdminSees(t *testing.T) {
+	// Admins are exempt from the both-sides-hidden drop. Aggregate counts
+	// already reveal that the activity occurred, so dropping rows just makes
+	// the audit role's view inconsistent with the count it sees alongside.
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		from: VisibilityHidden,
+		to:   VisibilityHidden,
+	})
+
+	txs := []Transaction{{Hash: "0x01", From: from, To: strPtr(to), Value: "1000"}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:test", RedactOpts{ViewerIsAdmin: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx (admin sees both-hidden), got %d", len(result))
+	}
+	if result[0].From != "[PRIVATE]" {
+		t.Errorf("expected From to be redacted to [PRIVATE] for admin view, got %q", result[0].From)
+	}
+	if result[0].To == nil || *result[0].To != "[PRIVATE]" {
+		t.Errorf("expected To to be redacted to [PRIVATE] for admin view, got %v", result[0].To)
+	}
+}
+
+func TestRedactTransactions_BothRedacted_AdminSees(t *testing.T) {
+	// Same as above but with Redacted instead of Hidden — both flavors of
+	// non-identifiable should be admin-bypassable.
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		from: VisibilityRedacted,
+		to:   VisibilityRedacted,
+	})
+
+	txs := []Transaction{{Hash: "0x01", From: from, To: strPtr(to), Value: "1000"}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:test", RedactOpts{ViewerIsAdmin: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx (admin sees both-redacted), got %d", len(result))
+	}
+}
+
 func TestRedactTransactions_RedactedPlusFull_DroppedForNonParticipant(t *testing.T) {
 	// G10: non-participant, one side redacted → dropped
 	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -629,6 +676,47 @@ func TestRedactTransfers_HiddenPlusRedacted_Drops(t *testing.T) {
 	}
 	if len(result) != 0 {
 		t.Errorf("expected 0 transfers (hidden + redacted → drop), got %d", len(result))
+	}
+}
+
+func TestRedactTransfers_BothHidden_AdminSees(t *testing.T) {
+	// Admins bypass the both-sides-hidden drop in transfer lists. Critical for
+	// the /tokens/:address/transfers endpoint: the count surfaces (e.g. 2,981)
+	// but every row's from/to are loadgen-derived EOAs the admin hasn't
+	// explicitly linked, so without this carve-out the count + empty list
+	// contradict each other.
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		from: VisibilityHidden,
+		to:   VisibilityHidden,
+	})
+
+	transfers := []TokenTransfer{{ID: 1, From: from, To: to, Value: "100"}}
+	result, err := engine.RedactTransfers(context.Background(), transfers, "did:test", RedactOpts{ViewerIsAdmin: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 transfer (admin sees both-hidden), got %d", len(result))
+	}
+}
+
+func TestRedactTransfers_BothRedacted_AdminSees(t *testing.T) {
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		from: VisibilityRedacted,
+		to:   VisibilityRedacted,
+	})
+
+	transfers := []TokenTransfer{{ID: 1, From: from, To: to, Value: "100"}}
+	result, err := engine.RedactTransfers(context.Background(), transfers, "did:test", RedactOpts{ViewerIsAdmin: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 transfer (admin sees both-redacted), got %d", len(result))
 	}
 }
 

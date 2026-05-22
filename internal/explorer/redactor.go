@@ -698,14 +698,18 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 		// If BOTH participants are non-identifiable to the viewer (hidden or redacted
 		// after participant override), drop entirely. Showing "[PRIVATE] → [PRIVATE]"
 		// leaks transaction existence and timing without any useful information.
-		if isNonIdentifiable(fromLevel) && isNonIdentifiable(toLevel) {
+		// Admins are exempt — they need to audit all chain activity, and aggregate
+		// counts already expose that the activity occurred (so dropping the row
+		// here just hides detail from an audit role that's allowed to see it).
+		if isNonIdentifiable(fromLevel) && isNonIdentifiable(toLevel) && !viewerIsAdmin {
 			continue
 		}
 
 		// Contract creation transactions: if the deployer is non-identifiable,
 		// drop entirely. Showing "[PRIVATE] → Contract" leaks deployment
-		// activity, timing, and the resulting contract address.
-		if tx.IsContractCreation() && isNonIdentifiable(fromLevel) {
+		// activity, timing, and the resulting contract address. Same admin
+		// carve-out as above.
+		if tx.IsContractCreation() && isNonIdentifiable(fromLevel) && !viewerIsAdmin {
 			continue
 		}
 
@@ -906,8 +910,12 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 			}
 		}
 
-		// Drop if both sides are non-identifiable
-		if isNonIdentifiable(fromLevel) && isNonIdentifiable(toLevel) {
+		// Drop if both sides are non-identifiable. Admins are exempt — they need
+		// to audit all chain activity, and the surrounding endpoint already
+		// returns a non-zero transferCount aggregate, so dropping rows here
+		// leaves the count and the rows out of sync for the one role that's
+		// supposed to see everything.
+		if isNonIdentifiable(fromLevel) && isNonIdentifiable(toLevel) && !viewerIsAdminT {
 			continue
 		}
 
