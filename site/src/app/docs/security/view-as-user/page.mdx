@@ -1,0 +1,108 @@
+import { Callout } from "@/components/mdx/callout";
+
+export const metadata = {
+  title: "View as user",
+  description:
+    "Tier-2 org admins can browse the explorer dashboard and run read-only RPC as if they were a target user in the same org, for support and audit. The mechanism mints no user JWT, allows no writes, and audits every request.",
+};
+
+# View as user
+
+Tier-2 org admins can answer "what does this user see right now?" without engineering shadowing them. Use cases:
+
+- **Support**: a user reports "I can't see transaction 0x…"; the admin reproduces the user's view and either finds the missing grant or rules out a UI bug.
+- **Audit walk-through**: an auditor inspecting an access-control decision asks "what would this admin's revoked user actually have been able to read?". The admin walks the answer instead of explaining it.
+- **Pre-flight a grant change**: before flipping a `contract_grants` row, confirm what the affected user sees with and without it.
+
+The mechanism is a parallel URL tree on the privacy-proxy. The block-explorer dashboard wraps it in a "View as user" button + amber banner. No user-shaped JWT is ever minted; the admin's own session keeps its admin identity throughout.
+
+---
+
+## Who can use it
+
+| Role | Can View-as? | Why |
+|------|--------------|-----|
+| Super-admin (X-Admin-Token) | **No** | Super-admin has no data-layer reach today and View-as would be the path that gives it to them. Explicitly rejected. |
+| Tier-2 org admin (`is_org_admin = true`) | **Yes**, same-org targets only | This is the intended audience. |
+| Tier-3 admin (`admin` claim only, no `is_org_admin`) | **No** | Per-contract admin scope; cannot impersonate. |
+| Read-only admin (RD-866) | **No** | ROA's whole purpose is read-only audit of admin actions, not user-data browse. |
+| Regular user | **No** | The button is not rendered; the BFF rejects the start request; the privacy-proxy rejects the URL. |
+
+The dashboard shows the **View as user** button only on user-detail pages that the admin can already access. Each click mints a short-lived opaque session token; the URL the admin's browser receives carries the token, not the target user's DID.
+
+---
+
+## What the impersonator can do
+
+<Callout variant="warning" title="Strictly read-only">
+  Write methods are blocked at three layers: the FE disables write controls with an "amber tooltip" while the banner is up; the BFF rejects any forwarded write-method body server-side; the privacy-proxy's impersonation surface returns 405 on non-GET requests. There is no path by which an impersonated session can move funds, deploy a contract, or mutate RBAC state.
+</Callout>
+
+While the banner is up:
+- Explorer pages (blocks, txs, addresses, logs, transfers, tokens) render with the **target user's** redaction set, not the admin's.
+- Read-only RPC calls (`eth_call`, `eth_getBalance`, `eth_getCode`, `eth_getLogs`, `eth_getStorageAt`, `eth_getTransactionByHash`, `eth_getTransactionReceipt`, and the org-free metadata set) are routed through the user's permission view.
+- Write-method UI (deploy, send-tx, grant-mutation, RBAC-edit) is **disabled with a tooltip**, not hidden — admins know the feature exists and is intentionally unavailable.
+
+What the admin sees vs what the user sees: **the redaction layer is identical to the user's normal session.** Logs they cannot read are removed; addresses they cannot resolve are returned redacted; cross-org contracts are denied. Anything the admin can already see through their own admin view (e.g. all contracts in their own org) is still visible — `View as user` does not strip data the admin already has.
+
+---
+
+## Same-org boundary
+
+The target must be a member of one of the admin's `admin_org_ids`. If they are not:
+- The dashboard's user-list filters them out — they never appear as a clickable target.
+- A hand-crafted URL targeting a cross-org DID returns **404 "user not found"**, identical to the response for a never-seen DID.
+- The privacy-proxy never confirms or denies the existence of a cross-org user via this surface.
+
+This 404-uniformity is by design (audit-scope item M3): a tier-2 admin in Org A must not be able to use View-as to enumerate which DIDs exist in Org B.
+
+---
+
+## Audit
+
+Every impersonated request writes one row to `impersonation_log` (migration 047). The row records:
+
+| Column | Value |
+|--------|-------|
+| `actor_did` | The admin's DID (from their JWT) |
+| `impersonated_did` | The target user's DID |
+| `org_id` | The admin's org for this session |
+| `method` | The HTTP method + path that ran (e.g. `GET /api/v1/explorer/blocks/123`) |
+| `params_hash` | SHA-256 of the request query string — raw query bytes are never persisted |
+| `decision` | `allow` (2xx), `deny` (4xx), or `error` (5xx) |
+| `reason` | `http_<status>` on non-allow rows |
+| `correlation_id` | Joins back to the access log row for the same request |
+
+The audit row is written **after** the handler runs, so the `decision` reflects the actual response. If the audit write fails, the response status code is logged via `slog.Error` for SIEM correlation — there's no "silent View-as" path.
+
+Cross-org targets and never-seen-DIDs (404 before handler dispatch) intentionally do **not** write audit rows. Pre-handler 404s would otherwise let a tier-2 admin spam-probe arbitrary DIDs without leaving an audit trail that distinguishes "user exists in a different org" from "user does not exist". Both collapse to silence in the log, mirroring the response shape.
+
+---
+
+## How sessions expire
+
+Sessions are time-bounded. Tokens issued by the BFF expire after 1 hour by default. After expiry:
+- The banner disappears with a toast notification.
+- The next API call from the impersonated context returns 401 "session expired".
+- The admin is back to their own view; no further action required.
+
+The admin can also click **Stop viewing as** at any time. This deletes the token from the BFF store and reverts the URL to remove the `?as=…` parameter.
+
+---
+
+## Operator checklist
+
+| Setting | Default | Notes |
+|---------|---------|-------|
+| Privacy-proxy: impersonation surface | enabled when admin auth is configured | No env var — gated entirely by the existing tier-2 admin JWT pipeline. |
+| Block-explorer BFF: session TTL | 1 hour | Adjustable via `IMPERSONATION_TOKEN_TTL`; do not exceed 4 hours. |
+| Block-explorer BFF: session-store backend | in-memory | Swap to Redis-backed store before scaling beyond a single BFF replica. |
+| Audit log retention | matches `impersonation_log` (forever-append) | Subject to the chain integrity policy in [Audit Log Integrity](/docs/security/audit-integrity). |
+
+---
+
+## Related
+
+- [Dry-run RPC API](#) — programmatic counterpart that also accepts write methods (translated to `debug_traceCall` against a discarded state).
+- [Audit Log Integrity](/docs/security/audit-integrity) — how the `impersonation_log` chain is sealed.
+- [RBAC overview](/docs/rbac) — the same access decisions that gate normal user calls gate impersonated ones, by design.

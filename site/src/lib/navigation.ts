@@ -40,6 +40,7 @@ export const navigation: NavGroup[] = [
       { title: "Compliance", href: "/docs/compliance" },
       { title: "Selective Disclosure", href: "/docs/disclosure" },
       { title: "Block Explorer", href: "/docs/explorer" },
+      { title: "View as user", href: "/docs/security/view-as-user" },
     ],
   },
   {

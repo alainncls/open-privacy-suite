@@ -133,6 +133,12 @@ type ProcessRequest struct {
 	Body          []byte
 	ClientIP      string
 	CorrelationID string // Request correlation ID for audit trail
+	// BypassPermsCache, when true, forces AccessController.CheckAccess to
+	// skip its in-memory perms cache. Set by the RD-928 impersonation surface
+	// so a "View as user X" call sees X's current permissions, not a snapshot
+	// the cache picked up before X's last mutation. Threaded through to
+	// rbac.AccessCheckRequest.BypassCache.
+	BypassPermsCache bool
 }
 
 // ProcessResult represents the result of processing a JSON-RPC request.
@@ -439,6 +445,7 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 		TargetAddress:    targetAddr,
 		FunctionSelector: rbac.GetFunctionSelector(accessMethod, req.Params),
 		RequiredClaims:   requiredClaims,
+		BypassCache:      req.BypassPermsCache,
 	}
 
 	// Check RBAC access

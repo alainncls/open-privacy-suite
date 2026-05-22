@@ -646,21 +646,29 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		}
 	}
 
-	// Check in-memory cache first
-	cachedPerms := c.cache.Get(user.ID, org.ID)
-
+	// Check in-memory cache first, unless the caller asked for a fresh
+	// resolution. BypassCache is set by the RD-928 impersonation surface
+	// so a tier-2 admin running "View as user X" sees X's current perms,
+	// not a snapshot the cache picked up before X's last group/grant
+	// mutation. We also skip the post-resolve Set so the bypassed call
+	// doesn't pollute the cache for non-impersonated callers.
 	var perms *EffectivePermissions
-	if cachedPerms != nil {
-		perms = cachedPerms
-	} else {
+	if !req.BypassCache {
+		if cachedPerms := c.cache.Get(user.ID, org.ID); cachedPerms != nil {
+			perms = cachedPerms
+		}
+	}
+	if perms == nil {
 		// Resolve permissions (checks DB cache, then computes)
 		perms, err = c.resolver.ResolvePermissions(ctx, user.ID, org.ID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve permissions: %w", err)
 		}
 
-		// Store in in-memory cache
-		c.cache.Set(perms)
+		if !req.BypassCache {
+			// Store in in-memory cache for the normal hot path.
+			c.cache.Set(perms)
+		}
 	}
 
 	// Check method permission

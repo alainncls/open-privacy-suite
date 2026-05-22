@@ -761,6 +761,13 @@ func (s *Server) setupRouter() *gin.Engine {
 			// Compliance endpoints (travel rule)
 			s.registerComplianceRoutes(admin)
 
+			// RD-928: "View as user" impersonation surface. Mounted under
+			// /api/v1/admin/impersonate/:target_did/{explorer,rpc}/... with
+			// its own middleware that re-enforces tier-2 admin (rejecting
+			// super-admin and read-only admin), same-org check, GET-only,
+			// and per-request impersonation_log writes.
+			s.registerImpersonationRoutes(admin)
+
 			// Dev-only endpoints
 			admin.POST("/dev/deploy-demo-erc20", s.handleDeployDemoERC20)
 		}
@@ -807,9 +814,12 @@ func (s *Server) setupRouter() *gin.Engine {
 const MaxRequestBodySize = 1 << 20 // 1MB
 
 func (s *Server) handleJSONRPC(c *gin.Context) {
-	// Extract identity from JWT (set by middleware if optional JWT is provided)
-	subject, _ := c.Get("subject")
-	subjectStr, _ := subject.(string) // Default to empty string if not found or not a string
+	// Extract identity. Under the RD-928 impersonation surface this is the
+	// target user's DID set by impersonationGateMiddleware; otherwise it's
+	// the JWT subject from OptionalJWTAuthMiddleware. getEffectiveViewerDID
+	// encapsulates the priority order.
+	subjectStr := getEffectiveViewerDID(c)
+	impersonating := isImpersonating(c)
 
 	// Read request body with size limit to prevent DoS
 	body, err := io.ReadAll(io.LimitReader(c.Request.Body, MaxRequestBodySize+1))
@@ -827,16 +837,28 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 
 	// Extract optional org_id from path (for /rpc/:org_id route)
 	orgID := c.Param("org_id")
+	// Under impersonation, anchor org resolution to the admin's same-org
+	// match (set by the middleware) when the path didn't carry one. This
+	// avoids the multi-org disambiguation prompt for impersonated reads
+	// since we've already picked the org via the admin's admin_org_ids.
+	if impersonating && orgID == "" {
+		if oid, ok := c.Get(impersonationOrgIDContextKey); ok {
+			if s, ok := oid.(string); ok {
+				orgID = s
+			}
+		}
+	}
 
 	// Process the request through the business logic layer
 	result := s.jsonrpcProcessor.Process(c.Request.Context(), &ProcessRequest{
-		UserID:        subjectStr,
-		OrgID:         orgID,
-		Method:        method,
-		Params:        params,
-		Body:          body,
-		ClientIP:      c.ClientIP(),
-		CorrelationID: getCorrelationID(c),
+		UserID:           subjectStr,
+		OrgID:            orgID,
+		Method:           method,
+		Params:           params,
+		Body:             body,
+		ClientIP:         c.ClientIP(),
+		CorrelationID:    getCorrelationID(c),
+		BypassPermsCache: impersonating,
 	})
 
 	// Handle errors from processing
