@@ -299,7 +299,8 @@ func (c *AdminClient) GetEffectivePermissions(t *testing.T, userID, orgSlug stri
 	t.Helper()
 	path := "/api/v1/admin/users/" + userID + "/effective-permissions"
 	if orgSlug != "" {
-		path += "?org_slug=" + orgSlug
+		// Handler reads ?org= (admin_rbac_user.go:756), not ?org_slug=.
+		path += "?org=" + orgSlug
 	}
 	var out EffectivePermissions
 	c.do(t, http.MethodGet, path, nil, &out, http.StatusOK)
@@ -319,6 +320,35 @@ func (c *AdminClient) CreateContractGrant(t *testing.T, orgID, address string, i
 	t.Helper()
 	var out ContractGrant
 	c.do(t, http.MethodPost, "/api/v1/admin/orgs/"+orgID+"/contracts/"+address+"/grants", input, &out, http.StatusCreated)
+	return out
+}
+
+// === Access check ===
+
+// CheckAccessInput mirrors rbac.AccessCheckRequest. Pass one of
+// OrgID/OrgSlug; the handler clamps to the caller's scope for
+// JWT-admin auth (super-admin via X-Admin-Token sees all).
+type CheckAccessInput struct {
+	UserExternalID string `json:"user_external_id"`
+	OrgID          string `json:"org_id,omitempty"`
+	OrgSlug        string `json:"org_slug,omitempty"`
+	Method         string `json:"method"`
+	TargetAddress  string `json:"target_address,omitempty"`
+}
+
+// CheckAccessResult mirrors rbac.AccessCheckResult (json subset).
+type CheckAccessResult struct {
+	Allowed      bool   `json:"allowed"`
+	AuthRequired bool   `json:"auth_required,omitempty"`
+	Reason       string `json:"reason,omitempty"`
+	OrgID        string `json:"org_id,omitempty"`
+	UserID       string `json:"user_id,omitempty"`
+}
+
+func (c *AdminClient) CheckAccess(t *testing.T, input CheckAccessInput) CheckAccessResult {
+	t.Helper()
+	var out CheckAccessResult
+	c.do(t, http.MethodPost, "/api/v1/admin/access/check", input, &out, http.StatusOK)
 	return out
 }
 
