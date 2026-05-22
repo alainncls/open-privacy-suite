@@ -35,10 +35,16 @@ func (m *mockPrivadoVerifier) CreateAuthorizationRequest(verifierID, callbackURL
 	if m.createRequestFunc != nil {
 		return m.createRequestFunc(verifierID, callbackURL, reason)
 	}
-	// Return a mock authorization request
+	// Mock a realistic iden3comm authorization request. The Typ /
+	// ThreadID / From fields are required by the protocol and parsed
+	// by mobile wallets; tests that pin the wire contract need them
+	// populated (see TestHandleAuthRequest_IdenComContract).
 	return &protocol.AuthorizationRequestMessage{
-		ID:   "mock-request-id",
-		Type: "https://iden3-communication.io/authorization/1.0/request",
+		ID:       "mock-request-id",
+		ThreadID: "mock-thread-id",
+		Typ:      "application/iden3comm-plain-json",
+		Type:     "https://iden3-communication.io/authorization/1.0/request",
+		From:     verifierID,
 		Body: protocol.AuthorizationRequestMessageBody{
 			CallbackURL: callbackURL,
 			Reason:      reason,
@@ -63,8 +69,11 @@ func (m *mockPrivadoVerifier) CreateHumanityAuthRequest(verifierID, callbackURL,
 		credType = "ProofOfHumanity"
 	}
 	return &protocol.AuthorizationRequestMessage{
-		ID:   "mock-request-id",
-		Type: "https://iden3-communication.io/authorization/1.0/request",
+		ID:       "mock-request-id",
+		ThreadID: "mock-thread-id",
+		Typ:      "application/iden3comm-plain-json",
+		Type:     "https://iden3-communication.io/authorization/1.0/request",
+		From:     verifierID,
 		Body: protocol.AuthorizationRequestMessageBody{
 			CallbackURL: callbackURL,
 			Reason:      reason,
@@ -194,6 +203,54 @@ func TestHandleAuthRequest_Success(t *testing.T) {
 	assert.NotEmpty(t, response.SessionID)
 	assert.NotNil(t, response.AuthRequest)
 	assert.NotEmpty(t, response.AuthRequest.Body.CallbackURL)
+}
+
+// TestHandleAuthRequest_IdenComContract pins the iden3comm-protocol
+// fields that mobile wallets parse from the QR / deeplink. Ports the
+// non-trivial assertions from auth-formats.spec.ts (the trivial
+// "endpoint returns 200 + session_id" case is already covered by
+// TestHandleAuthRequest_Success).
+//
+// Two invariants matter to wallet integrations:
+//
+//  1. Required iden3comm fields are populated (id, thid, typ, type,
+//     from, body.callbackUrl, body.reason). A wallet failing to parse
+//     any of these silently aborts the auth flow.
+//  2. The marshalled auth_request stays small enough to QR-encode at
+//     a scanning-reliable density. ~2000 bytes is the practical cap
+//     with error correction.
+func TestHandleAuthRequest_IdenComContract(t *testing.T) {
+	srv, _ := setupTestServerForAuth(t)
+	defer srv.db.Close()
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/auth/request", srv.handleAuthRequest)
+
+	req := httptest.NewRequest(http.MethodPost, "/auth/request", nil)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var response AuthRequestResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	require.NotNil(t, response.AuthRequest)
+
+	ar := response.AuthRequest
+	assert.NotEmpty(t, ar.ID, "iden3comm: id is required")
+	assert.NotEmpty(t, ar.ThreadID, "iden3comm: thid is required")
+	assert.Equal(t, "application/iden3comm-plain-json", string(ar.Typ), "iden3comm: typ must be plain-json")
+	assert.Equal(t, "https://iden3-communication.io/authorization/1.0/request", string(ar.Type), "iden3comm: type must be authorization/1.0/request")
+	assert.NotEmpty(t, ar.From, "iden3comm: from (issuer DID) is required")
+	assert.NotEmpty(t, ar.Body.CallbackURL, "iden3comm: body.callbackUrl is required")
+	assert.Contains(t, ar.Body.CallbackURL, "/auth/callback?session=", "callback URL must carry the session ID")
+	assert.NotEmpty(t, ar.Body.Reason, "iden3comm: body.reason is required for wallet display")
+
+	authReqJSON, err := json.Marshal(ar)
+	require.NoError(t, err)
+	assert.Less(t, len(authReqJSON), 2000,
+		"auth_request must stay under ~2000 bytes for reliable QR scanning; got %d", len(authReqJSON))
 }
 
 func TestHandleAuthCallback_Success(t *testing.T) {

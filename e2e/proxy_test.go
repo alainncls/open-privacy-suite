@@ -30,8 +30,11 @@ type mockPrivadoVerifier struct {
 
 func (m *mockPrivadoVerifier) CreateAuthorizationRequest(verifierID, callbackURL, reason string) (*protocol.AuthorizationRequestMessage, error) {
 	return &protocol.AuthorizationRequestMessage{
-		ID:   "mock-request-id",
-		Type: "https://iden3-communication.io/authorization/1.0/request",
+		ID:       "mock-request-id",
+		ThreadID: "mock-thread-id",
+		Typ:      "application/iden3comm-plain-json",
+		Type:     "https://iden3-communication.io/authorization/1.0/request",
+		From:     verifierID,
 		Body: protocol.AuthorizationRequestMessageBody{
 			CallbackURL: callbackURL,
 			Reason:      reason,
@@ -53,8 +56,11 @@ func (m *mockPrivadoVerifier) CreateHumanityAuthRequest(verifierID, callbackURL,
 		credType = "ProofOfHumanity"
 	}
 	return &protocol.AuthorizationRequestMessage{
-		ID:   "mock-request-id",
-		Type: "https://iden3-communication.io/authorization/1.0/request",
+		ID:       "mock-request-id",
+		ThreadID: "mock-thread-id",
+		Typ:      "application/iden3comm-plain-json",
+		Type:     "https://iden3-communication.io/authorization/1.0/request",
+		From:     verifierID,
 		Body: protocol.AuthorizationRequestMessageBody{
 			CallbackURL: callbackURL,
 			Reason:      reason,
