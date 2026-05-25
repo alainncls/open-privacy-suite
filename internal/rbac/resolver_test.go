@@ -1066,3 +1066,83 @@ func TestUnionFunctions(t *testing.T) {
 		})
 	}
 }
+
+// TestResolverCachesPermissionsSynchronously pins the RD-984 fix:
+// ResolvePermissions must write the cache synchronously, so an
+// invalidation issued immediately after a resolve always sees an empty
+// cache. The previous fire-and-forget goroutine could race
+// InvalidateUser / InvalidateOrg from a concurrent mutation, landing
+// stale permissions in the cache after the invalidation had already
+// fired — those stale permissions then stuck for the 5-minute TTL.
+//
+// Two invariants verified sequentially (one process, one goroutine):
+//
+//  1. After ResolvePermissions returns, the cache is already populated.
+//     Under the old async code, this could be nil if the cache-write
+//     goroutine hadn't run yet — observably flaky.
+//  2. Invalidate immediately after resolve must wipe the cache, with no
+//     in-flight async write left to repopulate it after.
+//
+// Concurrent stress is intentionally not added here because MockStore
+// is not goroutine-safe; the sequential test is sufficient to verify
+// the synchronous-write contract.
+func TestResolverCachesPermissionsSynchronously(t *testing.T) {
+	store := NewMockStore()
+	resolver := NewResolver(store, 5*time.Minute)
+
+	store.organizations["org1"] = &Organization{ID: "org1", Slug: "test"}
+	store.groups["g1"] = &Group{ID: "g1", OrgID: "org1", Slug: "g1", Path: "g1", Depth: 0}
+	store.groupAccess["g1"] = &GroupAccess{
+		GroupID:        "g1",
+		AllowedMethods: []string{"eth_call"},
+		Claims:         []Claim{},
+	}
+	store.groupsByOrg["user1:org1"] = []*MembershipWithDetails{
+		{
+			Membership: &UserMembership{UserID: "user1", GroupID: "g1"},
+			Group:      store.groups["g1"],
+		},
+	}
+
+	ctx := context.Background()
+
+	t.Run("cache populated by the time ResolvePermissions returns", func(t *testing.T) {
+		_ = store.InvalidateCacheForUser(ctx, "user1")
+
+		perms, err := resolver.ResolvePermissions(ctx, "user1", "org1")
+		if err != nil {
+			t.Fatalf("ResolvePermissions: %v", err)
+		}
+		if perms == nil {
+			t.Fatal("ResolvePermissions returned nil perms")
+		}
+
+		// No sleep, no poll. Sync write means the cache is populated
+		// the moment ResolvePermissions returns.
+		cached, err := store.GetCachedPermissions(ctx, "user1", "org1")
+		if err != nil {
+			t.Fatalf("GetCachedPermissions: %v", err)
+		}
+		if cached == nil {
+			t.Fatal("cache empty immediately after ResolvePermissions — async write would have raced; sync write was expected")
+		}
+	})
+
+	t.Run("invalidate-after-resolve sees empty cache deterministically", func(t *testing.T) {
+		_, err := resolver.ResolvePermissions(ctx, "user1", "org1")
+		if err != nil {
+			t.Fatalf("ResolvePermissions: %v", err)
+		}
+		if err := store.InvalidateCacheForUser(ctx, "user1"); err != nil {
+			t.Fatalf("InvalidateCacheForUser: %v", err)
+		}
+		cached, err := store.GetCachedPermissions(ctx, "user1", "org1")
+		if err != nil {
+			t.Fatalf("GetCachedPermissions: %v", err)
+		}
+		if cached != nil {
+			t.Fatal("cache repopulated after invalidate — async write race re-introduced")
+		}
+	})
+}
+
