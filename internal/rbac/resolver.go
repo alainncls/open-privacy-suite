@@ -2,6 +2,7 @@ package rbac
 
 import (
 	"context"
+	"log/slog"
 	"slices"
 	"strings"
 	"sync"
@@ -114,12 +115,20 @@ func (r *Resolver) ResolvePermissions(ctx context.Context, userID, orgID string)
 		return nil, err
 	}
 
-	// Cache the result (fire and forget - errors are logged but not critical)
-	go func() {
-		if err := r.store.SetCachedPermissions(ctx, perms); err != nil {
-			// Log error but don't fail
-		}
-	}()
+	// Cache the result synchronously (RD-984). The previous
+	// fire-and-forget goroutine could race InvalidateUser /
+	// InvalidateOrg from a concurrent mutation: the async write
+	// would land after the invalidation and repopulate the cache
+	// with stale permissions, sticking for the 5-minute TTL.
+	// Synchronous write closes the race entirely. Cost is
+	// dominated by the DB read above; one extra round-trip on the
+	// cache-miss path is negligible.
+	if err := r.store.SetCachedPermissions(ctx, perms); err != nil {
+		// Cache-write failure is not a correctness issue (the
+		// returned perms are still authoritative); a future call
+		// will re-resolve from the DB. Don't fail the request.
+		slog.Warn("rbac resolver: SetCachedPermissions failed", "user_id", userID, "org_id", orgID, "err", err)
+	}
 
 	return perms, nil
 }

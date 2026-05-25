@@ -3,6 +3,25 @@ import { selectors } from '../../helpers/ui/selectors';
 import { mockLoginViaAPI } from '../../helpers/ui/auth-helpers';
 import { RBACTestFixture } from '../../helpers/rbac-fixtures';
 
+// Selector convention note (RD-965, see e2e/playwright/CONVENTIONS.md):
+//
+// The .nth(N) calls in this file address rows / group cards in a
+// batch-operation context where the test deliberately doesn't care
+// which row gets clicked — only that K rows are picked. Examples:
+//
+//   - `for (i=0..N) rows.nth(i)` — iterate over visible rows to assert
+//     each renders the same control. Identity isn't checked.
+//   - `rows.nth(0).click(); rows.nth(1).click();` — pick any two rows
+//     for a batch-action test. The batch UI doesn't change shape
+//     based on which two were picked.
+//
+// All other selectors in this file go through `getByRole` or the
+// shared selectors map. The ABI-param case that does depend on
+// semantic identity (where positional .nth() WAS brittle) is the one
+// in ui/08-event-rules.spec.ts; that one was migrated to
+// `getByTestId('abi-param-{name}')` against a data-testid added to
+// the EventParamConstraint component.
+
 // ---------------------------------------------------------------------------
 // Group A: Contract Multi-Select
 // ---------------------------------------------------------------------------
