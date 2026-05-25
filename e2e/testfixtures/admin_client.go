@@ -193,10 +193,37 @@ type CreateContractInput struct {
 	Metadata     map[string]any `json:"metadata,omitempty"`
 }
 
+// FunctionRule mirrors rbac.FunctionRule — a function selector with
+// optional ABI parameter constraints. When a grant has function
+// rules, only matching selectors pass the contract-access gate.
+type FunctionRule struct {
+	Selector   string      `json:"selector"`
+	ParamRules []ParamRule `json:"param_rules,omitempty"`
+}
+
+// ParamRule mirrors rbac.ParamRule. Most tests don't constrain
+// params; we only model the fields used so far.
+type ParamRule struct {
+	Index     int    `json:"index"`
+	MustBe    string `json:"must_be,omitempty"`
+	MustEqual string `json:"must_equal,omitempty"`
+}
+
 type CreateContractGrantInput struct {
-	GroupID        string   `json:"group_id"`
-	AllowedMethods []string `json:"allowed_methods,omitempty"`
-	Claims         []Claim  `json:"claims,omitempty"`
+	GroupID        string         `json:"group_id"`
+	AllowedMethods []string       `json:"allowed_methods,omitempty"`
+	Claims         []Claim        `json:"claims,omitempty"`
+	Functions      []FunctionRule `json:"functions,omitempty"`
+}
+
+// Fns turns N selectors into a slice of FunctionRule with no param
+// constraints. Mirrors helpers/rbac-api.ts:fns(...).
+func Fns(selectors ...string) []FunctionRule {
+	out := make([]FunctionRule, len(selectors))
+	for i, s := range selectors {
+		out[i] = FunctionRule{Selector: s}
+	}
+	return out
 }
 
 // === Org operations ===
@@ -329,11 +356,13 @@ func (c *AdminClient) CreateContractGrant(t *testing.T, orgID, address string, i
 // OrgID/OrgSlug; the handler clamps to the caller's scope for
 // JWT-admin auth (super-admin via X-Admin-Token sees all).
 type CheckAccessInput struct {
-	UserExternalID string `json:"user_external_id"`
-	OrgID          string `json:"org_id,omitempty"`
-	OrgSlug        string `json:"org_slug,omitempty"`
-	Method         string `json:"method"`
-	TargetAddress  string `json:"target_address,omitempty"`
+	UserExternalID   string  `json:"user_external_id"`
+	OrgID            string  `json:"org_id,omitempty"`
+	OrgSlug          string  `json:"org_slug,omitempty"`
+	Method           string  `json:"method"`
+	TargetAddress    string  `json:"target_address,omitempty"`
+	FunctionSelector string  `json:"function_selector,omitempty"`
+	RequiredClaims   []Claim `json:"required_claims,omitempty"`
 }
 
 // CheckAccessResult mirrors rbac.AccessCheckResult (json subset).
