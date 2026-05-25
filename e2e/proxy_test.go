@@ -152,6 +152,11 @@ func setupE2EWithVerifier(t *testing.T, verifier server.PrivadoVerifier) (*serve
 		VerifierID:       "did:privado:verifier:test",
 		BaseURL:          serverURL,
 		Environment:      "development",
+		// AllowMockLogin is inert without the mockauth build tag
+		// (auth_prod.go stubs tryMockLogin out); enabling it here is
+		// safe for production builds and lets mockauth-tagged tests
+		// mint per-DID JWTs via the mock.<did> token format.
+		AllowMockLogin: true,
 	}
 
 	// Use mock verifier if provided, otherwise create real one
