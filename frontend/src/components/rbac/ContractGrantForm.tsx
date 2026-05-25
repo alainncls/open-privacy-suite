@@ -189,6 +189,11 @@ function EventParamConstraint({
         <select
           value={localMode}
           onChange={e => handleModeChange(e.target.value)}
+          // Stable identifier for e2e tests (RD-965). Prefer the ABI
+          // param name; fall back to the positional index for unnamed
+          // params. Lets tests select by semantic identity instead of
+          // render order.
+          data-testid={`abi-param-${param.name || `idx-${param.index}`}`}
           className="ml-auto px-1.5 py-1 text-xs border border-neutral-200 rounded focus:outline-none focus:ring-1 focus:ring-primary max-w-[160px]"
         >
           {options.map(opt => (

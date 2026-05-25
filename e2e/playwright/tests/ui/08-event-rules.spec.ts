@@ -404,9 +404,13 @@ test.describe('Event rules — selecting events and constraints', () => {
     // those defaults on event-add. Confirm the from select reflects 'self', then
     // explicitly drop 'to' to 'any' so the saved rule only constrains 'from'.
     const selectedEvent = grantDialog.locator('.border.border-primary-50.bg-neutral-50').filter({ hasText: 'Transfer' }).first();
-    const paramSelects = selectedEvent.locator('select');
-    const fromSelect = paramSelects.nth(0); // ABI index 0 (from)
-    const toSelect = paramSelects.nth(1);   // ABI index 1 (to)
+    // Address ABI params by name via data-testid (RD-965). Previously this
+    // used paramSelects.nth(0/1) keyed off render order — coupling tests
+    // to the form's <select> ordering rather than the ABI parameter
+    // identity. The data-testid is set in ContractGrantForm's
+    // EventParamConstraint component.
+    const fromSelect = selectedEvent.getByTestId('abi-param-from');
+    const toSelect = selectedEvent.getByTestId('abi-param-to');
     await expect(fromSelect).toHaveValue('self');
     await expect(toSelect).toHaveValue('self');
     await toSelect.selectOption('any');
