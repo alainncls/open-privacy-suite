@@ -49,7 +49,11 @@ type RateLimiterInterface interface {
 // Uses *types.OAuthSession so that implementations in other packages (e.g. redis)
 // can satisfy the interface without importing the server package.
 type OAuthSessionManager interface {
-	CreateSession(clientID, redirectURI, state, authSessionID string) string
+	// CreateSession creates a new OAuth session. initiatorDID is the
+	// JWT-subject DID of the caller that triggered /authorize (empty for
+	// anonymous callers). RD-993 silent-SSO uses this field to ensure only
+	// the initiator can auto-complete their own session.
+	CreateSession(clientID, redirectURI, state, authSessionID, initiatorDID string) string
 	GetSession(sessionID string) *types.OAuthSession
 	GetSessionByCode(code string) *types.OAuthSession
 	SetCode(sessionID, code, userDID string, kyc bool) error

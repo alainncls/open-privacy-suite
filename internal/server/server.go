@@ -683,13 +683,22 @@ func (s *Server) setupRouter() *gin.Engine {
 
 	// OAuth 2.0 endpoints - enables privacy-proxy as an Identity Provider
 	// Used by block explorer for Single Sign-On with Privado ID authentication
-	// Rate limited to prevent brute force attacks
-	router.GET("/oauth/authorize", authRL, s.handleOAuthAuthorize)
+	// Rate limited to prevent brute force attacks.
+	//
+	// /authorize uses OptionalJWTAuthMiddleware so RD-993 silent-SSO can
+	// record the initiator's DID on the session when the caller already
+	// has a PP JWT. Anonymous callers go through the normal interactive
+	// flow with an empty InitiatorDID; silent-complete then refuses to
+	// auto-complete that session for anyone.
+	router.GET("/oauth/authorize", authRL, auth.OptionalJWTAuthMiddleware(s.jwtService, s.db), s.handleOAuthAuthorize)
 	router.POST("/oauth/callback", authRL, s.handleOAuthCallback)
 	router.POST("/oauth/token", authRL, s.handleOAuthToken)
 	router.GET("/oauth/session/:id/info", authRL, s.handleOAuthSessionInfo)
 	router.GET("/oauth/session/:id/status", s.handleOAuthSessionStatus) // no rate limit: read-only polling during QR scan
 	router.POST("/oauth/session/:id/mock-complete", authRL, s.handleOAuthMockComplete)
+	// RD-993: silent-SSO endpoint. JWT-gated; the handler also enforces
+	// the first-party-client + same-initiator checks.
+	router.POST("/oauth/session/:id/silent-complete", authRL, auth.JWTAuthMiddleware(s.jwtService, s.db), s.handleOAuthSilentComplete)
 
 	// ETH address linking endpoints - available at multiple paths for flexibility:
 	// - /api/v1/eth/* - versioned API (primary)

@@ -80,7 +80,7 @@ interface AuthState {
 export function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { login, isAuthenticated, isLoading, userDID } = useAuth();
+  const { login, isAuthenticated, isLoading, userDID, accessToken } = useAuth();
   const from = (location.state as { from?: string } | null)?.from || '/link-wallet';
   const [testIdentities, setTestIdentities] = useState<TestIdentity[]>([]);
   const [providers, setProviders] = useState<string[]>(['privado']);
@@ -266,31 +266,88 @@ export function LoginPage() {
     }
   }, [login, navigate, from]);
 
-  // Auto-start on mount. Three branches, evaluated in order:
+  // RD-993: first-party silent SSO. When the user already has a valid PP
+  // session AND the OAuth flow lands here, ask the backend to silent-complete
+  // (auth code issued without showing the QR / mock-login picker). Backend
+  // gates this on:
+  //   - JWT-validated caller DID matching the session's InitiatorDID
+  //     (defends against pre-created session-id lures)
+  //   - session's ClientID in the OAUTH_FIRST_PARTY_CLIENTS allowlist
+  // On 4xx (any precondition fails) the function returns false and we fall
+  // through to the next branch — RD-928's dev-mock auto-complete, or the
+  // interactive picker.
+  const trySilentSSO = useCallback(async (): Promise<boolean> => {
+    if (!isOAuthMode || !oauthSessionId || !isAuthenticated || !accessToken) {
+      return false;
+    }
+    setState(prev => ({ ...prev, step: 'loading', error: null }));
+    try {
+      const res = await fetch(`/oauth/session/${oauthSessionId}/silent-complete`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!res.ok) {
+        // 401 / 403 / 404 / 409: ineligible for silent SSO. Reset state.step
+        // so the caller can drop into the next branch instead of leaving us
+        // stuck on 'loading'.
+        setState(prev => ({ ...prev, step: 'init', error: null }));
+        return false;
+      }
+      const data = await res.json();
+      if (!data.completed || !data.redirect_url) {
+        setState(prev => ({ ...prev, step: 'init', error: null }));
+        return false;
+      }
+      setState(prev => ({ ...prev, step: 'success' }));
+      window.location.href = data.redirect_url;
+      return true;
+    } catch {
+      setState(prev => ({ ...prev, step: 'init', error: null }));
+      return false;
+    }
+  }, [isOAuthMode, oauthSessionId, isAuthenticated, accessToken]);
+
+  // Auto-start on mount. Branches, evaluated in priority order:
   //
-  //   1. First-party silent SSO (dev mock path): if the user is already
-  //      authenticated to PP and the OAuth flow landed here with mock-login
-  //      enabled, auto-complete with the existing user's DID instead of
-  //      rendering the picker. Replaces RD-928's separate auto-trigger so
-  //      it runs BEFORE startOAuthAuth flips state.step away from 'init'.
-  //      Wait on isLoading so we don't race the AuthProvider's
-  //      restore-from-localStorage path; without the gate, the first render
-  //      sees isAuthenticated=false and falls into the interactive branch
-  //      before the session is restored.
-  //   2. OAuth mode without an active session: fetch the OAuth-session
-  //      details (renders the QR / picker via state.step='ready').
-  //   3. Plain login mode: kick off a fresh Privado auth request.
+  //   1. OAuth mode + authenticated: try RD-993 silent SSO first (prod-safe
+  //      path — gated server-side by first-party allowlist + initiator
+  //      binding + audit log). On success, redirect away — done.
+  //   2. OAuth mode + authenticated + silent SSO refused + dev mock-login
+  //      enabled: fall back to RD-928's mock-complete auto-trigger so devs
+  //      who haven't configured OAUTH_FIRST_PARTY_CLIENTS still get a
+  //      no-friction View-as flow. Server-side gated by IsProduction.
+  //   3. OAuth mode + not authenticated (or silent paths refused with no
+  //      mock fallback): fetch the OAuth-session details and render the
+  //      QR / picker (state.step → 'ready').
+  //   4. Plain login mode: kick off a fresh Privado auth request.
   //
-  // The full production silent-SSO path (RD-993) replaces branch (1) with a
-  // signed POST to /oauth/session/:id/silent-complete that's gated server-side
-  // by a first-party-client allowlist + initiator-session binding. Mock
-  // mock-login is dev-only by IsProduction check on the backend.
+  // Wait on isLoading so AuthProvider has restored the session from
+  // sessionStorage before we evaluate isAuthenticated — without the gate
+  // the first render sees false and we'd drop into the picker before the
+  // session restore completes.
+  //
+  // The `userDID` destructured above is used by handleMockLogin to pass the
+  // existing PP user's DID to /oauth/session/:id/mock-complete instead of
+  // letting the backend mint a fresh mock_<timestamp> identity (RD-928).
+  void userDID;
   useEffect(() => {
     if (state.step !== 'init') return;
     if (isLoading) return;
 
-    if (isOAuthMode && isAuthenticated && allowMockLogin && oauthSessionId) {
-      handleMockLogin();
+    if (isOAuthMode && isAuthenticated) {
+      // Try silent SSO first (RD-993). If the server refuses (not on the
+      // first-party allowlist, etc.) drop to dev-mock fallback or the
+      // interactive picker.
+      void trySilentSSO().then(success => {
+        if (success) return;
+        if (allowMockLogin && oauthSessionId) {
+          handleMockLogin();
+          return;
+        }
+        if (isOAuthMode) {
+          startOAuthAuth();
+        }
+      });
       return;
     }
 
@@ -305,6 +362,7 @@ export function LoginPage() {
     isAuthenticated,
     isOAuthMode,
     oauthSessionId,
+    trySilentSSO,
     handleMockLogin,
     startAuth,
     startOAuthAuth,

@@ -24,6 +24,15 @@ type OAuthSession struct {
 	UserDID string `json:"user_did"`
 	KYC     bool   `json:"kyc"`
 
+	// RD-993: DID of the caller who triggered /oauth/authorize, captured
+	// from their PP JWT if they had one. Empty when the flow was started by
+	// an anonymous caller (the normal interactive case). The silent-SSO
+	// endpoint refuses to complete unless the completing user matches this
+	// field, preventing user A from auto-completing a session user B
+	// started (defense against pre-created `oauth_session_id` lures — T2 in
+	// the RD-928 audit).
+	InitiatorDID string `json:"initiator_did,omitempty"`
+
 	// Timestamps
 	CreatedAt time.Time `json:"created_at"`
 	ExpiresAt time.Time `json:"expires_at"`
