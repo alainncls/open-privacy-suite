@@ -233,7 +233,7 @@ func TestOAuthStore_CreateAndGet(t *testing.T) {
 	client := setupRedis(t)
 	store := NewOAuthSessionStore(client, 10*time.Minute, 100)
 
-	sessionID := store.CreateSession("client1", "https://example.com/callback", "state123", "auth-sess-1")
+	sessionID := store.CreateSession("client1", "https://example.com/callback", "state123", "auth-sess-1", "")
 	require.NotEmpty(t, sessionID)
 
 	session := store.GetSession(sessionID)
@@ -248,7 +248,7 @@ func TestOAuthStore_SetCodeAndGetByCode(t *testing.T) {
 	client := setupRedis(t)
 	store := NewOAuthSessionStore(client, 10*time.Minute, 100)
 
-	sessionID := store.CreateSession("client1", "https://example.com/callback", "state123", "auth-sess-1")
+	sessionID := store.CreateSession("client1", "https://example.com/callback", "state123", "auth-sess-1", "")
 	require.NotEmpty(t, sessionID)
 
 	err := store.SetCode(sessionID, "code-abc", "did:test:user1", true)
@@ -266,7 +266,7 @@ func TestOAuthStore_MarkCodeUsedSingleUse(t *testing.T) {
 	client := setupRedis(t)
 	store := NewOAuthSessionStore(client, 10*time.Minute, 100)
 
-	sessionID := store.CreateSession("client1", "https://example.com/callback", "state123", "auth-sess-1")
+	sessionID := store.CreateSession("client1", "https://example.com/callback", "state123", "auth-sess-1", "")
 	require.NotEmpty(t, sessionID)
 
 	err := store.SetCode(sessionID, "code-xyz", "did:test:user1", false)
@@ -285,13 +285,13 @@ func TestOAuthStore_CapacityEnforcement(t *testing.T) {
 	client := setupRedis(t)
 	store := NewOAuthSessionStore(client, 10*time.Minute, 2)
 
-	id1 := store.CreateSession("c1", "https://a.com", "s1", "a1")
+	id1 := store.CreateSession("c1", "https://a.com", "s1", "a1", "")
 	require.NotEmpty(t, id1)
-	id2 := store.CreateSession("c2", "https://b.com", "s2", "a2")
+	id2 := store.CreateSession("c2", "https://b.com", "s2", "a2", "")
 	require.NotEmpty(t, id2)
 
 	// At capacity
-	id3 := store.CreateSession("c3", "https://c.com", "s3", "a3")
+	id3 := store.CreateSession("c3", "https://c.com", "s3", "a3", "")
 	assert.Empty(t, id3)
 }
 
@@ -299,7 +299,7 @@ func TestOAuthStore_DeleteSession(t *testing.T) {
 	client := setupRedis(t)
 	store := NewOAuthSessionStore(client, 10*time.Minute, 100)
 
-	sessionID := store.CreateSession("client1", "https://example.com/callback", "state123", "auth-sess-1")
+	sessionID := store.CreateSession("client1", "https://example.com/callback", "state123", "auth-sess-1", "")
 	require.NotEmpty(t, sessionID)
 
 	// Set a code so we can verify code index cleanup

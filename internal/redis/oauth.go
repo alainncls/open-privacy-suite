@@ -114,10 +114,13 @@ func NewOAuthSessionStore(client *redis.Client, sessionTTL time.Duration, maxSes
 }
 
 // CreateSession creates a new OAuth session.
+// initiatorDID is the JWT-subject DID of the caller that triggered /authorize
+// (empty for anonymous callers). RD-993: the silent-SSO endpoint refuses to
+// complete unless the completing user matches this field.
 // Returns the session ID or empty string if at capacity.
 // Uses an atomic Lua script to reserve a slot in the counter, preventing
 // race conditions across multiple proxy instances.
-func (s *OAuthSessionStore) CreateSession(clientID, redirectURI, state, authSessionID string) string {
+func (s *OAuthSessionStore) CreateSession(clientID, redirectURI, state, authSessionID, initiatorDID string) string {
 	ctx := context.Background()
 
 	// Atomically reserve a session slot via the counter.
@@ -140,6 +143,7 @@ func (s *OAuthSessionStore) CreateSession(clientID, redirectURI, state, authSess
 		RedirectURI:   redirectURI,
 		State:         state,
 		AuthSessionID: authSessionID,
+		InitiatorDID:  initiatorDID,
 		CreatedAt:     now,
 		ExpiresAt:     now.Add(s.ttl),
 	}

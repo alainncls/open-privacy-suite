@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"privacy-proxy/internal/types"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/iden3/iden3comm/v2/protocol"
 )
 
@@ -70,9 +72,12 @@ func NewOAuthSessionStore(sessionTTL, cleanupInterval time.Duration, maxSessions
 	return store
 }
 
-// CreateSession creates a new OAuth session
-// Returns the session ID or empty string if at capacity
-func (s *OAuthSessionStore) CreateSession(clientID, redirectURI, state, authSessionID string) string {
+// CreateSession creates a new OAuth session.
+// initiatorDID is the JWT-subject DID of the caller that triggered /authorize
+// (empty for anonymous callers — the normal interactive flow). The silent-SSO
+// endpoint refuses to complete unless the completing user matches this field.
+// Returns the session ID or empty string if at capacity.
+func (s *OAuthSessionStore) CreateSession(clientID, redirectURI, state, authSessionID, initiatorDID string) string {
 	s.mu.Lock()
 	if s.maxSessions > 0 && s.count >= int64(s.maxSessions) {
 		s.mu.Unlock()
@@ -90,6 +95,7 @@ func (s *OAuthSessionStore) CreateSession(clientID, redirectURI, state, authSess
 			RedirectURI:   redirectURI,
 			State:         state,
 			AuthSessionID: authSessionID,
+			InitiatorDID:  initiatorDID,
 			CreatedAt:     now,
 			ExpiresAt:     now.Add(s.ttl),
 		},
@@ -282,6 +288,131 @@ func (s *Server) handleOAuthMockComplete(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true, "did": mockDID})
 }
 
+// handleOAuthSilentComplete handles POST /oauth/session/:id/silent-complete.
+//
+// RD-993 — production-safe silent SSO for explicitly-configured first-party
+// OAuth clients. The endpoint short-circuits the interactive Privado /
+// mock-login flow when:
+//
+//  1. The caller has a valid PP JWT (JWTAuthMiddleware on the route gates
+//     this; otherwise 401).
+//  2. The caller's JWT subject DID equals the OAuth session's InitiatorDID
+//     (set at /authorize time from the same JWT middleware). Defeats T2 in
+//     the RD-928 audit: an attacker pre-creating an oauth_session and luring
+//     the victim cannot drive a silent grant because the victim is not the
+//     initiator of the attacker-started session.
+//  3. The session's ClientID is on the OAUTH_FIRST_PARTY_CLIENTS allowlist.
+//     Foreign clients always fall back to interactive even if everything
+//     else lines up.
+//  4. The session is still pending (no Code already set).
+//
+// On success: mints an auth code, writes one row to oauth_silent_sso_log,
+// and returns the same `{ completed, redirect_url }` payload the existing
+// status endpoint returns so the FE can reuse its redirect logic.
+//
+// On any precondition failure: returns 403/404/409 with a generic body so
+// the FE can fall through to the interactive Privado flow without leaking
+// which condition tripped.
+func (s *Server) handleOAuthSilentComplete(c *gin.Context) {
+	oauthSessionID := c.Param("id")
+	oauthSession := s.oauthSessionStore.GetSession(oauthSessionID)
+	if oauthSession == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "session not found or expired"})
+		return
+	}
+	if oauthSession.Code != "" {
+		c.JSON(http.StatusConflict, gin.H{"error": "session already completed"})
+		return
+	}
+
+	// Caller DID from validated JWT — JWTAuthMiddleware on the route
+	// guarantees presence; we still check defensively.
+	subject, _ := c.Get("subject")
+	callerDID, _ := subject.(string)
+	if callerDID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+
+	// Gate 1: session-binding. The initiator of /authorize is the only
+	// user allowed to silent-complete this session. An anonymous initiator
+	// (empty InitiatorDID) is never eligible for silent-SSO — that path
+	// falls through to interactive.
+	if oauthSession.InitiatorDID == "" || !strings.EqualFold(oauthSession.InitiatorDID, callerDID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "silent SSO not available for this session"})
+		return
+	}
+
+	// Gate 2: first-party allowlist. Empty config means no client gets
+	// silent SSO; misconfiguration fails closed.
+	if !s.config.IsFirstPartyOAuthClient(oauthSession.ClientID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "silent SSO not available for this client"})
+		return
+	}
+
+	// Best-effort KYC lookup so the issued code carries the right KYC
+	// flag in the eventual token exchange. Same shape as mock-complete.
+	kyc := false
+	if s.rbacAccessCtrl != nil {
+		if user, err := s.rbacAccessCtrl.EnsureUserExists(c.Request.Context(), callerDID, kyc, false); err == nil && user != nil {
+			kyc = user.KYC
+		}
+	}
+
+	code := generateSecureCode()
+	if err := s.oauthSessionStore.SetCode(oauthSessionID, code, callerDID, kyc); err != nil {
+		slog.Error("oauth silent-complete: SetCode failed", "session_id", oauthSessionID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to complete session"})
+		return
+	}
+
+	if oauthSession.AuthSessionID != "" {
+		_ = s.sessionStore.CompleteSession(oauthSession.AuthSessionID, "", "")
+	}
+
+	// Audit log: fire-and-forget at this layer. The row is best-effort
+	// because the auth code is already issued; if the DB write fails the
+	// operator finds out via the slog error + SIEM gap, not by surprising
+	// the caller. (Compare RD-872's impersonation_log which is fail-closed
+	// — that endpoint can refuse the response if audit fails; here the code
+	// has already been minted and returning 500 would leave the user
+	// stranded with a valid auth code they can't redeem cleanly.)
+	if err := s.recordOAuthSilentSSO(c.Request.Context(), callerDID, oauthSession.ClientID, oauthSession.RedirectURI, getCorrelationID(c)); err != nil {
+		slog.Error("oauth silent-complete: audit write failed", "actor_did", callerDID, "client_id", oauthSession.ClientID, "err", err)
+	}
+
+	// Mirror the status endpoint's response shape so the FE can reuse its
+	// existing redirect path.
+	redirectURL := fmt.Sprintf("%s?code=%s&state=%s", oauthSession.RedirectURI, code, oauthSession.State)
+	c.JSON(http.StatusOK, gin.H{
+		"completed":    true,
+		"redirect_url": redirectURL,
+	})
+}
+
+// recordOAuthSilentSSO writes one row to oauth_silent_sso_log.
+func (s *Server) recordOAuthSilentSSO(ctx context.Context, actorDID, clientID, redirectURI, correlationID string) error {
+	if s.db == nil {
+		return nil
+	}
+	conn := s.db.Conn()
+	if conn == nil {
+		return nil
+	}
+	sum := sha256.Sum256([]byte(redirectURI))
+	redirectHash := hex.EncodeToString(sum[:])
+	corr := uuid.NullUUID{}
+	if id, err := uuid.Parse(correlationID); err == nil {
+		corr.UUID = id
+		corr.Valid = true
+	}
+	_, err := conn.ExecContext(ctx, `
+		INSERT INTO oauth_silent_sso_log (actor_did, client_id, redirect_uri_hash, correlation_id)
+		VALUES ($1, $2, $3, $4)`,
+		actorDID, clientID, redirectHash, corr,
+	)
+	return err
+}
 
 // handleOAuthSessionInfo handles GET /oauth/session/:id/info
 // Returns the auth request data for a pending OAuth session, allowing the frontend
@@ -377,8 +508,15 @@ func (s *Server) handleOAuthAuthorize(c *gin.Context) {
 		return
 	}
 
+	// Capture the initiator DID from the optional JWT (RD-993). When the
+	// caller is anonymous (no Authorization header / invalid token), this
+	// is the empty string and silent-complete will refuse to auto-complete
+	// for anyone — the flow must finish via the normal interactive path.
+	initiatorDID, _ := c.Get("subject")
+	initiatorDIDStr, _ := initiatorDID.(string)
+
 	// Create OAuth session linked to auth session
-	oauthSessionID := s.oauthSessionStore.CreateSession(req.ClientID, req.RedirectURI, req.State, authSessionID)
+	oauthSessionID := s.oauthSessionStore.CreateSession(req.ClientID, req.RedirectURI, req.State, authSessionID, initiatorDIDStr)
 	if oauthSessionID == "" {
 		s.sessionStore.DeleteSession(authSessionID)
 		c.JSON(http.StatusServiceUnavailable, OAuthErrorResponse{

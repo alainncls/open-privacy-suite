@@ -247,6 +247,7 @@ type Config struct {
 	CORSAllowedOrigins         string        // Comma-separated list of allowed origins, or "*" for all (default: "*" in dev)
 	MockSignatures             bool          // If true, accept any signature without verification (dev/demo only, NEVER in production)
 	AllowMockLogin             bool          // If true, accept mock JWZ tokens for testing (dev/demo only, NEVER in production)
+	OAuthFirstPartyClients     []string      // RD-993: client_ids eligible for silent SSO (OIDC prompt=none semantics). Empty = no client gets silent SSO; falls back to interactive Privado flow.
 	DemoAutoAuthDelay          time.Duration // Auto-complete auth sessions for demo recording (0 = disabled, forced off in production)
 	ExtraRPCNamespacesFile     string                // Path to JSON file with additional RPC method namespaces (e.g. Linea's linea_*)
 	ExtraRPCNamespaces         *ExtraRPCNamespaces   // Parsed from ExtraRPCNamespacesFile
@@ -556,6 +557,7 @@ func Load() *Config {
 		CORSAllowedOrigins:       corsOrigins,
 		MockSignatures:           mockSigs,
 		AllowMockLogin:           allowMockLogin,
+		OAuthFirstPartyClients:   getSliceEnv("OAUTH_FIRST_PARTY_CLIENTS", ","),
 		DemoAutoAuthDelay:        demoDelay,
 		ExtraRPCNamespacesFile:   extraRPCNamespacesFile,
 		ExtraRPCNamespaces:       extraRPCNamespaces,
@@ -620,6 +622,25 @@ func getSliceEnv(key, sep string) []string {
 // IsProduction returns true if running in production mode
 func (c *Config) IsProduction() bool {
 	return c.Environment == "production"
+}
+
+// IsFirstPartyOAuthClient reports whether the given OAuth client_id is on
+// the configured first-party allowlist (RD-993). First-party clients are
+// eligible for the silent-SSO path (`prompt=none` semantics) which skips
+// the interactive Privado / login UI when the caller already has an active
+// PP session AND is the initiator of the OAuth flow. An empty allowlist
+// means no client gets silent SSO — every flow falls back to interactive.
+// Case-sensitive match against the trimmed env-supplied list.
+func (c *Config) IsFirstPartyOAuthClient(clientID string) bool {
+	if clientID == "" {
+		return false
+	}
+	for _, allowed := range c.OAuthFirstPartyClients {
+		if allowed == clientID {
+			return true
+		}
+	}
+	return false
 }
 
 // AzureADEnabled returns true if Azure AD authentication is configured.

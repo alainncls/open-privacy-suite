@@ -240,7 +240,7 @@ func TestOAuth_TokenEndpoint(t *testing.T) {
 		{
 			name: "valid code exchange returns JWT",
 			setupSession: func() string {
-				oauthSessionID := srv.oauthSessionStore.CreateSession("explorer-app", "http://localhost:3000/callback", "test-state", "auth-session-1")
+				oauthSessionID := srv.oauthSessionStore.CreateSession("explorer-app", "http://localhost:3000/callback", "test-state", "auth-session-1", "")
 				require.NotEmpty(t, oauthSessionID)
 				code := generateSecureCode()
 				err := srv.oauthSessionStore.SetCode(oauthSessionID, code, "did:privado:test123", true)
@@ -287,7 +287,7 @@ func TestOAuth_TokenEndpoint(t *testing.T) {
 		{
 			name: "invalid grant_type returns error",
 			setupSession: func() string {
-				oauthSessionID := srv.oauthSessionStore.CreateSession("explorer-app", "http://localhost:3000/callback", "test-state", "auth-session-2")
+				oauthSessionID := srv.oauthSessionStore.CreateSession("explorer-app", "http://localhost:3000/callback", "test-state", "auth-session-2", "")
 				code := generateSecureCode()
 				srv.oauthSessionStore.SetCode(oauthSessionID, code, "did:privado:test123", true)
 				return code
@@ -306,7 +306,7 @@ func TestOAuth_TokenEndpoint(t *testing.T) {
 		{
 			name: "mismatched redirect_uri returns error",
 			setupSession: func() string {
-				oauthSessionID := srv.oauthSessionStore.CreateSession("explorer-app", "http://localhost:3000/callback", "test-state", "auth-session-3")
+				oauthSessionID := srv.oauthSessionStore.CreateSession("explorer-app", "http://localhost:3000/callback", "test-state", "auth-session-3", "")
 				code := generateSecureCode()
 				srv.oauthSessionStore.SetCode(oauthSessionID, code, "did:privado:test123", true)
 				return code
@@ -325,7 +325,7 @@ func TestOAuth_TokenEndpoint(t *testing.T) {
 		{
 			name: "mismatched client_id returns error",
 			setupSession: func() string {
-				oauthSessionID := srv.oauthSessionStore.CreateSession("explorer-app", "http://localhost:3000/callback", "test-state", "auth-session-4")
+				oauthSessionID := srv.oauthSessionStore.CreateSession("explorer-app", "http://localhost:3000/callback", "test-state", "auth-session-4", "")
 				code := generateSecureCode()
 				srv.oauthSessionStore.SetCode(oauthSessionID, code, "did:privado:test123", true)
 				return code
@@ -386,7 +386,7 @@ func TestOAuth_TokenEndpoint_FormEncoded(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	// Create a valid session
-	oauthSessionID := srv.oauthSessionStore.CreateSession("explorer-app", "http://localhost:3000/callback", "test-state", "auth-session-form")
+	oauthSessionID := srv.oauthSessionStore.CreateSession("explorer-app", "http://localhost:3000/callback", "test-state", "auth-session-form", "")
 	require.NotEmpty(t, oauthSessionID)
 	code := generateSecureCode()
 	err := srv.oauthSessionStore.SetCode(oauthSessionID, code, "did:privado:test123", true)
@@ -426,7 +426,7 @@ func TestOAuth_CodeReplayProtection(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	// Create a valid session with a code
-	oauthSessionID := srv.oauthSessionStore.CreateSession("explorer-app", "http://localhost:3000/callback", "test-state", "auth-session-replay")
+	oauthSessionID := srv.oauthSessionStore.CreateSession("explorer-app", "http://localhost:3000/callback", "test-state", "auth-session-replay", "")
 	require.NotEmpty(t, oauthSessionID)
 	code := generateSecureCode()
 	err := srv.oauthSessionStore.SetCode(oauthSessionID, code, "did:privado:test123", true)
@@ -669,7 +669,7 @@ func TestOAuth_SessionStatus(t *testing.T) {
 
 	t.Run("incomplete session", func(t *testing.T) {
 		// Create a session without a code
-		oauthSessionID := srv.oauthSessionStore.CreateSession("explorer-app", "http://localhost:3000/callback", "test-state", "auth-session-incomplete")
+		oauthSessionID := srv.oauthSessionStore.CreateSession("explorer-app", "http://localhost:3000/callback", "test-state", "auth-session-incomplete", "")
 		require.NotEmpty(t, oauthSessionID)
 
 		req := httptest.NewRequest("GET", "/oauth/session/"+oauthSessionID+"/status", nil)
@@ -687,7 +687,7 @@ func TestOAuth_SessionStatus(t *testing.T) {
 
 	t.Run("completed session", func(t *testing.T) {
 		// Create a session with a code
-		oauthSessionID := srv.oauthSessionStore.CreateSession("explorer-app", "http://localhost:3000/callback", "test-state", "auth-session-complete")
+		oauthSessionID := srv.oauthSessionStore.CreateSession("explorer-app", "http://localhost:3000/callback", "test-state", "auth-session-complete", "")
 		require.NotEmpty(t, oauthSessionID)
 		code := generateSecureCode()
 		err := srv.oauthSessionStore.SetCode(oauthSessionID, code, "did:privado:test123", true)
@@ -730,7 +730,7 @@ func TestOAuth_SessionExpiry(t *testing.T) {
 	srv.oauthSessionStore = shortTTLStore
 
 	// Create a session
-	oauthSessionID := srv.oauthSessionStore.CreateSession("explorer-app", "http://localhost:3000/callback", "test-state", "auth-session-expiry")
+	oauthSessionID := srv.oauthSessionStore.CreateSession("explorer-app", "http://localhost:3000/callback", "test-state", "auth-session-expiry", "")
 	require.NotEmpty(t, oauthSessionID)
 	code := generateSecureCode()
 	err := srv.oauthSessionStore.SetCode(oauthSessionID, code, "did:privado:test123", true)
@@ -773,7 +773,7 @@ func TestOAuth_CodeExpiry(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	// Create a session with a code
-	oauthSessionID := srv.oauthSessionStore.CreateSession("explorer-app", "http://localhost:3000/callback", "test-state", "auth-session-code-expiry")
+	oauthSessionID := srv.oauthSessionStore.CreateSession("explorer-app", "http://localhost:3000/callback", "test-state", "auth-session-code-expiry", "")
 	require.NotEmpty(t, oauthSessionID)
 	code := generateSecureCode()
 	err := srv.oauthSessionStore.SetCode(oauthSessionID, code, "did:privado:test123", true)
@@ -832,7 +832,7 @@ func TestOAuth_StateParameterPreserved(t *testing.T) {
 	for _, state := range states {
 		t.Run("state="+state[:minInt(20, len(state))], func(t *testing.T) {
 			// Create a session with the state
-			oauthSessionID := srv.oauthSessionStore.CreateSession("explorer-app", "http://localhost:3000/callback", state, "auth-session-state-"+state[:minInt(10, len(state))])
+			oauthSessionID := srv.oauthSessionStore.CreateSession("explorer-app", "http://localhost:3000/callback", state, "auth-session-state-"+state[:minInt(10, len(state))], "")
 			require.NotEmpty(t, oauthSessionID)
 
 			// Add a code to mark as complete
@@ -869,7 +869,7 @@ func TestOAuth_ConcurrentCodeExchange(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	// Create a session with a code
-	oauthSessionID := srv.oauthSessionStore.CreateSession("explorer-app", "http://localhost:3000/callback", "test-state", "auth-session-concurrent")
+	oauthSessionID := srv.oauthSessionStore.CreateSession("explorer-app", "http://localhost:3000/callback", "test-state", "auth-session-concurrent", "")
 	require.NotEmpty(t, oauthSessionID)
 	code := generateSecureCode()
 	err := srv.oauthSessionStore.SetCode(oauthSessionID, code, "did:privado:test123", true)
@@ -1030,12 +1030,12 @@ func TestOAuth_SessionStoreCapacity(t *testing.T) {
 
 	// Create sessions up to capacity
 	for i := 0; i < 3; i++ {
-		sessionID := store.CreateSession("client", "http://localhost/callback", fmt.Sprintf("state-%d", i), fmt.Sprintf("auth-%d", i))
+		sessionID := store.CreateSession("client", "http://localhost/callback", fmt.Sprintf("state-%d", i), fmt.Sprintf("auth-%d", i), "")
 		assert.NotEmpty(t, sessionID, "should create session %d", i)
 	}
 
 	// Try to create one more - should fail
-	sessionID := store.CreateSession("client", "http://localhost/callback", "state-overflow", "auth-overflow")
+	sessionID := store.CreateSession("client", "http://localhost/callback", "state-overflow", "auth-overflow", "")
 	assert.Empty(t, sessionID, "should not create session beyond capacity")
 }
 
@@ -1046,7 +1046,7 @@ func TestOAuthSessionStore_Cleanup(t *testing.T) {
 	defer store.Stop()
 
 	// Create a session
-	sessionID := store.CreateSession("client", "http://localhost/callback", "state", "auth")
+	sessionID := store.CreateSession("client", "http://localhost/callback", "state", "auth", "")
 	require.NotEmpty(t, sessionID)
 
 	// Verify session exists
@@ -1067,7 +1067,7 @@ func TestOAuthSessionStore_CodeIndex(t *testing.T) {
 	defer store.Stop()
 
 	// Create session and set code
-	sessionID := store.CreateSession("client", "http://localhost/callback", "state", "auth")
+	sessionID := store.CreateSession("client", "http://localhost/callback", "state", "auth", "")
 	require.NotEmpty(t, sessionID)
 
 	code := "test-code-12345"
@@ -1112,7 +1112,7 @@ func TestOAuth_SessionInfo(t *testing.T) {
 		require.NoError(t, err)
 		authSessionID := srv.sessionStore.CreateSession(authReq)
 		require.NotEmpty(t, authSessionID)
-		oauthSessionID := srv.oauthSessionStore.CreateSession("client", "http://localhost/cb", "state", authSessionID)
+		oauthSessionID := srv.oauthSessionStore.CreateSession("client", "http://localhost/cb", "state", authSessionID, "")
 		require.NotEmpty(t, oauthSessionID)
 		return oauthSessionID
 	}
@@ -1179,7 +1179,7 @@ func TestOAuth_SessionInfo(t *testing.T) {
 
 	t.Run("returns 404 when auth session is missing", func(t *testing.T) {
 		// Create an OAuth session pointing to a non-existent auth session ID
-		oauthSessionID := srv.oauthSessionStore.CreateSession("client", "http://localhost/cb", "state", "nonexistent-auth-session")
+		oauthSessionID := srv.oauthSessionStore.CreateSession("client", "http://localhost/cb", "state", "nonexistent-auth-session", "")
 		require.NotEmpty(t, oauthSessionID)
 
 		w := httptest.NewRecorder()
@@ -1208,7 +1208,7 @@ func TestOAuth_MockComplete(t *testing.T) {
 		require.NoError(t, err)
 		authSessionID := srv.sessionStore.CreateSession(authReq)
 		require.NotEmpty(t, authSessionID)
-		oauthSessionID := srv.oauthSessionStore.CreateSession("client", "http://localhost/callback", "state", authSessionID)
+		oauthSessionID := srv.oauthSessionStore.CreateSession("client", "http://localhost/callback", "state", authSessionID, "")
 		require.NotEmpty(t, oauthSessionID)
 		return oauthSessionID
 	}
