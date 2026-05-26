@@ -353,7 +353,7 @@ proto-lint:
 ##                           purpose; see the script header for the security
 ##                           rationale.
 .PHONY: staging-create-test-accs
-staging-create-test-accs:
+staging-create-test-accs: require-wallet-emulator-submodule
 	@cd tools/wallet-emulator-js && ./scripts/create-test-identities.sh
 
 ## wallet-emulator-circuits: Fetch the auth-v2 ZK circuit artifacts to
@@ -401,8 +401,21 @@ require-PROXY_URL:
 	  exit 2; \
 	fi
 
+# wallet-emulator-js lives in its own repo (gateway-fm/wallet-emulator-js)
+# and is consumed here as a git submodule at tools/wallet-emulator-js/.
+# A fresh clone without --recurse-submodules leaves the dir empty, so any
+# target that shells into it fails with a confusing "no such file" — this
+# gate gives the real fix instead.
+.PHONY: require-wallet-emulator-submodule
+require-wallet-emulator-submodule:
+	@if [ ! -f tools/wallet-emulator-js/package.json ]; then \
+	  echo "error: tools/wallet-emulator-js/ submodule is not initialized."; \
+	  echo "       Run: git submodule update --init --recursive tools/wallet-emulator-js"; \
+	  exit 2; \
+	fi
+
 .PHONY: staging-auth-users
-staging-auth-users: require-PROXY_URL staging-circuits staging-create-test-accs
+staging-auth-users: require-PROXY_URL require-wallet-emulator-submodule staging-circuits staging-create-test-accs
 	@echo "Authenticating against: $(PROXY_URL)"
 	@echo
 	@cd tools/wallet-emulator-js && PROXY_URL="$(PROXY_URL)" PRIVADO_CIRCUITS_DIR="$(PRIVADO_CIRCUITS_DIR)" ./scripts/auth-all.sh
