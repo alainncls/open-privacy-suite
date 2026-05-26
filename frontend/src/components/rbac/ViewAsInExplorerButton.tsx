@@ -1,6 +1,6 @@
 import { Glasses } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useAuth } from '@/contexts/AuthContext';
+import { useAuthOptional } from '@/contexts/AuthContext';
 
 /**
  * RD-928 — primary entry point for the "View as user" flow.
@@ -36,12 +36,19 @@ export function ViewAsInExplorerButton({
   className,
   variant = 'icon',
 }: Props) {
-  const { userDID } = useAuth();
+  // Optional auth lookup: in production this is always set (the parent
+  // pages live under RequireAdmin which wraps in AuthProvider). In
+  // component-unit tests UserDetail/UserList may render without the full
+  // app context — fall back to "unknown user" instead of throwing.
+  const auth = useAuthOptional();
+  const userDID = auth?.userDID ?? null;
 
   // Self-impersonation is rejected by the privacy-proxy with 400 anyway;
   // we hide the affordance client-side so the operator never sees a control
   // that can't do anything. Compare lowercase since DID casing isn't
-  // semantic.
+  // semantic. Skip the self-check entirely when AuthProvider isn't in the
+  // tree (tests) — the button still renders and the server gate catches
+  // any actual self-impersonation attempts.
   if (userDID && userDID.toLowerCase() === targetDID.toLowerCase()) {
     return null;
   }

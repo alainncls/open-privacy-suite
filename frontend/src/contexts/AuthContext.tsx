@@ -236,3 +236,14 @@ export function useAuth() {
   }
   return context;
 }
+
+// useAuthOptional returns the auth context when available, or null when the
+// component is rendered outside an AuthProvider (e.g. in component-unit
+// tests that mount RBAC widgets without wrapping in the full app context).
+// Use this for purely-cosmetic affordances that depend on the current user
+// — never for code paths that must enforce auth. Hook auth-required code to
+// useAuth() so the throw still catches accidental misuse.
+export function useAuthOptional(): AuthContextType | null {
+  const context = useContext(AuthContext);
+  return context ?? null;
+}
