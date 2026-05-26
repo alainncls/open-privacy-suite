@@ -109,6 +109,11 @@ func ResetTestDatabase(database *DB) error {
 		"access_logs",
 		"audit_chain_anchor",
 		"eth_address_links",
+		// RD-993: stand-alone audit table (no FK cascade), so explicit reset
+		// is required to keep tests isolated when they run against a shared
+		// external Postgres (CI). Local testcontainer runs would otherwise
+		// hide the leak.
+		"oauth_silent_sso_log",
 	}
 
 	for _, table := range tables {
