@@ -4,6 +4,7 @@ import { rbacApi } from '@/api/rbac';
 import type { User, GroupWithAccess, UserRoleFilter } from '@/types/rbac';
 import UserDetail from './UserDetail';
 import OnboardByDIDForm from './OnboardByDIDForm';
+import { ViewAsInExplorerButton } from './ViewAsInExplorerButton';
 import { useOrgContext } from './RBACManager';
 import { useAdmin } from '@/components/auth/RequireAdmin';
 import { Button } from '@/components/ui/button';
@@ -424,6 +425,13 @@ export default function UserList() {
                           </>
                         )}
                       </Button>
+                    )}
+                    {/* RD-928: tier-2-only "View as in Explorer" action.
+                        Read-only admins (RD-866) don't get the affordance —
+                        their whole role is read-only audit of admin actions,
+                        not user-data browse. */}
+                    {!isReadonlyAdmin && (
+                      <ViewAsInExplorerButton targetDID={user.external_id} />
                     )}
                     <Button
                       variant="ghost"
