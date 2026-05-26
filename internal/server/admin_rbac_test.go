@@ -73,6 +73,13 @@ func setupTestServerForRBAC(t *testing.T) *testServerRBAC {
 	// pending_tx_visibility (M7 outbox). Must wipe per-test.
 	conn.ExecContext(ctx, "DELETE FROM tx_visible_to")
 	conn.ExecContext(ctx, "DELETE FROM pending_tx_visibility")
+	// eth_address_links: keyed by the DID string, not by a FK to users.id
+	// (deliberate — DIDs outlive the local user row). DELETE FROM users
+	// above does NOT cascade here. In CI's shared Postgres, an earlier
+	// test that links e.g. 0xbbbb... to did:imp:admin leaves the row in
+	// place; a later test that re-uses the same DID sees the stale link
+	// and the parity assertions fail. Per-test reset closes the leak.
+	conn.ExecContext(ctx, "DELETE FROM eth_address_links")
 
 	t.Cleanup(func() {
 		database.Close()
