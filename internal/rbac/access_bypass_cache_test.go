@@ -187,3 +187,92 @@ func TestCheckAccess_BypassCacheServesFreshAfterMutation(t *testing.T) {
 			callsAfterStep4)
 	}
 }
+
+// TestCheckAccess_BypassCacheDoesNotPopulateCache pins the second half of
+// the BypassCache contract: an impersonated call must not write back into
+// the in-memory cache, otherwise the next non-impersonated caller for the
+// same (user, org) pair would be served the impersonated view's snapshot.
+//
+// The cache.Set guard is also under `if !req.BypassCache` in access.go. If
+// it's removed, this test catches the regression by counting store reads:
+//
+//   - Run 1: BypassCache=true. Resolver reads store (count +1). Cache must
+//     NOT be populated.
+//   - Run 2: BypassCache=false on the same user+org. If run 1 had poisoned
+//     the cache, the AccessController would hit the in-memory entry and skip
+//     the resolver — store counter would NOT advance. We assert the
+//     opposite: the counter advances, proving the cache was not poisoned.
+//   - Run 3 (positive control): BypassCache=false again. Now the cache MUST
+//     be populated (the previous non-bypass call did c.cache.Set), so the
+//     store counter MUST NOT advance. This proves the test's mechanism is
+//     working: it correctly stays put on real cache hits.
+func TestCheckAccess_BypassCacheDoesNotPopulateCache(t *testing.T) {
+	ctx := context.Background()
+	store := newCountingBypassStore()
+	seedBypassCacheScenario(store)
+
+	controller := NewAccessController(store, 5*time.Minute)
+	defer controller.Stop()
+
+	contractA := "0xaaaa000000000000000000000000000000000001"
+	req := func(bypass bool) *AccessCheckRequest {
+		return &AccessCheckRequest{
+			UserExternalID: "did:test:user-a",
+			Method:         "eth_call",
+			Params:         []any{map[string]any{"to": contractA, "data": "0x"}, "latest"},
+			TargetAddress:  contractA,
+			BypassCache:    bypass,
+		}
+	}
+
+	// Run 1: bypass call must read the store.
+	result, err := controller.CheckAccess(ctx, req(true))
+	if err != nil {
+		t.Fatalf("bypass CheckAccess: %v", err)
+	}
+	if !result.Allowed {
+		t.Fatalf("expected allowed, got denied: %s", result.Reason)
+	}
+	storeReadsAfterBypass := store.getCachedCalls.Load()
+	if storeReadsAfterBypass == 0 {
+		t.Fatalf("bypass call must read the store; got 0 GetCachedPermissions calls")
+	}
+
+	// Run 2: subsequent NON-bypass call. If the bypass call had populated
+	// the in-memory cache, this would be served from the cache and the
+	// store counter would NOT advance. We assert the opposite — the
+	// counter advances, proving the cache was not poisoned by the bypass.
+	result, err = controller.CheckAccess(ctx, req(false))
+	if err != nil {
+		t.Fatalf("non-bypass CheckAccess: %v", err)
+	}
+	if !result.Allowed {
+		t.Fatalf("expected allowed on follow-up call, got denied: %s", result.Reason)
+	}
+	storeReadsAfterFollowup := store.getCachedCalls.Load()
+	if storeReadsAfterFollowup == storeReadsAfterBypass {
+		t.Errorf("non-bypass follow-up served from in-memory cache (no new store reads, count=%d); "+
+			"this means the prior BypassCache=true call populated the cache — c.cache.Set ran despite BypassCache",
+			storeReadsAfterFollowup)
+	}
+
+	// Run 3 (positive control): a second non-bypass call. The cache MUST
+	// now be populated (run 2 did c.cache.Set), so the store counter must
+	// NOT advance. This is the positive control — it proves the test's
+	// store-counter mechanism is working: it correctly stays put on cache
+	// hits and only the bypass path inflates the count.
+	result, err = controller.CheckAccess(ctx, req(false))
+	if err != nil {
+		t.Fatalf("second non-bypass CheckAccess: %v", err)
+	}
+	if !result.Allowed {
+		t.Fatalf("expected allowed on second non-bypass call, got denied: %s", result.Reason)
+	}
+	storeReadsAfterControl := store.getCachedCalls.Load()
+	if storeReadsAfterControl != storeReadsAfterFollowup {
+		t.Errorf("control: expected the second non-bypass call to hit the in-memory cache "+
+			"populated by the first non-bypass call (no new store reads); "+
+			"got %d new GetCachedPermissions reads — cache.Set on the non-bypass path appears broken",
+			storeReadsAfterControl-storeReadsAfterFollowup)
+	}
+}
