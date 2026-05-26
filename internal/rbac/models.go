@@ -366,6 +366,13 @@ type AccessCheckRequest struct {
 	FunctionSelector string  `json:"function_selector,omitempty"` // First 4 bytes of calldata (e.g., "0xa9059cbb")
 	Calldata         []byte  `json:"-"`                           // Raw calldata bytes for parameter validation (not serialized)
 	RequiredClaims   []Claim `json:"required_claims,omitempty"`
+	// BypassCache, when true, forces CheckAccess to skip the in-memory
+	// permissions cache and re-resolve from the underlying store. Used by
+	// the RD-928 impersonation surface so a tier-2 admin browsing as user
+	// X never sees a stale snapshot of X's perms held by the AccessController.
+	// Does not propagate to the resolver's DB cache (5-min TTL); RD-956
+	// covers the full fix.
+	BypassCache bool `json:"-"`
 }
 
 // EffectiveMethod returns the method name to use for access control decisions.

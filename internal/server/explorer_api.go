@@ -112,77 +112,86 @@ func (s *Server) registerExplorerRoutes(router *gin.Engine) {
 	explorer.Use(auth.OptionalJWTAuthMiddleware(s.jwtService, s.db))
 	// G15: Redact Ethereum addresses from access log paths
 	explorer.Use(explorerLogRedactionMiddleware())
-	{
-		explorer.GET("/viewable-addresses", s.getViewableAddresses)
+	s.bindExplorerEndpoints(explorer)
+}
 
-		// Resolve address_id to real address (for explorer backend internal use)
-		explorer.GET("/grant/:grant_id/resolve/:address_id", s.resolveAddressID)
-		// Grant-scoped transactions for a disclosed address
-		explorer.GET("/grant/:grant_id/:address_id/transactions", s.getGrantTransactions)
-		// Grant-scoped activity logs (user-facing, JWT required)
-		explorer.GET("/grant/:grant_id/activity", s.getGrantActivityLogs)
+// bindExplorerEndpoints attaches every explorer handler to the given route
+// group. Factored out of registerExplorerRoutes so the impersonation surface
+// (RD-928) can re-mount the same endpoint set under
+// /api/v1/admin/impersonate/:target_did/explorer with a different middleware
+// chain (tier-2 admin gate + viewer-DID override). Keep parametric-vs-specific
+// ordering identical to the production tree to avoid Gin route-precedence
+// surprises.
+func (s *Server) bindExplorerEndpoints(rg *gin.RouterGroup) {
+	rg.GET("/viewable-addresses", s.getViewableAddresses)
 
-		// Data Retrieval Endpoints
-		explorer.GET("/chain-id", s.getExplorerChainID)
-		explorer.GET("/stats", s.getExplorerStats)
-		explorer.GET("/stats/tx-history", s.getExplorerTransactionHistory)
+	// Resolve address_id to real address (for explorer backend internal use)
+	rg.GET("/grant/:grant_id/resolve/:address_id", s.resolveAddressID)
+	// Grant-scoped transactions for a disclosed address
+	rg.GET("/grant/:grant_id/:address_id/transactions", s.getGrantTransactions)
+	// Grant-scoped activity logs (user-facing, JWT required)
+	rg.GET("/grant/:grant_id/activity", s.getGrantActivityLogs)
 
-		// Blocks — register specific routes before parameterized ones
-		explorer.GET("/blocks", s.getExplorerBlocks)
-		explorer.GET("/blocks/latest/number", s.getExplorerLatestBlockNumber)
-		explorer.GET("/blocks/hash/:hash", s.getExplorerBlockByHash)
-		explorer.GET("/blocks/:number", s.getExplorerBlock)
-		explorer.GET("/blocks/:number/transactions", s.getExplorerBlockTransactions)
-		explorer.GET("/blocks/:number/internal", s.getExplorerBlockInternalTxs)
+	// Data Retrieval Endpoints
+	rg.GET("/chain-id", s.getExplorerChainID)
+	rg.GET("/stats", s.getExplorerStats)
+	rg.GET("/stats/tx-history", s.getExplorerTransactionHistory)
 
-		// Transactions — register specific routes before parameterized ones
-		explorer.GET("/transactions/paginated", s.getExplorerTransactionsPaginated)
-		explorer.GET("/transactions", s.getExplorerTransactions)
-		explorer.GET("/transactions/:hash", s.getExplorerTransaction)
-		explorer.GET("/transactions/:hash/internal", s.getExplorerTransactionInternal)
-		explorer.GET("/transactions/:hash/transfers", s.getExplorerTransactionTransfers)
-		explorer.GET("/transactions/:hash/logs", s.getExplorerTransactionLogs)
-		explorer.GET("/transactions/:hash/op-deposit", s.getExplorerTransactionOPDeposit)
+	// Blocks — register specific routes before parameterized ones
+	rg.GET("/blocks", s.getExplorerBlocks)
+	rg.GET("/blocks/latest/number", s.getExplorerLatestBlockNumber)
+	rg.GET("/blocks/hash/:hash", s.getExplorerBlockByHash)
+	rg.GET("/blocks/:number", s.getExplorerBlock)
+	rg.GET("/blocks/:number/transactions", s.getExplorerBlockTransactions)
+	rg.GET("/blocks/:number/internal", s.getExplorerBlockInternalTxs)
 
-		// Addresses
-		explorer.GET("/addresses/:address/stats", s.getExplorerAddressStats)
-		explorer.GET("/addresses/:address/transactions", s.getExplorerAddressTransactions)
-		explorer.GET("/addresses/:address/balance", s.getExplorerAddressBalance)
-		explorer.GET("/addresses/:address/code", s.getExplorerAddressCode)
-		explorer.GET("/addresses/:address/balances", s.getExplorerAddressTokenBalances)
-		explorer.GET("/addresses/:address/transfers", s.getExplorerAddressTransfers)
-		explorer.GET("/addresses/:address/internal", s.getExplorerAddressInternal)
-		explorer.GET("/addresses/:address/logs", s.getExplorerAddressLogs)
-		explorer.GET("/addresses/:address/contract", s.getExplorerAddressContract)
-		explorer.GET("/addresses/:address/is-contract", s.getExplorerAddressIsContract)
-		explorer.POST("/addresses/:address/abi", s.updateExplorerAddressABI)
+	// Transactions — register specific routes before parameterized ones
+	rg.GET("/transactions/paginated", s.getExplorerTransactionsPaginated)
+	rg.GET("/transactions", s.getExplorerTransactions)
+	rg.GET("/transactions/:hash", s.getExplorerTransaction)
+	rg.GET("/transactions/:hash/internal", s.getExplorerTransactionInternal)
+	rg.GET("/transactions/:hash/transfers", s.getExplorerTransactionTransfers)
+	rg.GET("/transactions/:hash/logs", s.getExplorerTransactionLogs)
+	rg.GET("/transactions/:hash/op-deposit", s.getExplorerTransactionOPDeposit)
 
-		// Logs
-		explorer.GET("/logs", s.getExplorerLogs)
+	// Addresses
+	rg.GET("/addresses/:address/stats", s.getExplorerAddressStats)
+	rg.GET("/addresses/:address/transactions", s.getExplorerAddressTransactions)
+	rg.GET("/addresses/:address/balance", s.getExplorerAddressBalance)
+	rg.GET("/addresses/:address/code", s.getExplorerAddressCode)
+	rg.GET("/addresses/:address/balances", s.getExplorerAddressTokenBalances)
+	rg.GET("/addresses/:address/transfers", s.getExplorerAddressTransfers)
+	rg.GET("/addresses/:address/internal", s.getExplorerAddressInternal)
+	rg.GET("/addresses/:address/logs", s.getExplorerAddressLogs)
+	rg.GET("/addresses/:address/contract", s.getExplorerAddressContract)
+	rg.GET("/addresses/:address/is-contract", s.getExplorerAddressIsContract)
+	rg.POST("/addresses/:address/abi", s.updateExplorerAddressABI)
 
-		// Tokens
-		explorer.GET("/tokens", s.getExplorerTokens)
-		explorer.GET("/tokens/:address", s.getExplorerToken)
-		explorer.GET("/tokens/:address/holders", s.getExplorerTokenHolders)
-		explorer.GET("/tokens/:address/transfers", s.getExplorerTokenTransfers)
+	// Logs
+	rg.GET("/logs", s.getExplorerLogs)
 
-		// Transfers
-		explorer.GET("/transfers", s.getExplorerAllTransfers)
+	// Tokens
+	rg.GET("/tokens", s.getExplorerTokens)
+	rg.GET("/tokens/:address", s.getExplorerToken)
+	rg.GET("/tokens/:address/holders", s.getExplorerTokenHolders)
+	rg.GET("/tokens/:address/transfers", s.getExplorerTokenTransfers)
 
-		// Accounts
-		explorer.GET("/accounts", s.getExplorerAccounts)
+	// Transfers
+	rg.GET("/transfers", s.getExplorerAllTransfers)
 
-		// Search
-		explorer.GET("/search/suggestions", s.getExplorerSearchSuggestions)
+	// Accounts
+	rg.GET("/accounts", s.getExplorerAccounts)
 
-		// Sync
-		explorer.GET("/sync/status", s.getExplorerSyncStatus)
-		explorer.GET("/sync/indexer-progress", s.getExplorerIndexerProgress)
-		explorer.GET("/sync/catchup", s.getExplorerCatchupProgress)
+	// Search
+	rg.GET("/search/suggestions", s.getExplorerSearchSuggestions)
 
-		// Indexing
-		explorer.POST("/index/block/:number", s.indexExplorerBlock)
-	}
+	// Sync
+	rg.GET("/sync/status", s.getExplorerSyncStatus)
+	rg.GET("/sync/indexer-progress", s.getExplorerIndexerProgress)
+	rg.GET("/sync/catchup", s.getExplorerCatchupProgress)
+
+	// Indexing
+	rg.POST("/index/block/:number", s.indexExplorerBlock)
 }
 
 // getViewableAddresses returns all addresses the wallet owner can view
@@ -1086,8 +1095,13 @@ func (s *Server) getExplorerBlockByHash(c *gin.Context) {
 }
 
 // getViewerDIDFromRequest extracts the viewer's DID.
-// Priority: (1) validated JWT claims set by OptionalJWTAuthMiddleware,
-// (2) wallet->DID lookup via ?wallet= query param (verified via DB).
+// Priority: (1) impersonation override set by the admin/impersonate middleware
+// (RD-928), (2) validated JWT claims set by OptionalJWTAuthMiddleware.
+//
+// The override is *only* writable by impersonationGateMiddleware, which runs
+// after the tier-2 admin gate + same-org check + audit log row. By the time
+// the override appears in the context, the request has been authorised and
+// recorded — downstream handlers may treat it as ground truth.
 //
 // L3: the ?wallet=<addr> shortcut was a viewer-impersonation oracle —
 // any unauthenticated caller who knew a wallet address could probe
@@ -1101,13 +1115,21 @@ func (s *Server) getExplorerBlockByHash(c *gin.Context) {
 // they must sign a challenge — that is a future feature, not the
 // silent oracle this used to be.
 func (s *Server) getViewerDIDFromRequest(c *gin.Context) string {
-	// 1. JWT claims (set by OptionalJWTAuthMiddleware)
+	// 1. Impersonation override (RD-928). Only writable by the dedicated
+	// middleware after tier-2 admin + same-org + audit. See
+	// internal/server/impersonation.go.
+	if override, exists := c.Get(viewerDIDOverrideContextKey); exists {
+		if did, ok := override.(string); ok && did != "" {
+			return did
+		}
+	}
+	// 2. JWT claims (set by OptionalJWTAuthMiddleware)
 	if subject, exists := c.Get("subject"); exists {
 		if did, ok := subject.(string); ok && did != "" {
 			return did
 		}
 	}
-	// 2. Wallet lookup is intentionally removed — the previous
+	// 3. Wallet lookup is intentionally removed — the previous
 	// implementation allowed any caller to impersonate any wallet's
 	// view without proof of possession.
 	return ""

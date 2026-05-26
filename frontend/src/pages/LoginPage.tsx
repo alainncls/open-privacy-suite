@@ -80,7 +80,7 @@ interface AuthState {
 export function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { login, isAuthenticated, isLoading } = useAuth();
+  const { login, isAuthenticated, isLoading, userDID } = useAuth();
   const from = (location.state as { from?: string } | null)?.from || '/link-wallet';
   const [testIdentities, setTestIdentities] = useState<TestIdentity[]>([]);
   const [providers, setProviders] = useState<string[]>(['privado']);
@@ -182,8 +182,17 @@ export function LoginPage() {
 
     try {
       if (isOAuthMode && oauthSessionId) {
-        // OAuth mode: complete the session, fetch redirect URL, then navigate
-        const res = await fetch(`/oauth/session/${oauthSessionId}/mock-complete`, { method: 'POST' });
+        // OAuth mode: complete the session, fetch redirect URL, then navigate.
+        // If the user already has an active PP session (first-party SSO into
+        // block-explorer), reuse their DID rather than minting a fresh
+        // mock_<timestamp> identity — otherwise the OAuth callback hands BE
+        // a different user than the admin currently sees on the PP dashboard.
+        const completeBody = userDID ? JSON.stringify({ did: userDID }) : undefined;
+        const res = await fetch(`/oauth/session/${oauthSessionId}/mock-complete`, {
+          method: 'POST',
+          headers: completeBody ? { 'Content-Type': 'application/json' } : undefined,
+          body: completeBody,
+        });
         const data = await res.json();
         if (!data.ok) {
           throw new Error(data.error || 'Mock login failed');
@@ -216,7 +225,7 @@ export function LoginPage() {
       const errorMessage = err instanceof Error ? err.message : 'Mock login failed';
       setState(prev => ({ ...prev, step: 'error', error: errorMessage }));
     }
-  }, [login, navigate, from]);
+  }, [login, navigate, from, userDID]);
 
   // Mock login as a specific test identity (dev identity picker)
   const handleMockLoginAs = useCallback(async (did: string) => {
@@ -257,16 +266,49 @@ export function LoginPage() {
     }
   }, [login, navigate, from]);
 
-  // Auto-start on mount
+  // Auto-start on mount. Three branches, evaluated in order:
+  //
+  //   1. First-party silent SSO (dev mock path): if the user is already
+  //      authenticated to PP and the OAuth flow landed here with mock-login
+  //      enabled, auto-complete with the existing user's DID instead of
+  //      rendering the picker. Replaces RD-928's separate auto-trigger so
+  //      it runs BEFORE startOAuthAuth flips state.step away from 'init'.
+  //      Wait on isLoading so we don't race the AuthProvider's
+  //      restore-from-localStorage path; without the gate, the first render
+  //      sees isAuthenticated=false and falls into the interactive branch
+  //      before the session is restored.
+  //   2. OAuth mode without an active session: fetch the OAuth-session
+  //      details (renders the QR / picker via state.step='ready').
+  //   3. Plain login mode: kick off a fresh Privado auth request.
+  //
+  // The full production silent-SSO path (RD-993) replaces branch (1) with a
+  // signed POST to /oauth/session/:id/silent-complete that's gated server-side
+  // by a first-party-client allowlist + initiator-session binding. Mock
+  // mock-login is dev-only by IsProduction check on the backend.
   useEffect(() => {
-    if (state.step === 'init') {
-      if (isOAuthMode) {
-        startOAuthAuth();
-      } else {
-        startAuth();
-      }
+    if (state.step !== 'init') return;
+    if (isLoading) return;
+
+    if (isOAuthMode && isAuthenticated && allowMockLogin && oauthSessionId) {
+      handleMockLogin();
+      return;
     }
-  }, [state.step, startAuth, startOAuthAuth]);
+
+    if (isOAuthMode) {
+      startOAuthAuth();
+    } else {
+      startAuth();
+    }
+  }, [
+    state.step,
+    isLoading,
+    isAuthenticated,
+    isOAuthMode,
+    oauthSessionId,
+    handleMockLogin,
+    startAuth,
+    startOAuthAuth,
+  ]);
 
   // Poll for session completion
   useEffect(() => {

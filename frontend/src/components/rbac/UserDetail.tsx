@@ -4,6 +4,7 @@ import type { User, MembershipWithDetails, EffectivePermissions } from '@/types/
 import { useOrgContext } from './RBACManager';
 import { getClosestPresetLabel } from '@/types/rbac';
 import MembershipForm from './MembershipForm';
+import { ViewAsInExplorerButton } from './ViewAsInExplorerButton';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -231,7 +232,17 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
 
       {/* User Info */}
       <div className="p-4 rounded-lg bg-neutral-100 space-y-4">
-        <h4 className="text-sm font-medium text-neutral-700">User Information</h4>
+        <div className="flex items-center justify-between">
+          <h4 className="text-sm font-medium text-neutral-700">User Information</h4>
+          {/* RD-928: primary "View as" affordance. Tier-2 admins only —
+              read-only admins (RD-866) don't see this. */}
+          {!isReadonlyAdmin && (
+            <ViewAsInExplorerButton
+              targetDID={user.external_id}
+              variant="inline"
+            />
+          )}
+        </div>
 
         <div className="space-y-2">
           <label className="block text-xs text-neutral-500">External ID (DID)</label>
