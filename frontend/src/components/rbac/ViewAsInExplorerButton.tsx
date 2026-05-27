@@ -1,11 +1,12 @@
 import { Glasses } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAuthOptional } from '@/contexts/AuthContext';
+import { resolveExplorerUrl } from '@/lib/explorerUrl';
 
 /**
  * RD-928 — primary entry point for the "View as user" flow.
  *
- * Opens the block-explorer's /view-as handoff in a new tab, passing the
+ * Navigates (same tab) to the block-explorer's /view-as handoff, passing the
  * target DID via a query param. The explorer FE picks up ?did=… on mount,
  * mints an opaque session token via its own BFF (`POST /api/impersonation/start`),
  * and lands the admin on the explorer home with the banner active. The
@@ -15,12 +16,11 @@ import { useAuthOptional } from '@/contexts/AuthContext';
  * Visibility: parent renders only for tier-2 admins (is_org_admin) — read-only
  * admins (ROA) and super-admin token holders never see this affordance.
  *
- * Configuration: VITE_BLOCK_EXPLORER_URL sets the explorer base URL. Defaults
- * to http://localhost:3001 for the dev stack (see scripts/privacy-dev-up.sh).
+ * Configuration: VITE_BLOCK_EXPLORER_URL sets the explorer base URL, resolved
+ * from runtime config (see resolveExplorerUrl in @/lib/explorerUrl). When unset
+ * in a production build the button is disabled — it deliberately does NOT fall
+ * back to localhost (the build-time bake that did so sent devnet admins there).
  */
-
-const BLOCK_EXPLORER_URL =
-  import.meta.env.VITE_BLOCK_EXPLORER_URL || 'http://localhost:3001';
 
 interface Props {
   /** Target user's DID (external_id on the user row). */
@@ -53,9 +53,13 @@ export function ViewAsInExplorerButton({
     return null;
   }
 
+  const explorerUrl = resolveExplorerUrl();
+  const disabled = explorerUrl === '';
+
   const handleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    const url = `${BLOCK_EXPLORER_URL}/view-as?did=${encodeURIComponent(targetDID)}`;
+    if (!explorerUrl) return;
+    const url = `${explorerUrl}/view-as?did=${encodeURIComponent(targetDID)}`;
     // Same-tab navigation, not a new tab. Why:
     //
     // AuthProvider stores PP session state in sessionStorage (per-tab by
@@ -63,12 +67,12 @@ export function ViewAsInExplorerButton({
     // sessionStorage is genuinely isolated per top-level browsing context —
     // even with the opener reference preserved, a new tab does NOT inherit
     // the opener's sessionStorage when navigating to/from cross-origin URLs.
-    // That breaks the OAuth bounce: the new tab arrives at :5173/login with
+    // That breaks the OAuth bounce: the new tab arrives at /login with
     // empty sessionStorage → isAuthenticated=false → interactive picker.
     //
     // Same-tab navigation preserves the original tab's sessionStorage across
-    // the :5173 → :3001 → :5173 → :3001 redirect chain, so PP's silent-SSO
-    // useEffect can recognise the existing session and skip the picker.
+    // the redirect chain, so PP's silent-SSO useEffect can recognise the
+    // existing session and skip the picker.
     //
     // Trade-off: admin leaves the dashboard during the View-as session.
     // Browser back button returns. RD-993's silent-SSO endpoint will let us
@@ -76,14 +80,17 @@ export function ViewAsInExplorerButton({
     window.location.href = url;
   };
 
+  const disabledTitle = 'Block explorer URL is not configured for this deployment';
+
   if (variant === 'inline') {
     return (
       <Button
         variant="outline"
         size="sm"
         onClick={handleClick}
+        disabled={disabled}
         className={className}
-        title="Open the block explorer in a new tab and browse as this user"
+        title={disabled ? disabledTitle : 'Browse the block explorer as this user (same tab)'}
       >
         <Glasses className="w-4 h-4 mr-1.5" />
         View as in Explorer
@@ -99,8 +106,9 @@ export function ViewAsInExplorerButton({
       variant="ghost"
       size="sm"
       onClick={handleClick}
+      disabled={disabled}
       className={className}
-      title="View as in Explorer (opens a new tab)"
+      title={disabled ? disabledTitle : 'View as in Explorer'}
     >
       <Glasses className="w-4 h-4" />
     </Button>

@@ -220,6 +220,11 @@ services:
       - "${HOST_BIND:-127.0.0.1}:${HOST_PORT_UI:-5173}:80"
     environment:
       - VITE_API_TARGET=http://proxy-backend:8080
+      # Browser-facing block-explorer URL the RBAC "View as" button navigates
+      # to. Must be reachable from the operator's browser (host port), NOT an
+      # internal service name. Written into /config.js at container start
+      # (runtime config), so it is a deploy-time setting — not baked at build.
+      - VITE_BLOCK_EXPLORER_URL=${VITE_BLOCK_EXPLORER_URL:-http://localhost:${HOST_PORT_EXPLORER:-3001}}
     depends_on:
       proxy-backend:
         condition: service_started
