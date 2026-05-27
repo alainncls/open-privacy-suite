@@ -89,10 +89,10 @@ type RetentionStore interface {
 
 // RetentionManager runs periodic retention cleanup on audit tables.
 type RetentionManager struct {
-	cfg       RetentionConfig
-	store     RetentionStore
-	stop      chan struct{}
-	done      chan struct{}
+	cfg        RetentionConfig
+	store      RetentionStore
+	stop       chan struct{}
+	done       chan struct{}
 	preregDone chan struct{}
 }
 
@@ -108,10 +108,10 @@ func NewRetentionManager(cfg RetentionConfig, store RetentionStore) *RetentionMa
 		cfg.PreregistrationCleanupInterval = defaultPreregistrationCleanup
 	}
 	return &RetentionManager{
-		cfg:       cfg,
-		store:     store,
-		stop:      make(chan struct{}),
-		done:      make(chan struct{}),
+		cfg:        cfg,
+		store:      store,
+		stop:       make(chan struct{}),
+		done:       make(chan struct{}),
 		preregDone: make(chan struct{}),
 	}
 }
@@ -166,7 +166,11 @@ func (r *RetentionManager) run() {
 
 func (r *RetentionManager) cleanup() {
 	ctx := context.Background()
-	now := time.Now()
+	// UTC, not local: retention timestamp columns (e.g. access_logs.created_at)
+	// are `timestamp without time zone` populated by the DB's CURRENT_TIMESTAMP
+	// (UTC). Computing the cutoff in the process's local zone would skew the
+	// comparison by the UTC offset on any non-UTC host, pruning the wrong rows.
+	now := time.Now().UTC()
 
 	// access_logs gets its own branch because it is the only retention path
 	// that owns a hash chain anchor and emits an audit-of-the-audit row. The
@@ -265,8 +269,8 @@ func (r *RetentionManager) trimAccessLogsFIFO(ctx context.Context) {
 		"batch_size", batchSize)
 
 	var totalDeleted int64
-	var minLowestID int64    // 0 == not yet seen; first non-zero LowestID stays
-	var maxHighestID int64   // 0 == not yet seen; last batch's HighestID wins
+	var minLowestID int64     // 0 == not yet seen; first non-zero LowestID stays
+	var maxHighestID int64    // 0 == not yet seen; last batch's HighestID wins
 	var lastAnchorHash string // last batch's anchor; equals the anchor row after the loop
 	for i := 0; i < maxAccessLogTrimIterations; i++ {
 		res, err := r.store.TrimAccessLogsFIFOBatch(ctx, r.cfg.MaxAccessLogRows, batchSize)
