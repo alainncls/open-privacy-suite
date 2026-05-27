@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"privacy-proxy/internal/disclosure"
 	"privacy-proxy/internal/explorer"
 	"privacy-proxy/internal/proxy"
+	"privacy-proxy/internal/rbac"
 
 	"github.com/gin-gonic/gin"
 )
@@ -73,7 +75,7 @@ type ResolveAddressResponse struct {
 	RealAddress     *string  `json:"real_address,omitempty"`
 	DisclosureLevel string   `json:"disclosure_level"`
 	GrantID         string   `json:"grant_id"`
-	Pseudonym       string   `json:"pseudonym,omitempty"` // For pseudonymous, the display name to use
+	Pseudonym       string   `json:"pseudonym,omitempty"`     // For pseudonymous, the display name to use
 	ScopeMethods    []string `json:"scope_methods,omitempty"` // Methods from grant scope (e.g. "transaction_history", "activity_logs")
 }
 
@@ -956,7 +958,53 @@ func (s *Server) buildRedactOptsForViewer(ctx context.Context, viewerDID string)
 	}
 	// Check if viewer is an admin of any org
 	opts.ViewerIsAdmin = s.isViewerAdmin(ctx, viewerDID)
+	s.applyAdminTxView(&opts)
 	return opts
+}
+
+// applyAdminTxView wires the deployment-wide ORG_ADMIN_VIEW_USER_TXS policy
+// into RedactOpts and, when the elevated view is actually in effect for this
+// viewer (admin + flag on), attaches a RedactStats so the caller can audit any
+// rows the view reveals. Keeping this in one place means every opts builder
+// gets identical treatment.
+func (s *Server) applyAdminTxView(opts *explorer.RedactOpts) {
+	opts.OrgAdminViewUserTxs = s.config.OrgAdminViewUserTxs
+	if opts.ViewerIsAdmin && opts.OrgAdminViewUserTxs {
+		opts.Stats = &explorer.RedactStats{}
+	}
+}
+
+// auditAdminUserTxView writes one rbac_audit_log entry when an elevated
+// org-admin view actually revealed user↔user rows (stats.AdminUserTxsRevealed
+// > 0). It is best-effort: a failed audit write is logged loudly but does not
+// fail the read, matching the existing CreateAuditLog call sites. The entry
+// records WHO (admin DID), WHAT (access), WHERE (endpoint label + target),
+// HOW MANY rows, and the client IP — addresses are never logged here because
+// the view itself never exposes them.
+func (s *Server) auditAdminUserTxView(c *gin.Context, viewerDID, endpoint, target string, stats *explorer.RedactStats) {
+	if stats == nil || stats.AdminUserTxsRevealed == 0 {
+		return
+	}
+	entry := &rbac.AuditLogEntry{
+		ActorExternalID: viewerDID,
+		Action:          rbac.AuditActionAccess,
+		ResourceType:    rbac.ResourceTypeExplorerUserTxs,
+		ResourceName:    endpoint,
+		NewValue: map[string]any{
+			"endpoint":      endpoint,
+			"target":        target,
+			"rows_revealed": stats.AdminUserTxsRevealed,
+			"elevated_by":   "ORG_ADMIN_VIEW_USER_TXS",
+		},
+		IPAddress: c.ClientIP(),
+	}
+	if target != "" {
+		entry.ResourceID = &target
+	}
+	if err := s.db.CreateAuditLog(c.Request.Context(), entry); err != nil {
+		slog.Error("failed to write admin-user-tx-view audit log",
+			"viewer", viewerDID, "endpoint", endpoint, "error", err)
+	}
 }
 
 // isViewerAdmin checks if the viewer has admin-level access in any org.
@@ -1236,6 +1284,7 @@ func (s *Server) getExplorerTransactions(c *gin.Context) {
 	// stripping values, etc.) — the SQL filter only drops entire rows.
 	opts := redactOptsFromFilter(filter)
 	opts.ViewerIsAdmin = s.isViewerAdmin(c.Request.Context(), viewerDID)
+	s.applyAdminTxView(&opts)
 	redacted, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), txs, viewerDID, opts)
 	if err != nil {
 		respondInternalErrorAndLog(c, "redaction failed",
@@ -1243,6 +1292,7 @@ func (s *Server) getExplorerTransactions(c *gin.Context) {
 			"err", err)
 		return
 	}
+	s.auditAdminUserTxView(c, viewerDID, "transactions", "", opts.Stats)
 
 	c.JSON(http.StatusOK, redacted)
 }
@@ -1281,6 +1331,7 @@ func (s *Server) getExplorerTransaction(c *gin.Context) {
 			"err", err)
 		return
 	}
+	s.auditAdminUserTxView(c, viewerDID, "transaction", hash, opts.Stats)
 	if len(redactedTxs) == 0 {
 		// Transaction was completely hidden
 		respondNotFound(c, "transaction not found")
@@ -1336,6 +1387,7 @@ func (s *Server) getExplorerAddressStats(c *gin.Context) {
 		redacted, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), allTxs, resolvedDID, opts)
 		if err == nil {
 			stats.TxCount = len(redacted)
+			s.auditAdminUserTxView(c, resolvedDID, "address_stats", address, opts.Stats)
 		}
 	}
 
@@ -1379,6 +1431,7 @@ func (s *Server) getExplorerAddressTransactions(c *gin.Context) {
 			"err", err)
 		return
 	}
+	s.auditAdminUserTxView(c, viewerDID, "address_transactions", address, opts.Stats)
 
 	c.JSON(http.StatusOK, redactedTxs)
 }
@@ -1434,6 +1487,7 @@ func (s *Server) getExplorerBlockTransactions(c *gin.Context) {
 			"err", err)
 		return
 	}
+	s.auditAdminUserTxView(c, viewerDID, "block_transactions", c.Param("number"), opts.Stats)
 	if redacted == nil {
 		redacted = []explorer.Transaction{}
 	}
@@ -1461,13 +1515,15 @@ func (s *Server) getExplorerBlockInternalTxs(c *gin.Context) {
 		itxs = []explorer.InternalTransaction{}
 	}
 	viewerDID := s.getViewerDIDFromRequest(c)
-	redacted, err := s.explorerRedactor.RedactInternalTransactions(c.Request.Context(), itxs, viewerDID)
+	opts := s.buildRedactOptsForViewer(c.Request.Context(), viewerDID)
+	redacted, err := s.explorerRedactor.RedactInternalTransactions(c.Request.Context(), itxs, viewerDID, opts)
 	if err != nil {
 		respondInternalErrorAndLog(c, "redaction failed",
 			"explorer: redaction failed",
 			"err", err)
 		return
 	}
+	s.auditAdminUserTxView(c, viewerDID, "block_internal_txs", c.Param("number"), opts.Stats)
 	if redacted == nil {
 		redacted = []explorer.InternalTransaction{}
 	}
@@ -1536,6 +1592,7 @@ func (s *Server) getExplorerTransactionsPaginated(c *gin.Context) {
 	// Field-level redaction still needed for address masking and value stripping.
 	pOpts := redactOptsFromFilter(filter)
 	pOpts.ViewerIsAdmin = s.isViewerAdmin(c.Request.Context(), viewerDID)
+	s.applyAdminTxView(&pOpts)
 	redacted, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), txs, viewerDID, pOpts)
 	if err != nil {
 		respondInternalErrorAndLog(c, "redaction failed",
@@ -1543,6 +1600,7 @@ func (s *Server) getExplorerTransactionsPaginated(c *gin.Context) {
 			"err", err)
 		return
 	}
+	s.auditAdminUserTxView(c, viewerDID, "transactions_paginated", "", pOpts.Stats)
 	if redacted == nil {
 		redacted = []explorer.Transaction{}
 	}
@@ -1570,13 +1628,15 @@ func (s *Server) getExplorerTransactionInternal(c *gin.Context) {
 		itxs = []explorer.InternalTransaction{}
 	}
 	viewerDID := s.getViewerDIDFromRequest(c)
-	redacted, err := s.explorerRedactor.RedactInternalTransactions(c.Request.Context(), itxs, viewerDID)
+	opts := s.buildRedactOptsForViewer(c.Request.Context(), viewerDID)
+	redacted, err := s.explorerRedactor.RedactInternalTransactions(c.Request.Context(), itxs, viewerDID, opts)
 	if err != nil {
 		respondInternalErrorAndLog(c, "redaction failed",
 			"explorer: redaction failed",
 			"err", err)
 		return
 	}
+	s.auditAdminUserTxView(c, viewerDID, "transaction_internal", hash, opts.Stats)
 	if redacted == nil {
 		redacted = []explorer.InternalTransaction{}
 	}
@@ -1600,13 +1660,15 @@ func (s *Server) getExplorerTransactionTransfers(c *gin.Context) {
 		transfers = []explorer.TokenTransfer{}
 	}
 	viewerDID := s.getViewerDIDFromRequest(c)
-	redacted, err := s.explorerRedactor.RedactTransfers(c.Request.Context(), transfers, viewerDID, s.buildRedactOptsForViewer(c.Request.Context(), viewerDID))
+	opts := s.buildRedactOptsForViewer(c.Request.Context(), viewerDID)
+	redacted, err := s.explorerRedactor.RedactTransfers(c.Request.Context(), transfers, viewerDID, opts)
 	if err != nil {
 		respondInternalErrorAndLog(c, "redaction failed",
 			"explorer: redaction failed",
 			"err", err)
 		return
 	}
+	s.auditAdminUserTxView(c, viewerDID, "transaction_transfers", hash, opts.Stats)
 	if redacted == nil {
 		redacted = []explorer.TokenTransfer{}
 	}
@@ -1791,7 +1853,7 @@ func (s *Server) getExplorerAddressTokenBalances(c *gin.Context) {
 			case explorer.VisibilityPseudonymous:
 				b.TokenAddress = explorer.GeneratePseudonym(b.TokenAddress)
 				filtered = append(filtered, b)
-			// VisibilityHidden, VisibilityRedacted: drop this balance entry
+				// VisibilityHidden, VisibilityRedacted: drop this balance entry
 			}
 		}
 		balances = filtered
@@ -1832,13 +1894,15 @@ func (s *Server) getExplorerAddressTransfers(c *gin.Context) {
 		transfers = []explorer.TokenTransfer{}
 	}
 	viewerDID = s.getViewerDIDFromRequest(c)
-	redacted, err := s.explorerRedactor.RedactTransfers(c.Request.Context(), transfers, viewerDID, s.buildRedactOptsForViewer(c.Request.Context(), viewerDID))
+	opts := s.buildRedactOptsForViewer(c.Request.Context(), viewerDID)
+	redacted, err := s.explorerRedactor.RedactTransfers(c.Request.Context(), transfers, viewerDID, opts)
 	if err != nil {
 		respondInternalErrorAndLog(c, "redaction failed",
 			"explorer: redaction failed",
 			"err", err)
 		return
 	}
+	s.auditAdminUserTxView(c, viewerDID, "address_transfers", address, opts.Stats)
 	if redacted == nil {
 		redacted = []explorer.TokenTransfer{}
 	}
@@ -1872,13 +1936,15 @@ func (s *Server) getExplorerAddressInternal(c *gin.Context) {
 		itxs = []explorer.InternalTransaction{}
 	}
 	viewerDID = s.getViewerDIDFromRequest(c)
-	redacted, err := s.explorerRedactor.RedactInternalTransactions(c.Request.Context(), itxs, viewerDID)
+	opts := s.buildRedactOptsForViewer(c.Request.Context(), viewerDID)
+	redacted, err := s.explorerRedactor.RedactInternalTransactions(c.Request.Context(), itxs, viewerDID, opts)
 	if err != nil {
 		respondInternalErrorAndLog(c, "redaction failed",
 			"explorer: redaction failed",
 			"err", err)
 		return
 	}
+	s.auditAdminUserTxView(c, viewerDID, "address_internal", address, opts.Stats)
 	if redacted == nil {
 		redacted = []explorer.InternalTransaction{}
 	}
@@ -2152,7 +2218,7 @@ func (s *Server) getExplorerTokens(c *gin.Context) {
 				t.L1Address = nil
 				t.USDPrice = nil
 				t.IconURL = nil
-			// VisibilityFull or unrecognized: return as-is
+				// VisibilityFull or unrecognized: return as-is
 			}
 			filtered = append(filtered, t)
 		}
@@ -2301,13 +2367,15 @@ func (s *Server) getExplorerTokenTransfers(c *gin.Context) {
 		transfers = []explorer.TokenTransfer{}
 	}
 	resolvedDID := s.resolveViewerDID(c.Request.Context(), viewerWallet, viewerDID)
-	redacted, err := s.explorerRedactor.RedactTransfers(c.Request.Context(), transfers, resolvedDID, s.buildRedactOptsForViewer(c.Request.Context(), resolvedDID))
+	opts := s.buildRedactOptsForViewer(c.Request.Context(), resolvedDID)
+	redacted, err := s.explorerRedactor.RedactTransfers(c.Request.Context(), transfers, resolvedDID, opts)
 	if err != nil {
 		respondInternalErrorAndLog(c, "redaction failed",
 			"explorer: redaction failed",
 			"err", err)
 		return
 	}
+	s.auditAdminUserTxView(c, resolvedDID, "token_transfers", address, opts.Stats)
 	if redacted == nil {
 		redacted = []explorer.TokenTransfer{}
 	}
@@ -2342,13 +2410,15 @@ func (s *Server) getExplorerAllTransfers(c *gin.Context) {
 		transfers = []explorer.TokenTransfer{}
 	}
 	viewerDID := s.getViewerDIDFromRequest(c)
-	redacted, err := s.explorerRedactor.RedactTransfers(c.Request.Context(), transfers, viewerDID, s.buildRedactOptsForViewer(c.Request.Context(), viewerDID))
+	opts := s.buildRedactOptsForViewer(c.Request.Context(), viewerDID)
+	redacted, err := s.explorerRedactor.RedactTransfers(c.Request.Context(), transfers, viewerDID, opts)
 	if err != nil {
 		respondInternalErrorAndLog(c, "redaction failed",
 			"explorer: redaction failed",
 			"err", err)
 		return
 	}
+	s.auditAdminUserTxView(c, viewerDID, "all_transfers", "", opts.Stats)
 	if redacted == nil {
 		redacted = []explorer.TokenTransfer{}
 	}
@@ -2411,7 +2481,7 @@ func (s *Server) getExplorerAccounts(c *gin.Context) {
 			case explorer.VisibilityPseudonymous:
 				a.Address = explorer.GeneratePseudonym(a.Address)
 				filtered = append(filtered, a)
-			// VisibilityHidden, VisibilityRedacted: drop this account
+				// VisibilityHidden, VisibilityRedacted: drop this account
 			}
 		}
 		accounts = filtered
@@ -2562,4 +2632,3 @@ func (s *Server) getExplorerCatchupProgress(c *gin.Context) {
 		"isRunning":       false,
 	})
 }
-

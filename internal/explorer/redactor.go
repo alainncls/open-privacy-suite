@@ -570,6 +570,43 @@ type RedactOpts struct {
 	// or admin claim). Admins see all contract activity including txs from
 	// private users — G10 non-participant drop does not apply to admins.
 	ViewerIsAdmin bool
+
+	// OrgAdminViewUserTxs gates the elevated admin audit view. It is the
+	// per-request mirror of config.OrgAdminViewUserTxs. When true AND the
+	// viewer is an admin, user↔user rows that are otherwise dropped
+	// (both sides non-identifiable, deploys from private EOAs, internal
+	// txs between private EOAs) are kept and their value/amount is
+	// preserved. Counterparty addresses still render as [PRIVATE] — this is
+	// a volume/timing audit view, not real-address visibility. Default false
+	// reproduces the strict privacy behaviour exactly.
+	OrgAdminViewUserTxs bool
+
+	// Stats, when non-nil, accumulates redaction outcomes the caller cares
+	// about. It is mutated through the pointer so it survives RedactOpts
+	// being passed by value. Used to drive per-request audit logging.
+	Stats *RedactStats
+}
+
+// RedactStats accumulates side-channel counts from a redaction pass so the
+// caller can react (e.g. emit an audit-log entry) without re-deriving them.
+type RedactStats struct {
+	// AdminUserTxsRevealed counts rows that were kept ONLY because the
+	// elevated org-admin audit view (OrgAdminViewUserTxs) was enabled —
+	// i.e. rows that would have been dropped under strict privacy.
+	AdminUserTxsRevealed int
+}
+
+// adminAuditView reports whether the elevated org-admin audit view applies
+// for this redaction pass.
+func (o RedactOpts) adminAuditView() bool {
+	return o.ViewerIsAdmin && o.OrgAdminViewUserTxs
+}
+
+// recordAdminReveal bumps the reveal counter when stats tracking is enabled.
+func (o RedactOpts) recordAdminReveal() {
+	if o.Stats != nil {
+		o.Stats.AdminUserTxsRevealed++
+	}
 }
 
 // RedactTransactions applies privacy rules to a list of transactions.
@@ -579,12 +616,13 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 		return txs, nil
 	}
 
-	var visibleHashes map[string]bool
-	var viewerIsAdmin bool
+	var ropts RedactOpts
 	if len(opts) > 0 {
-		visibleHashes = opts[0].VisibleTxHashes
-		viewerIsAdmin = opts[0].ViewerIsAdmin
+		ropts = opts[0]
 	}
+	visibleHashes := ropts.VisibleTxHashes
+	viewerIsAdmin := ropts.ViewerIsAdmin
+	adminAuditView := ropts.adminAuditView()
 
 	// 1. Extract unique addresses
 	uniqueAddrs := extractUniqueAddresses(txs)
@@ -695,22 +733,33 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 			}
 		}
 
-		// If BOTH participants are non-identifiable to the viewer (hidden or redacted
-		// after participant override), drop entirely. Showing "[PRIVATE] → [PRIVATE]"
-		// leaks transaction existence and timing without any useful information.
-		// Admins are exempt — they need to audit all chain activity, and aggregate
-		// counts already expose that the activity occurred (so dropping the row
-		// here just hides detail from an audit role that's allowed to see it).
-		if isNonIdentifiable(fromLevel) && isNonIdentifiable(toLevel) && !viewerIsAdmin {
-			continue
+		// If BOTH participants are non-identifiable to the viewer (hidden or
+		// redacted after participant override), the row is dropped under strict
+		// privacy — showing "[PRIVATE] → [PRIVATE]" leaks transaction existence
+		// and timing. The elevated org-admin audit view (gated by the
+		// ORG_ADMIN_VIEW_USER_TXS deployment flag) keeps it instead: the admin
+		// needs to audit user activity, and the row stays address-private (both
+		// sides remain [PRIVATE]); only value/timing are revealed below. Each
+		// such reveal is counted so the handler can audit-log the access.
+		bothHidden := isNonIdentifiable(fromLevel) && isNonIdentifiable(toLevel)
+		if bothHidden {
+			if !adminAuditView {
+				continue
+			}
+			ropts.recordAdminReveal()
 		}
 
 		// Contract creation transactions: if the deployer is non-identifiable,
-		// drop entirely. Showing "[PRIVATE] → Contract" leaks deployment
-		// activity, timing, and the resulting contract address. Same admin
-		// carve-out as above.
-		if tx.IsContractCreation() && isNonIdentifiable(fromLevel) && !viewerIsAdmin {
-			continue
+		// the row is dropped under strict privacy ("[PRIVATE] → Contract" leaks
+		// deployment activity, timing, and the resulting contract address). The
+		// elevated admin audit view keeps it (same gating + audit as above).
+		// Skip the re-count when bothHidden already counted this row.
+		deployHidden := tx.IsContractCreation() && isNonIdentifiable(fromLevel)
+		if deployHidden && !bothHidden {
+			if !adminAuditView {
+				continue
+			}
+			ropts.recordAdminReveal()
 		}
 
 		// G10 fix: Non-participant, non-visibleTo txs where one side is hidden
@@ -758,7 +807,14 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 				redactedTx.To = &redacted
 				setMeta(*tx.To, baseToLevel)
 			}
-			redactedTx.Value = JSONString("")
+			// Under the elevated admin audit view, preserve value so the row is
+			// informative and consistent with the Transfer event the admin can
+			// already read (RD-751). InputData stays stripped (calldata embeds
+			// addresses) and nonce stays nil (it links a private account's txs) —
+			// the view reveals volume/timing, never identity.
+			if !adminAuditView {
+				redactedTx.Value = JSONString("")
+			}
 			redactedTx.InputData = ""
 			redactedTx.Error = nil
 			redactedTx.RevertReason = nil
@@ -881,12 +937,13 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 		}
 	}
 
-	var visibleHashes map[string]bool
-	var viewerIsAdminT bool
+	var ropts RedactOpts
 	if len(opts) > 0 {
-		visibleHashes = opts[0].VisibleTxHashes
-		viewerIsAdminT = opts[0].ViewerIsAdmin
+		ropts = opts[0]
 	}
+	visibleHashes := ropts.VisibleTxHashes
+	viewerIsAdminT := ropts.ViewerIsAdmin
+	adminAuditView := ropts.adminAuditView()
 
 	var result []TokenTransfer
 	for _, t := range transfers {
@@ -910,13 +967,17 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 			}
 		}
 
-		// Drop if both sides are non-identifiable. Admins are exempt — they need
-		// to audit all chain activity, and the surrounding endpoint already
-		// returns a non-zero transferCount aggregate, so dropping rows here
-		// leaves the count and the rows out of sync for the one role that's
-		// supposed to see everything.
-		if isNonIdentifiable(fromLevel) && isNonIdentifiable(toLevel) && !viewerIsAdminT {
-			continue
+		// Drop if both sides are non-identifiable. Under strict privacy this
+		// keeps the surrounding transferCount aggregate out of sync with the
+		// rows, but that is the conservative default. The elevated org-admin
+		// audit view (ORG_ADMIN_VIEW_USER_TXS) keeps the row instead — addresses
+		// stay [PRIVATE], only the amount/timing are revealed (below) — and the
+		// reveal is counted for audit logging.
+		if isNonIdentifiable(fromLevel) && isNonIdentifiable(toLevel) {
+			if !adminAuditView {
+				continue
+			}
+			ropts.recordAdminReveal()
 		}
 
 		// G10: non-participant, non-visibleTo, non-admin, one side hidden → drop
@@ -953,7 +1014,12 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 				redacted.To = r.applyRedaction(t.To, toLevel)
 				setMeta(t.To, baseToLevel)
 			}
-			redacted.Value = JSONString("")
+			// Elevated admin audit view preserves the transfer amount (consistent
+			// with the Transfer log the admin can already read); addresses remain
+			// [PRIVATE].
+			if !adminAuditView {
+				redacted.Value = JSONString("")
+			}
 			result = append(result, redacted)
 			continue
 		}
@@ -999,10 +1065,16 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 
 // RedactInternalTransactions applies privacy rules to a list of internal transactions.
 // Like RedactTransactions, participants get a visibility override.
-func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs []InternalTransaction, viewerDID string) ([]InternalTransaction, error) {
+func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs []InternalTransaction, viewerDID string, opts ...RedactOpts) ([]InternalTransaction, error) {
 	if len(itxs) == 0 {
 		return itxs, nil
 	}
+
+	var ropts RedactOpts
+	if len(opts) > 0 {
+		ropts = opts[0]
+	}
+	adminAuditView := ropts.adminAuditView()
 
 	addrMap := make(map[string]bool)
 	for _, t := range itxs {
@@ -1063,9 +1135,16 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 			}
 		}
 
-		// Drop if both sides are non-identifiable
+		// Drop if both sides are non-identifiable. The elevated org-admin audit
+		// view (ORG_ADMIN_VIEW_USER_TXS) keeps the row — addresses stay
+		// [PRIVATE], value/timing revealed below — and counts the reveal. This
+		// mirrors RedactTransactions/RedactTransfers so internal-tx lists do not
+		// contradict the surrounding count for the admin under the flag.
 		if isNonIdentifiable(fromLevel) && isNonIdentifiable(toLevel) {
-			continue
+			if !adminAuditView {
+				continue
+			}
+			ropts.recordAdminReveal()
 		}
 
 		redacted := t
@@ -1095,7 +1174,11 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 				redacted.To = &r2
 				setMeta(*t.To, baseToLevel)
 			}
-			redacted.Value = JSONString("")
+			// Elevated admin audit view preserves value; Input/Output stay nil
+			// (they can embed addresses / decoded private data).
+			if !adminAuditView {
+				redacted.Value = JSONString("")
+			}
 			redacted.Input = nil
 			redacted.Output = nil
 			result = append(result, redacted)
