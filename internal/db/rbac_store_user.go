@@ -476,6 +476,19 @@ func (d *DB) DeleteUser(ctx context.Context, id string) error {
 
 // Membership operations
 
+// utcPtr returns the time in UTC, preserving nil. user_memberships.expires_at
+// is a plain TIMESTAMP (no zone); storing UTC keeps the wall-clock pgx writes
+// aligned with the UTC session used by the `expires_at > NOW()` checks, so an
+// expired membership can never read as active under a non-UTC process tz
+// (RD-1005).
+func utcPtr(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	u := t.UTC()
+	return &u
+}
+
 func (d *DB) CreateMembership(ctx context.Context, membership *rbac.UserMembership) error {
 	query := `INSERT INTO user_memberships (id, user_id, group_id, source, zk_credential_ref, expires_at)
 	          VALUES ($1, $2, $3, $4, $5, $6)
@@ -483,7 +496,7 @@ func (d *DB) CreateMembership(ctx context.Context, membership *rbac.UserMembersh
 
 	return d.conn.QueryRowContext(ctx, query,
 		membership.ID, membership.UserID, membership.GroupID,
-		string(membership.Source), membership.ZKCredentialRef, membership.ExpiresAt,
+		string(membership.Source), membership.ZKCredentialRef, utcPtr(membership.ExpiresAt),
 	).Scan(&membership.CreatedAt, &membership.UpdatedAt)
 }
 
@@ -499,7 +512,7 @@ func (d *DB) CreateMembershipIfNotExists(ctx context.Context, membership *rbac.U
 
 	err := d.conn.QueryRowContext(ctx, query,
 		membership.ID, membership.UserID, membership.GroupID,
-		string(membership.Source), membership.ZKCredentialRef, membership.ExpiresAt,
+		string(membership.Source), membership.ZKCredentialRef, utcPtr(membership.ExpiresAt),
 	).Scan(&membership.CreatedAt, &membership.UpdatedAt)
 	if err == sql.ErrNoRows {
 		// ON CONFLICT DO NOTHING — membership already exists
@@ -531,7 +544,7 @@ func (d *DB) UpdateMembership(ctx context.Context, membership *rbac.UserMembersh
 
 	_, err := d.conn.ExecContext(ctx, query,
 		membership.ID, string(membership.Source),
-		membership.ZKCredentialRef, membership.ExpiresAt,
+		membership.ZKCredentialRef, utcPtr(membership.ExpiresAt),
 	)
 	return err
 }
@@ -690,7 +703,7 @@ func (d *DB) IsOrgReadonlyAdmin(ctx context.Context, userID string) (bool, []str
 func (d *DB) DeleteExpiredMemberships(ctx context.Context) (int64, error) {
 	result, err := d.conn.ExecContext(ctx,
 		`DELETE FROM user_memberships WHERE expires_at IS NOT NULL AND expires_at < $1`,
-		time.Now(),
+		time.Now().UTC(),
 	)
 	if err != nil {
 		return 0, err
