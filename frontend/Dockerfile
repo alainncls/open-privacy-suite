@@ -37,6 +37,10 @@ RUN apk upgrade --no-cache
 COPY --from=builder-prod /app/dist /usr/share/nginx/html
 COPY nginx.prod.conf /etc/nginx/templates/default.conf.template
 
+# Regenerate /config.js from VITE_* env on each container start (runtime config).
+COPY docker-entrypoint.d/40-runtime-config.sh /docker-entrypoint.d/40-runtime-config.sh
+RUN chmod +x /docker-entrypoint.d/40-runtime-config.sh
+
 # BACKEND_URL is substituted into the nginx config at container startup.
 # Default: http://proxy-backend:8080 (Docker service name from compose)
 ENV BACKEND_URL=http://proxy-backend:8080
@@ -52,6 +56,8 @@ RUN apk upgrade --no-cache && apk add --no-cache wget
 
 COPY --from=builder-prod /app/dist /usr/share/nginx/html
 COPY nginx.e2e.conf /etc/nginx/conf.d/default.conf
+COPY docker-entrypoint.d/40-runtime-config.sh /docker-entrypoint.d/40-runtime-config.sh
+RUN chmod +x /docker-entrypoint.d/40-runtime-config.sh
 
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
