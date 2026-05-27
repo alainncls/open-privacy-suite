@@ -259,6 +259,109 @@ func TestRedactTransactions_HiddenPlusRedacted_Drops(t *testing.T) {
 	}
 }
 
+func TestRedactTransactions_BothHidden_AdminSees_FlagOn(t *testing.T) {
+	// With the elevated audit view (ORG_ADMIN_VIEW_USER_TXS) on, an admin keeps
+	// the both-sides-hidden row: addresses stay [PRIVATE], value is preserved
+	// (consistent with the Transfer log the admin can already read), and the
+	// reveal is counted for audit logging.
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		from: VisibilityHidden,
+		to:   VisibilityHidden,
+	})
+
+	stats := &RedactStats{}
+	txs := []Transaction{{Hash: "0x01", From: from, To: strPtr(to), Value: "1000"}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:test",
+		RedactOpts{ViewerIsAdmin: true, OrgAdminViewUserTxs: true, Stats: stats})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx (admin sees both-hidden under flag), got %d", len(result))
+	}
+	if result[0].From != "[PRIVATE]" {
+		t.Errorf("expected From [PRIVATE] (no real-address visibility), got %q", result[0].From)
+	}
+	if result[0].To == nil || *result[0].To != "[PRIVATE]" {
+		t.Errorf("expected To [PRIVATE], got %v", result[0].To)
+	}
+	if string(result[0].Value) != "1000" {
+		t.Errorf("expected value preserved (1000) under elevated audit view, got %q", result[0].Value)
+	}
+	if stats.AdminUserTxsRevealed != 1 {
+		t.Errorf("expected 1 reveal counted, got %d", stats.AdminUserTxsRevealed)
+	}
+}
+
+func TestRedactTransactions_BothHidden_AdminDropped_FlagOff(t *testing.T) {
+	// Default (flag off): an admin does NOT see both-sides-hidden user↔user
+	// rows — strict privacy, identical to non-admin behaviour. This is the
+	// conservative default the deployment flag gates.
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		from: VisibilityHidden,
+		to:   VisibilityHidden,
+	})
+
+	txs := []Transaction{{Hash: "0x01", From: from, To: strPtr(to), Value: "1000"}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:test",
+		RedactOpts{ViewerIsAdmin: true}) // OrgAdminViewUserTxs defaults false
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Fatalf("expected both-hidden row dropped for admin with flag off, got %d", len(result))
+	}
+}
+
+func TestRedactTransactions_BothRedacted_AdminSees_FlagOn(t *testing.T) {
+	// Redacted flavour of non-identifiable behaves the same as Hidden under the
+	// elevated audit view.
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		from: VisibilityRedacted,
+		to:   VisibilityRedacted,
+	})
+
+	txs := []Transaction{{Hash: "0x01", From: from, To: strPtr(to), Value: "1000"}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:test",
+		RedactOpts{ViewerIsAdmin: true, OrgAdminViewUserTxs: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx (admin sees both-redacted under flag), got %d", len(result))
+	}
+	if string(result[0].Value) != "1000" {
+		t.Errorf("expected value preserved under elevated audit view, got %q", result[0].Value)
+	}
+}
+
+func TestRedactTransactions_AdminFlagOn_NonAdminUnaffected(t *testing.T) {
+	// The flag is inert for non-admins: a regular viewer still gets the
+	// both-hidden drop even when the deployment flag is on.
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		from: VisibilityHidden,
+		to:   VisibilityHidden,
+	})
+
+	txs := []Transaction{{Hash: "0x01", From: from, To: strPtr(to), Value: "1000"}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:test",
+		RedactOpts{ViewerIsAdmin: false, OrgAdminViewUserTxs: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Fatalf("expected both-hidden row dropped for non-admin regardless of flag, got %d", len(result))
+	}
+}
+
 func TestRedactTransactions_RedactedPlusFull_DroppedForNonParticipant(t *testing.T) {
 	// G10: non-participant, one side redacted → dropped
 	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -441,11 +544,11 @@ func TestRedactTransactions_MultipleTxsMixed(t *testing.T) {
 	})
 
 	txs := []Transaction{
-		{Hash: "0x01", From: addrFull, To: strPtr(addrFull)},       // keep (both Full)
-		{Hash: "0x02", From: addrFull, To: strPtr(addrHidden)},     // drop (G10: hidden to, non-participant)
-		{Hash: "0x03", From: addrFull, To: strPtr(addrRedacted)},   // drop (G10: redacted to, non-participant)
-		{Hash: "0x04", From: addrHidden, To: strPtr(addrFull)},     // drop (G10: hidden from, non-participant)
-		{Hash: "0x05", From: addrHidden, To: strPtr(addrHidden)},   // drop (both hidden)
+		{Hash: "0x01", From: addrFull, To: strPtr(addrFull)},     // keep (both Full)
+		{Hash: "0x02", From: addrFull, To: strPtr(addrHidden)},   // drop (G10: hidden to, non-participant)
+		{Hash: "0x03", From: addrFull, To: strPtr(addrRedacted)}, // drop (G10: redacted to, non-participant)
+		{Hash: "0x04", From: addrHidden, To: strPtr(addrFull)},   // drop (G10: hidden from, non-participant)
+		{Hash: "0x05", From: addrHidden, To: strPtr(addrHidden)}, // drop (both hidden)
 	}
 
 	result, err := engine.RedactTransactions(context.Background(), txs, "did:test")
@@ -629,6 +732,135 @@ func TestRedactTransfers_HiddenPlusRedacted_Drops(t *testing.T) {
 	}
 	if len(result) != 0 {
 		t.Errorf("expected 0 transfers (hidden + redacted → drop), got %d", len(result))
+	}
+}
+
+func TestRedactTransfers_BothHidden_AdminSees_FlagOn(t *testing.T) {
+	// With the elevated audit view on, the both-sides-hidden transfer row is
+	// kept for the admin (fixing the /tokens/:address/transfers count-vs-empty
+	// contradiction). Addresses stay [PRIVATE]; the amount is preserved —
+	// consistent with the Transfer log the admin already sees — and the reveal
+	// is counted.
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		from: VisibilityHidden,
+		to:   VisibilityHidden,
+	})
+
+	stats := &RedactStats{}
+	transfers := []TokenTransfer{{ID: 1, From: from, To: to, Value: "100"}}
+	result, err := engine.RedactTransfers(context.Background(), transfers, "did:test",
+		RedactOpts{ViewerIsAdmin: true, OrgAdminViewUserTxs: true, Stats: stats})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 transfer (admin sees both-hidden under flag), got %d", len(result))
+	}
+	if result[0].From != "[PRIVATE]" || result[0].To != "[PRIVATE]" {
+		t.Errorf("expected both addresses [PRIVATE], got from=%q to=%q", result[0].From, result[0].To)
+	}
+	if string(result[0].Value) != "100" {
+		t.Errorf("expected amount preserved (100) under elevated audit view, got %q", result[0].Value)
+	}
+	if stats.AdminUserTxsRevealed != 1 {
+		t.Errorf("expected 1 reveal counted, got %d", stats.AdminUserTxsRevealed)
+	}
+}
+
+func TestRedactTransfers_BothHidden_AdminDropped_FlagOff(t *testing.T) {
+	// Default (flag off): admin does not see both-sides-hidden transfers.
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		from: VisibilityHidden,
+		to:   VisibilityHidden,
+	})
+
+	transfers := []TokenTransfer{{ID: 1, From: from, To: to, Value: "100"}}
+	result, err := engine.RedactTransfers(context.Background(), transfers, "did:test",
+		RedactOpts{ViewerIsAdmin: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Fatalf("expected both-hidden transfer dropped for admin with flag off, got %d", len(result))
+	}
+}
+
+func TestRedactTransfers_BothRedacted_AdminSees_FlagOn(t *testing.T) {
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		from: VisibilityRedacted,
+		to:   VisibilityRedacted,
+	})
+
+	transfers := []TokenTransfer{{ID: 1, From: from, To: to, Value: "100"}}
+	result, err := engine.RedactTransfers(context.Background(), transfers, "did:test",
+		RedactOpts{ViewerIsAdmin: true, OrgAdminViewUserTxs: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 transfer (admin sees both-redacted under flag), got %d", len(result))
+	}
+	if string(result[0].Value) != "100" {
+		t.Errorf("expected amount preserved under elevated audit view, got %q", result[0].Value)
+	}
+}
+
+func TestRedactInternalTransactions_BothHidden_AdminSees_FlagOn(t *testing.T) {
+	// Internal-tx lists get the same elevated audit view as top-level txs:
+	// both-hidden rows are kept (addresses [PRIVATE], value preserved, reveal
+	// counted) so the internal-txn tab does not contradict its count for the
+	// admin under the flag.
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		from: VisibilityHidden,
+		to:   VisibilityHidden,
+	})
+
+	stats := &RedactStats{}
+	itxs := []InternalTransaction{{ID: 1, TxHash: "0x01", From: from, To: strPtr(to), Value: "500"}}
+	result, err := engine.RedactInternalTransactions(context.Background(), itxs, "did:test",
+		RedactOpts{ViewerIsAdmin: true, OrgAdminViewUserTxs: true, Stats: stats})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 internal tx (admin sees both-hidden under flag), got %d", len(result))
+	}
+	if result[0].From != "[PRIVATE]" || result[0].To == nil || *result[0].To != "[PRIVATE]" {
+		t.Errorf("expected both addresses [PRIVATE], got from=%q to=%v", result[0].From, result[0].To)
+	}
+	if string(result[0].Value) != "500" {
+		t.Errorf("expected value preserved (500) under elevated audit view, got %q", result[0].Value)
+	}
+	if stats.AdminUserTxsRevealed != 1 {
+		t.Errorf("expected 1 reveal counted, got %d", stats.AdminUserTxsRevealed)
+	}
+}
+
+func TestRedactInternalTransactions_BothHidden_AdminDropped_FlagOff(t *testing.T) {
+	// Default (flag off): both-hidden internal txs are dropped even for admins.
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		from: VisibilityHidden,
+		to:   VisibilityHidden,
+	})
+
+	itxs := []InternalTransaction{{ID: 1, TxHash: "0x01", From: from, To: strPtr(to), Value: "500"}}
+	result, err := engine.RedactInternalTransactions(context.Background(), itxs, "did:test",
+		RedactOpts{ViewerIsAdmin: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Fatalf("expected both-hidden internal tx dropped with flag off, got %d", len(result))
 	}
 }
 
@@ -1732,8 +1964,8 @@ func TestRedactLogs_VisibilityMatrix(t *testing.T) {
 	publicContract := "0x1111111111111111111111111111111111111111"
 	redactedContract := "0x2222222222222222222222222222222222222222"
 	hiddenContract := "0x3333333333333333333333333333333333333333"
-	aliceAddr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" // tx sender
-	bobAddr := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"   // tx receiver
+	aliceAddr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"   // tx sender
+	bobAddr := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"     // tx receiver
 	malloryAddr := "0xcccccccccccccccccccccccccccccccccccccccc" // not a participant
 
 	topic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
@@ -2393,8 +2625,8 @@ func TestRedactTransactions_ParticipantVisibilityDoesNotLeakToOtherTxs(t *testin
 	nonce5 := u64ptr(5)
 	nonce8 := u64ptr(8)
 	txs := []Transaction{
-		{Hash: "0x01", From: alice, To: strPtr(bob), Value: "100", Nonce: nonce5},  // Alice is participant
-		{Hash: "0x02", From: carol, To: strPtr(bob), Value: "200", Nonce: nonce8},  // Alice is NOT participant → dropped (G10)
+		{Hash: "0x01", From: alice, To: strPtr(bob), Value: "100", Nonce: nonce5}, // Alice is participant
+		{Hash: "0x02", From: carol, To: strPtr(bob), Value: "200", Nonce: nonce8}, // Alice is NOT participant → dropped (G10)
 	}
 	result, err := engine.RedactTransactions(context.Background(), txs, "did:alice")
 	if err != nil {
@@ -2821,8 +3053,8 @@ func TestRedactTransactions_AnonymousViewerContractCreationScenario(t *testing.T
 	db := &mockDB{
 		visMap: VisibilityMap{
 			orgDeployerAddr: VisibilityHidden, // org-owned, hidden from Eve
-			publicEOA1:      VisibilityFull,    // public address
-			publicEOA2:      VisibilityFull,    // public address
+			publicEOA1:      VisibilityFull,   // public address
+			publicEOA2:      VisibilityFull,   // public address
 		},
 	}
 	engine := NewRedactionEngine(nil, db)
@@ -3405,11 +3637,11 @@ func TestRedactTransactions_TokenTransferStrippedWithoutEventAccess(t *testing.T
 	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 	tests := []struct {
-		name               string
-		eventAccess        map[string]bool
-		viewerIsAdmin      bool
-		wantTransferCount  int
-		wantTokenTransfer  bool
+		name              string
+		eventAccess       map[string]bool
+		viewerIsAdmin     bool
+		wantTransferCount int
+		wantTokenTransfer bool
 	}{
 		{
 			name:              "no event access strips token transfer info",

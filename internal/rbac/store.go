@@ -159,6 +159,9 @@ const (
 	AuditActionDelete = "delete"
 	AuditActionAssign = "assign"
 	AuditActionRevoke = "revoke"
+	// AuditActionAccess records a read/access event (as opposed to a mutation),
+	// e.g. an org admin exercising elevated transaction visibility.
+	AuditActionAccess = "access"
 )
 
 // ResourceType constants for audit logging.
@@ -171,18 +174,21 @@ const (
 	ResourceTypeGrant                = "grant"
 	ResourceTypeAccess               = "access"
 	ResourceTypePreregisteredAddress = "preregistered_address"
+	// ResourceTypeExplorerUserTxs is the audit resource for an org admin's
+	// elevated view of user↔user transactions (ORG_ADMIN_VIEW_USER_TXS).
+	ResourceTypeExplorerUserTxs = "explorer_user_txs"
 
 	// Compliance / disclosure / SSO surfaces — audit-log every mutation
 	// for ISO 27001 A.5.25 / A.8.16 evidence (see security audit M2).
-	ResourceTypeCompliance         = "compliance"
-	ResourceTypeTokenPrice         = "token_price"
-	ResourceTypeSanction           = "sanction"
-	ResourceTypeTravelRule         = "travel_rule_record"
-	ResourceTypeAddressThreshold   = "address_threshold"
-	ResourceTypeBaseCurrency       = "base_currency"
-	ResourceTypeAzureTenant        = "azure_tenant"
-	ResourceTypeSharedInfra        = "shared_infrastructure"
-	ResourceTypeDisclosureRequest  = "disclosure_request"
-	ResourceTypeDisclosureGrant    = "disclosure_grant"
-	ResourceTypeSession            = "session"
+	ResourceTypeCompliance        = "compliance"
+	ResourceTypeTokenPrice        = "token_price"
+	ResourceTypeSanction          = "sanction"
+	ResourceTypeTravelRule        = "travel_rule_record"
+	ResourceTypeAddressThreshold  = "address_threshold"
+	ResourceTypeBaseCurrency      = "base_currency"
+	ResourceTypeAzureTenant       = "azure_tenant"
+	ResourceTypeSharedInfra       = "shared_infrastructure"
+	ResourceTypeDisclosureRequest = "disclosure_request"
+	ResourceTypeDisclosureGrant   = "disclosure_grant"
+	ResourceTypeSession           = "session"
 )

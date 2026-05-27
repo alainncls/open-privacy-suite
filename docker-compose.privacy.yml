@@ -179,6 +179,9 @@ services:
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required in privacy mode}@redis:6379
       - ENABLE_TRAVEL_RULE=true
       - EXTRA_RPC_NAMESPACES_FILE=${EXTRA_RPC_NAMESPACES_FILE:-}  # Path to JSON file with chain-specific RPC methods (opt-in; empty = skip)
+      # Org-admin volume/timing audit view of user↔user txs (value preserved,
+      # addresses stay [PRIVATE], reveals audit-logged). Default off = strict privacy.
+      - ORG_ADMIN_VIEW_USER_TXS=${ORG_ADMIN_VIEW_USER_TXS:-false}
       # Indexer integration — this is what flips privacy-proxy's explorer
       # backend from direct SQL to gRPC. The explorer postgres variable is
       # still accepted for standalone fallback (ABI writes, indexer

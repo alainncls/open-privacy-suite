@@ -92,6 +92,9 @@ services:
       - ALLOW_MOCK_LOGIN=false
       - DEMO_AUTO_AUTH_DELAY=
       - ENABLE_TRAVEL_RULE=true
+      # Org admins get a volume/timing audit view of user↔user txs (value preserved,
+      # addresses stay [PRIVATE], every reveal audit-logged). Default off = strict privacy.
+      - ORG_ADMIN_VIEW_USER_TXS=${ORG_ADMIN_VIEW_USER_TXS:-false}
       - EXTRA_RPC_NAMESPACES_FILE=${EXTRA_RPC_NAMESPACES_FILE:-}
       - JWT_SECRET=${JWT_SECRET:-}
       - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:-}

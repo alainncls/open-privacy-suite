@@ -117,10 +117,10 @@ Users in the same org but in a group **without** a `contract_grant` and **withou
 
 | Field | Hidden | Redacted | Pseudonymous | Full | Implemented | Tested | Notes |
 |-------|--------|----------|--------------|------|-------------|--------|-------|
-| `from` | `[PRIVATE]` | `[PRIVATE]` | pseudonym | unchanged | Yes | Yes | Both-sides-hidden → drop entire tx |
+| `from` | `[PRIVATE]` | `[PRIVATE]` | pseudonym | unchanged | Yes | Yes | Both-sides-hidden → drop entire tx (org admins keep it when `ORG_ADMIN_VIEW_USER_TXS=true`, address stays `[PRIVATE]` — see §3.8) |
 | `to` | `[PRIVATE]` | `[PRIVATE]` | pseudonym | unchanged | Yes | Yes | Contract address if deploy; nil if null |
-| `value` | 0 / nil | 0 / nil | 0 / nil | unchanged | Yes | Yes | Zeroed when either side hidden/redacted |
-| `inputData` | nil | nil | nil | unchanged | Yes | Yes | Zeroed when either side hidden/redacted |
+| `value` | 0 / nil | 0 / nil | 0 / nil | unchanged | Yes | Yes | Zeroed when either side hidden/redacted. **Exception:** preserved for org admins when `ORG_ADMIN_VIEW_USER_TXS=true` (§3.8) — resolves the tx-vs-log amount asymmetry |
+| `inputData` | nil | nil | nil | unchanged | Yes | Yes | Zeroed when either side hidden/redacted. Stays stripped even under the §3.8 admin view (calldata embeds addresses) |
 | `error` | nil | nil | nil | unchanged | Yes | Partial | Zeroed when either side hidden/redacted |
 | `revertReason` | nil | nil | nil | unchanged | Yes | Partial | Zeroed when either side hidden/redacted |
 | `nonce` | nil | nil | nil | unchanged | Yes | Yes | Nil only when FROM is hidden/redacted; not when only TO is |
@@ -325,6 +325,24 @@ Token visibility is determined by the token's contract address. If the address i
 
 **List total:** The `total` field in `/tokens` reflects the count after filtering, never the raw database count.
 
+### 3.8 Org-admin elevated transaction view (`ORG_ADMIN_VIEW_USER_TXS`)
+
+A deployment-wide boolean flag (`ORG_ADMIN_VIEW_USER_TXS`, env var; `config.OrgAdminViewUserTxs`; default **false**). It is an interim control that exists until the dedicated compliance role lands (see G12). It does **not** change the default privacy posture — when unset, behaviour is byte-for-byte identical to strict privacy.
+
+**What it grants when `true`, for viewers who are org admins (`is_org_admin` or `admin` claim):**
+
+- **Row survival.** Transactions / token transfers / internal transactions where *both* sides are non-identifiable (user↔user activity, deploys from a private EOA) are **kept** instead of dropped. Without an admin + the flag, they are dropped as before.
+- **Value preserved.** The `value` / transfer amount on those rows (and on one-side-hidden rows the admin already sees) is **not** zeroed. This resolves a real asymmetry: the amount of a Transfer is already readable by the admin via the event log (`RedactLogs`, admin bypass RD-751), while the matching transaction record showed `value = ""`. Under the flag both agree.
+
+**What it does NOT grant:**
+
+- **No real addresses, ever.** Counterparty addresses still render as `[PRIVATE]`. This is a volume/timing/amount audit view, not identity disclosure. Real-address visibility for AML/sanctions is the job of the planned compliance role (G12 option (c)), not this flag.
+- **`inputData` / internal `input`/`output` stay stripped** (calldata embeds addresses) and `nonce` stays nil (it would link a private account's transactions). The view reveals volume and timing, never identity or cross-tx correlation.
+
+**Scope of effect.** The flag acts at the redaction layer (`RedactTransactions` / `RedactTransfers` / `RedactInternalTransactions`). It therefore takes effect on endpoints that fetch by tx hash or by a contract/address the admin can already see (e.g. `/tokens/:address/transfers`, `/txs/:hash`, address-scoped lists), and on the value-asymmetry fix everywhere those rows surface. It deliberately does **not** alter the SQL-level `buildVisibilityFilter` allowlist used by the global recent-transactions list, so pure user↔user EOA activity that touches no org contract does not appear in the global feed under this flag — surfacing that safely requires org-scoped SQL filtering, which is scoped to the compliance-role work.
+
+**Auditability (ISO 27001 A.8.15).** Every request that *actually* reveals ≥1 row under this flag writes one `rbac_audit_log` entry: actor = admin DID, `action = "access"`, `resource_type = "explorer_user_txs"`, the endpoint label and target, the count of rows revealed, and the client IP. Addresses are never written to the audit log (the view itself never exposes them). Audit-write failures are logged but do not fail the read. The flag is flipped via env + redeploy, i.e. the change-management-audited path (same posture as `RUNTIME_TRACING_ETH_CALL_ENABLED`).
+
 ---
 
 ## 4. Known Gaps
@@ -356,8 +374,9 @@ The following gaps are numbered. G1, G2, G3, G5, G6, G7, G8, G9, G11, G14, G16, 
 - **G11 (resolved, then redesigned): Visibility admin check — 3-tier model**
   Admin visibility on org contracts is now granted through two paths only: `is_org_admin = true` (tier 2, sees ALL org contracts) or any `contract_grant` on the specific contract (any claim including admin). The `'admin' = ANY(group_access.claims)` path was **removed** as part of the 3-tier admin model: contract admins (tier 3, admin claim without `is_org_admin`) now see only contracts explicitly granted to their group, not all org contracts. This is intentional — tier 3 is scoped to specific contracts. Any grant holder (regardless of claims) still sees their granted contracts as Full. **History:** Originally fixed in PR #84, regressed in PR #87, re-fixed, then redesigned with the 3-tier admin model.
 
-- **G12: Org admin cannot see user EOA activity (contract deployments, EOA transfers)**
-  Org admins have `VisibilityFull` on org contracts but user EOAs remain `VisibilityHidden`. This means: EOA-to-EOA transfers are dropped, contract deployments from user EOAs are dropped, and the deployer's address shows as `[PRIVATE]` in surviving contract call txs. For an org admin auditing their network, not seeing who deployed which contract or who transferred ETH to whom is a significant gap. **Options:** (a) org admins automatically get visibility on all EOAs of users who are members of any group in that org, (b) require explicit disclosure grants from users, (c) add a new "audit" role that unlocks EOA visibility. **Decision pending.**
+- **G12: Org admin cannot see user EOA activity (contract deployments, EOA transfers)** — **partially addressed (interim), full fix pending**
+  Org admins have `VisibilityFull` on org contracts but user EOAs remain `VisibilityHidden`. This means: EOA-to-EOA transfers are dropped, contract deployments from user EOAs are dropped, and the deployer's address shows as `[PRIVATE]` in surviving contract call txs. For an org admin auditing their network, not seeing who transferred how much is a significant gap. **Options:** (a) org admins automatically get visibility on all EOAs of users who are members of any group in that org, (b) require explicit disclosure grants from users, (c) add a new "audit" / compliance role that unlocks EOA visibility.
+  **Interim step shipped:** the `ORG_ADMIN_VIEW_USER_TXS` flag (§3.8, default off) gives org admins a *volume/timing/amount* audit view — rows survive and `value` is preserved — while keeping addresses `[PRIVATE]` and auditing every reveal. It deliberately stops short of real-address visibility. **Still pending:** the full decision between (a)/(b)/(c) for *identity* disclosure. The leading direction is (c) — a dedicated compliance role with real-address visibility, its own audit trail, and separation of duties from the operations admin (so identity disclosure is never a property of the default admin role). Until that lands, identity stays hidden even with the interim flag on.
 
 - **G13: Minting from zero address to private recipient visible to non-participants**
   Token mints (`from=0x0000...0000, to=private_address`) survive the SQL filter because the zero address is public (not in contracts or eth_address_links). Non-participants can see "someone private received a mint from [token contract]" — revealing that a private user received tokens, when they did, and from which contract. This is a specific case of G10 but worth calling out separately because mint events are particularly sensitive (they reveal token distribution to specific parties). **Options:** (a) treat zero address as neutral rather than public for visibility purposes, (b) handled by G10 if the stricter drop rule is adopted. **Decision pending.**
