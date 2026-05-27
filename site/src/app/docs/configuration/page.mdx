@@ -395,6 +395,7 @@ make db-new-migration name=add_feature
   { name: "RETENTION_ACCESS_LOGS", default: "2160h", description: "How long access log entries are retained before the periodic cleaner deletes them. Go duration format (e.g., 2160h = 90 days)." },
   { name: "MAX_ACCESS_LOG_ROWS", default: "0", description: "FIFO row cap on access_logs. When set above 0, the retention loop trims the oldest rows so at most this many remain. Complements RETENTION_ACCESS_LOGS for high-volume deployments. The audit hash chain stays verifiable across the cut via the audit_chain_anchor table." },
   { name: "RETENTION_COMPLIANCE_LOGS", default: "61320h", description: "How long compliance log entries are retained. Typically longer than access logs for regulatory audit trails. Default is roughly 7 years." },
+  { name: "ORG_ADMIN_VIEW_USER_TXS", default: "false", description: "When true, org admins see user-to-user transaction rows that are otherwise dropped (both parties private) in the explorer, with the value/amount preserved so it matches the Transfer event they can already read. Counterparty addresses still render as [PRIVATE] — a volume/timing audit view, not real-address disclosure. Every request that reveals such a row is written to rbac_audit_log (actor, endpoint, row count, client IP). Default off = strict privacy (rows dropped, value zeroed)." },
 ]} />
 
 ---
