@@ -25,8 +25,7 @@ func setupTieredAdminTestServer(t *testing.T, adminToken string) (*Server, *gin.
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
-	dbURL, cleanup := db.SetupTestContainer(t)
-	t.Cleanup(cleanup)
+	dbURL := sharedTestDBURL(t)
 
 	database, err := db.New(dbURL)
 	require.NoError(t, err)

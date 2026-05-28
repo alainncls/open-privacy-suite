@@ -49,8 +49,7 @@ import (
 func TestExplorerRedactorWiring_FullStack(t *testing.T) {
 	ctx := context.Background()
 
-	dbURL, dbCleanup := db.SetupTestContainer(t)
-	t.Cleanup(dbCleanup)
+	dbURL := sharedTestDBURL(t)
 
 	database, err := db.New(dbURL)
 	require.NoError(t, err)

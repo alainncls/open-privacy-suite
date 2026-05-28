@@ -121,9 +121,7 @@ func setupTestServerForAuth(t *testing.T) (*Server, *auth.JWTService) {
 
 	if dbURL == "" {
 		// Use testcontainers for local development (no external PostgreSQL needed)
-		var cleanup func()
-		dbURL, cleanup = db.SetupTestContainer(t)
-		t.Cleanup(cleanup)
+		dbURL = sharedTestDBURL(t)
 	} else {
 		// Use external PostgreSQL (for CI or when explicitly set)
 		if err := db.EnsureTestDatabase(dbURL); err != nil {
