@@ -19,6 +19,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -290,4 +291,174 @@ func TestRD944_ListGrants_JWTAdmin_SingleOrg_NoOrgID_OK(t *testing.T) {
 
 	require.Equalf(t, http.StatusOK, w.Code,
 		"single-org admin without org_id on /grants falls back to caller's only org. body=%s", w.Body.String())
+}
+
+// ---------------------------------------------------------------------------
+// JWT-admin coverage for the CREATE endpoint.
+//
+// RD-944 added jwt_admin coverage for ListRequests / ListGrants but left
+// createDisclosureRequest untested under jwt_admin. The FE bug that prompted
+// this PR (frontend omitting org_id, backend defaulting to system default,
+// caller of a non-default org getting 403) was structurally invisible to
+// `TestCreateDisclosureRequest` because that test runs without an
+// auth_method (i.e. dev-mode bypass — requireFullAdminInScope returns true
+// without checking org_ids). These tests close that gap by exercising the
+// same set of caller scopes RD-944 exercises for the list endpoints.
+// ---------------------------------------------------------------------------
+
+// seedTargetUserInOrg inserts a user plus a minimal group + membership
+// rooted at orgID, so the requireUserInCallerScope gate inside
+// createDisclosureRequest sees the user as belonging to orgID.
+func seedTargetUserInOrg(t *testing.T, database *db.DB, orgID string) string {
+	t.Helper()
+	ctx := context.Background()
+	userID := uuid.New().String()
+	groupID := uuid.New().String()
+	membershipID := uuid.New().String()
+
+	_, err := database.Conn().ExecContext(ctx,
+		`INSERT INTO users (id, external_id, kyc, banned, metadata)
+		 VALUES ($1, $2, true, false, '{}')`,
+		userID, "did:test:create-jwt-"+uuid.New().String()[:8])
+	require.NoError(t, err)
+
+	slug := "create-jwt-" + uuid.New().String()[:8]
+	_, err = database.Conn().ExecContext(ctx,
+		`INSERT INTO groups (id, org_id, slug, name, path, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, NOW(), NOW())`,
+		groupID, orgID, slug, "Create JWT Test Group", slug)
+	require.NoError(t, err)
+
+	_, err = database.Conn().ExecContext(ctx,
+		`INSERT INTO user_memberships (id, user_id, group_id, source)
+		 VALUES ($1, $2, $3, 'admin')`,
+		membershipID, userID, groupID)
+	require.NoError(t, err)
+
+	return userID
+}
+
+func postCreateRequest(t *testing.T, router *gin.Engine, body map[string]any) *httptest.ResponseRecorder {
+	t.Helper()
+	raw, err := json.Marshal(body)
+	require.NoError(t, err)
+	req := httptest.NewRequest("POST", "/api/disclosure/requests", bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	return w
+}
+
+// AC #10 — single-org full admin, body carries the matching org_id, target
+// user belongs to that org → 201. This is the post-FE-fix happy path.
+func TestRD944_CreateRequest_JWTAdmin_MatchingOrgID_201(t *testing.T) {
+	srv, _, database := setupTestServerForDisclosure(t)
+	defer database.Close()
+
+	orgA := createTestOrgForHandler(t, database, "rd944-create-okA")
+	targetUserID := seedTargetUserInOrg(t, database, orgA)
+	router := setupDisclosureRouterWithAuth(srv, fakeAdminAuth("jwt_admin", []string{orgA}, nil))
+
+	w := postCreateRequest(t, router, map[string]any{
+		"target_user_id": targetUserID,
+		"org_id":         orgA,
+		"reason":         "rd-944 create happy path",
+	})
+
+	require.Equalf(t, http.StatusCreated, w.Code,
+		"full admin of orgA creating in orgA must succeed. body=%s", w.Body.String())
+	var resp disclosure.Request
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, orgA, resp.OrgID, "request must be scoped to the body's org_id, not the system default")
+}
+
+// AC #11 — single-org full admin omits org_id. Backend currently defaults
+// to the system default org ("00000000-...001"), which the caller is not
+// admin of, so requireFullAdminInScope 403s. This is the exact regression
+// the FE fix in this PR works around; the test pins the current backend
+// behaviour so a future relaxation (e.g. "pick caller's only org" like
+// listRequests does) is an intentional change with a test update.
+func TestRD944_CreateRequest_JWTAdmin_NoOrgID_DefaultOrgMismatch_403(t *testing.T) {
+	srv, _, database := setupTestServerForDisclosure(t)
+	defer database.Close()
+
+	orgA := createTestOrgForHandler(t, database, "rd944-create-nooidA")
+	targetUserID := seedTargetUserInOrg(t, database, orgA)
+	router := setupDisclosureRouterWithAuth(srv, fakeAdminAuth("jwt_admin", []string{orgA}, nil))
+
+	w := postCreateRequest(t, router, map[string]any{
+		"target_user_id": targetUserID,
+		"reason":         "rd-944 create no org_id",
+		// org_id intentionally omitted
+	})
+
+	require.Equalf(t, http.StatusForbidden, w.Code,
+		"jwt admin of non-default org without org_id falls to system-default org → must 403. body=%s",
+		w.Body.String())
+}
+
+// AC #12 — full admin of orgA, body carries orgB → 403. Cross-org probe
+// gate, mirrors TestRD944_ListRequests_CrossOrgProbe_StillBlocked.
+func TestRD944_CreateRequest_JWTAdmin_ForeignOrgID_403(t *testing.T) {
+	srv, _, database := setupTestServerForDisclosure(t)
+	defer database.Close()
+
+	orgA := createTestOrgForHandler(t, database, "rd944-create-foreignA")
+	orgB := createTestOrgForHandler(t, database, "rd944-create-foreignB")
+	targetUserID := seedTargetUserInOrg(t, database, orgB)
+	router := setupDisclosureRouterWithAuth(srv, fakeAdminAuth("jwt_admin", []string{orgA}, nil))
+
+	w := postCreateRequest(t, router, map[string]any{
+		"target_user_id": targetUserID,
+		"org_id":         orgB,
+		"reason":         "rd-944 create cross-org probe",
+	})
+
+	require.Equalf(t, http.StatusForbidden, w.Code,
+		"admin of orgA cannot create disclosures scoped to orgB. body=%s", w.Body.String())
+}
+
+// AC #13 — read-only admin of orgA, body carries matching orgA → 403.
+// Mutating endpoint must reject RO admins regardless of org match.
+func TestRD944_CreateRequest_JWTReadOnlyAdmin_MatchingOrgID_403(t *testing.T) {
+	srv, _, database := setupTestServerForDisclosure(t)
+	defer database.Close()
+
+	orgA := createTestOrgForHandler(t, database, "rd944-create-roA")
+	targetUserID := seedTargetUserInOrg(t, database, orgA)
+	router := setupDisclosureRouterWithAuth(srv, fakeAdminAuth("jwt_admin", nil, []string{orgA}))
+
+	w := postCreateRequest(t, router, map[string]any{
+		"target_user_id": targetUserID,
+		"org_id":         orgA,
+		"reason":         "rd-944 create read-only attempt",
+	})
+
+	require.Equalf(t, http.StatusForbidden, w.Code,
+		"read-only admin cannot create disclosures even within their own org. body=%s",
+		w.Body.String())
+}
+
+// AC #14 — full admin of orgA, body carries orgA (matching), but target
+// user lives only in orgB → 403 from requireUserInCallerScope. The body's
+// org_id passes the first gate; the target-user-scope check catches the
+// cross-org probe attempt that orgID alone wouldn't.
+func TestRD944_CreateRequest_JWTAdmin_TargetUserCrossOrg_403(t *testing.T) {
+	srv, _, database := setupTestServerForDisclosure(t)
+	defer database.Close()
+
+	orgA := createTestOrgForHandler(t, database, "rd944-create-userxA")
+	orgB := createTestOrgForHandler(t, database, "rd944-create-userxB")
+	// Target user lives in orgB only.
+	targetUserID := seedTargetUserInOrg(t, database, orgB)
+	router := setupDisclosureRouterWithAuth(srv, fakeAdminAuth("jwt_admin", []string{orgA}, nil))
+
+	w := postCreateRequest(t, router, map[string]any{
+		"target_user_id": targetUserID,
+		"org_id":         orgA,
+		"reason":         "rd-944 target-user cross-org probe",
+	})
+
+	require.Equalf(t, http.StatusForbidden, w.Code,
+		"admin of orgA cannot disclose a user who lives in orgB. body=%s", w.Body.String())
 }
