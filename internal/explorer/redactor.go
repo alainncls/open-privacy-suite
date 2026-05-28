@@ -733,6 +733,42 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 			}
 		}
 
+		// Disclosure-grant lens: when this tx is visible to the viewer via a
+		// non-full disclosure grant (pseudonymous) on one party, demote the
+		// other party to the same level so the counterparty's real address
+		// doesn't leak alongside the granted target's pseudonym. The
+		// granted-address page (getGrantTransactions in explorer_api.go)
+		// applies the same anonymisation by rendering counterparties as
+		// External-XXXX — without this demotion, the regular tx list and the
+		// grant page would show the same tx at different masking levels.
+		//
+		// Participant-override wins: if the viewer is a direct participant
+		// in the tx (their own linked address is from / to / log-participant /
+		// in calldata), they already know the counterparty, so the grant's
+		// anonymisation lens is moot. visibleTo (RD-... explicit share via
+		// hash) wins for the same reason.
+		//
+		// Redacted-via-grant is a separate concern (the row would otherwise
+		// be dropped by the bothHidden path below — the audit-lens use case
+		// wants it kept with both sides [PRIVATE]). Not handled here; tracked
+		// as a follow-up.
+		if !viewerIsParticipant && !txVisibleToViewer {
+			fromVis := visibilityMapDetailed[strings.ToLower(tx.From)]
+			var toVis AddressVisibility
+			if tx.HasRecipient() {
+				toVis = visibilityMapDetailed[strings.ToLower(*tx.To)]
+			}
+			isGrantPseudonymous := func(v AddressVisibility) bool {
+				return v.Level == VisibilityPseudonymous && v.Reason == ReasonDisclosureGrant
+			}
+			if isGrantPseudonymous(fromVis) && toLevel == VisibilityFull && tx.HasRecipient() {
+				toLevel = VisibilityPseudonymous
+			}
+			if isGrantPseudonymous(toVis) && fromLevel == VisibilityFull {
+				fromLevel = VisibilityPseudonymous
+			}
+		}
+
 		// If BOTH participants are non-identifiable to the viewer (hidden or
 		// redacted after participant override), the row is dropped under strict
 		// privacy — showing "[PRIVATE] → [PRIVATE]" leaks transaction existence
@@ -967,6 +1003,26 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 			}
 		}
 
+		// Disclosure-grant lens (same rationale as the parallel block in
+		// RedactTransactions): when the viewer's visibility into one party
+		// of this transfer comes from a non-full disclosure grant
+		// (pseudonymous), demote the counterparty to the same level so its
+		// real address doesn't leak alongside the granted target's
+		// pseudonym. Participant / visibleTo override wins.
+		if !viewerIsParticipant && !txVisibleToViewer {
+			fromVis := visMapDetailed[strings.ToLower(t.From)]
+			toVis := visMapDetailed[strings.ToLower(t.To)]
+			isGrantPseudonymous := func(v AddressVisibility) bool {
+				return v.Level == VisibilityPseudonymous && v.Reason == ReasonDisclosureGrant
+			}
+			if isGrantPseudonymous(fromVis) && toLevel == VisibilityFull {
+				toLevel = VisibilityPseudonymous
+			}
+			if isGrantPseudonymous(toVis) && fromLevel == VisibilityFull {
+				fromLevel = VisibilityPseudonymous
+			}
+		}
+
 		// Drop if both sides are non-identifiable. Under strict privacy this
 		// keeps the surrounding transferCount aggregate out of sync with the
 		// rows, but that is the conservative default. The elevated org-admin
@@ -1132,6 +1188,27 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 			}
 			if isNonIdentifiable(toLevel) {
 				toLevel = VisibilityFull
+			}
+		}
+
+		// Disclosure-grant lens (same rationale as RedactTransactions): demote
+		// the counterparty to pseudonymous when the viewer's visibility into
+		// the other party comes from a non-full disclosure grant. Participant
+		// override wins.
+		if !viewerIsParticipant {
+			fromVis := visMapDetailed[strings.ToLower(t.From)]
+			var toVis AddressVisibility
+			if t.To != nil && *t.To != "" {
+				toVis = visMapDetailed[strings.ToLower(*t.To)]
+			}
+			isGrantPseudonymous := func(v AddressVisibility) bool {
+				return v.Level == VisibilityPseudonymous && v.Reason == ReasonDisclosureGrant
+			}
+			if isGrantPseudonymous(fromVis) && toLevel == VisibilityFull && t.To != nil && *t.To != "" {
+				toLevel = VisibilityPseudonymous
+			}
+			if isGrantPseudonymous(toVis) && fromLevel == VisibilityFull {
+				fromLevel = VisibilityPseudonymous
 			}
 		}
 

@@ -125,18 +125,25 @@ the raw address.
 
 | Surface | `full` grant | `pseudonymous` grant | `redacted` grant | No grant |
 |---|---|---|---|---|
-| `GET /tx/:hash` — `from` / `to` | Real address | `Address-XXXX` | `[PRIVATE]` | `[PRIVATE]` or row dropped |
-| `GET /block/:n` — embedded txs | Real address | `Address-XXXX` | `[PRIVATE]` | Row dropped (participant check) |
-| `GET /address/:addr` — tx list | Real address | `Address-XXXX` (rows for the granted address only) | `[PRIVATE]` (timing-only audit) | 404 / 403 |
-| Token transfer rows (`/transfers`) | Real address | `Address-XXXX` | `[PRIVATE]` | `[PRIVATE]` or row dropped |
+| `GET /tx/:hash` — `from` / `to` (granted party) | Real address | `Address-XXXX` | `[PRIVATE]` | `[PRIVATE]` or row dropped |
+| `GET /tx/:hash` — counterparty in a tx involving the granted party — see note | Real address | `Address-XXXX` (counterparty demoted to lens) | `[PRIVATE]` | Per counterparty's own visibility |
+| `GET /block/:n` — embedded txs | Real address | `Address-XXXX` (all parties under lens) | `[PRIVATE]` | Row dropped (participant check) |
+| `GET /address/:addr` — tx list (rows for granted target) | Real address | `Address-XXXX` (granted party + all counterparties under lens) | `[PRIVATE]` (timing-only audit) | 404 / 403 |
+| Token transfer rows (`/transfers`) | Real address | `Address-XXXX` (granted party + counterparty) | `[PRIVATE]` | `[PRIVATE]` or row dropped |
 | Event logs — emitter address | Real address | `Address-XXXX` | `[PRIVATE]`; topics + `data` zeroed | Log denied or `[PRIVATE]` |
 | Event logs — indexed address topics | Real address | Topic slot zeroed (`0x000…000`) — see note | Topic slot zeroed | Topic slot zeroed |
 | Event logs — non-indexed `address` ABI params in `data` | Real address | Zeroed (pseudonym is non-hex, can't fit a 32-byte slot) | Zeroed | Zeroed |
 | Holder list (`/address/:contract/holders`) | Real holder address | `Address-XXXX` row | `[PRIVATE]` row | Row dropped |
 | Auditor dashboard (`PrivacyDashboard → Disclosed Addresses`) | Real address | `Address-XXXX` | `[PRIVATE]` | Empty list |
-| Granted-address page (`/grant/:grantId/:addressId`) | Real address | `Address-XXXX` header | `[PRIVATE]` header | 404 |
+| Granted-address page (`/grant/:grantId/:addressId`) — all parties | Real address (granted target shown, counterparties as real) | `Address-XXXX` granted target + `External-XXXX` counterparty (deterministic per `(addr, grant_id)`) + `Mine` for viewer-linked addresses | `[PRIVATE]` for every party | 404 |
 | `value` (ETH / token amount) on a tx involving the granted address | Visible | Visible | Visible (timing-only audit explicitly preserves value) | Hidden |
 | `inputData` (calldata) on a tx involving the granted address | Visible | Visible | Visible | Hidden |
+
+> **Note on the counterparty-pseudonymisation rule (lens).** When a tx is visible to the viewer **only** because of a pseudonymous-level disclosure grant on one of its parties, every other party in that tx is also rendered with a pseudonym — not their real address. This is the "limited audit lens": the auditor sees the granted party's activity, including who they transacted with as a pseudonym, but cannot tie those counterparties back to real addresses. Without this rule the same tx would show the granted party as `Address-XXXX` and a public-contract counterparty (e.g. USDC) as the real `0x…` hex, leaking through the lens.
+>
+> The lens is bypassed when the viewer is a **direct participant** in the tx (the from / to is their own linked address, or they're a participant via log / calldata signals): they already know the counterparty via their own wallet, so the lens adds no privacy. `visibleTo` shares (explicit hash-share by the sender) are similarly exempt.
+>
+> The granted-address page (`/grant/:grantId/:addressId`) uses a richer label set — `Address-XXXX` for the granted target, `External-XXXX` for non-granted counterparties (deterministic per `(addr, grant_id)` so the auditor can spot recurring counterparties without resolving them), and `Mine` for the viewer's own linked addresses. The regular tx-list surfaces use `Address-XXXX` uniformly because the per-grant deterministic salt isn't available in that context.
 
 > **Note on event topics with pseudonymous grants.** ABI-indexed address parameters live in 32-byte topic slots and must be valid hex. The `Address-XXXX` alias is a human-readable 12-character string, not hex, so it cannot be zero-padded into a topic slot. To avoid leaking the underlying address via `topic = 0x000…0a32c…94cd` reconstruction, the redactor zeros the slot for pseudonymous grants — the auditor sees that the event mentioned a granted-target address but not its alias inside the topics array. The emitter address (rendered separately) is still substituted to `Address-XXXX`.
 
