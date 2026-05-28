@@ -183,6 +183,7 @@ services:
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required in privacy mode}@redis:6379
       - ENABLE_TRAVEL_RULE=true
       - EXTRA_RPC_NAMESPACES_FILE=${EXTRA_RPC_NAMESPACES_FILE:-}  # Path to JSON file with chain-specific RPC methods (opt-in; empty = skip)
+      - OAUTH_FIRST_PARTY_CLIENTS=${OAUTH_FIRST_PARTY_CLIENTS:-}  # RD-993 + RD-1006: <client_id>:<bcrypt_hash>,... — see .env.production.example
       # Org-admin volume/timing audit view of user↔user txs (value preserved,
       # addresses stay [PRIVATE], reveals audit-logged). Default off = strict privacy.
       - ORG_ADMIN_VIEW_USER_TXS=${ORG_ADMIN_VIEW_USER_TXS:-false}
@@ -287,6 +288,7 @@ services:
       - PRIVACY_PROXY_URL=http://proxy-backend:8080
       - PRIVACY_PROXY_PUBLIC_URL=${PRIVACY_PROXY_PUBLIC_URL:-http://localhost:${HOST_PORT_PROXY:-8080}}
       - SSO_CLIENT_ID=${SSO_CLIENT_ID:-explorer}
+      - SSO_CLIENT_SECRET=${SSO_CLIENT_SECRET:-}
       - SSO_REDIRECT_URI=${SSO_REDIRECT_URI:-http://localhost:${HOST_PORT_EXPLORER:-3001}/api/auth/callback}
       - LOG_LEVEL=${LOG_LEVEL:-info}
     depends_on:

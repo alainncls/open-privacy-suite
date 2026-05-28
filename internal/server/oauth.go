@@ -448,10 +448,11 @@ type OAuthAuthorizeRequest struct {
 
 // OAuthTokenRequest represents the request body for /oauth/token
 type OAuthTokenRequest struct {
-	GrantType   string `json:"grant_type" form:"grant_type" binding:"required"`
-	Code        string `json:"code" form:"code" binding:"required"`
-	RedirectURI string `json:"redirect_uri" form:"redirect_uri" binding:"required"`
-	ClientID    string `json:"client_id" form:"client_id" binding:"required"`
+	GrantType    string `json:"grant_type" form:"grant_type" binding:"required"`
+	Code         string `json:"code" form:"code" binding:"required"`
+	RedirectURI  string `json:"redirect_uri" form:"redirect_uri" binding:"required"`
+	ClientID     string `json:"client_id" form:"client_id" binding:"required"`
+	ClientSecret string `json:"client_secret" form:"client_secret"` // RD-1006 client_secret_post; client_secret_basic also accepted via HTTP Basic
 }
 
 // OAuthTokenResponse represents the response from /oauth/token
@@ -811,6 +812,30 @@ func (s *Server) handleOAuthToken(c *gin.Context) {
 			ErrorDescription: "client_id does not match",
 		})
 		return
+	}
+
+	// RD-1006: first-party clients must authenticate at the token endpoint.
+	// Secret accepted via client_secret_basic (HTTP Basic, RFC 6749 §2.3.1
+	// preferred) or client_secret_post (body parameter, RFC 6749 §2.3.1
+	// alternative). Non-first-party clients are not currently supported on
+	// this endpoint — they fall through silently (caught earlier by the
+	// session lookup), but the gate here makes the intent explicit.
+	if s.config.IsFirstPartyOAuthClient(req.ClientID) {
+		secret := req.ClientSecret
+		if basicUser, basicPass, ok := c.Request.BasicAuth(); ok && basicUser == req.ClientID {
+			secret = basicPass
+		}
+		if !s.config.VerifyFirstPartyClientSecret(req.ClientID, secret) {
+			slog.Warn("oauth token: first-party client authentication failed",
+				"client_id", req.ClientID,
+				"remote_ip", c.ClientIP())
+			c.Header("WWW-Authenticate", `Basic realm="oauth_token"`)
+			c.JSON(http.StatusUnauthorized, OAuthErrorResponse{
+				Error:            "invalid_client",
+				ErrorDescription: "client authentication failed",
+			})
+			return
+		}
 	}
 
 	// Validate redirect_uri matches
