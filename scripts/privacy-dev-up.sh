@@ -87,7 +87,7 @@ ADMIN_API_TOKEN=$(openssl rand -hex 32)
 # against the hash listed for $SSO_CLIENT_ID in OAUTH_FIRST_PARTY_CLIENTS.
 SSO_CLIENT_ID=${sso_client_id}
 SSO_CLIENT_SECRET=${sso_client_secret}
-OAUTH_FIRST_PARTY_CLIENTS=${sso_client_id}:${sso_client_hash}
+OAUTH_FIRST_PARTY_CLIENTS='${sso_client_id}:${sso_client_hash}'
 EOF
   umask 022
 else

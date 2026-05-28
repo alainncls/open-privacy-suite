@@ -103,6 +103,57 @@ The dev script (`scripts/privacy-dev-up.sh`) auto-generates these into `.env.pri
 
 ---
 
+## Silent SSO and first-party client authentication (RD-993 + RD-1006)
+
+The block-explorer (and any future first-party UI) skips the interactive Privado prompt when a user already has a privacy-proxy session. This is implemented as a server-to-server `client_secret` exchange at `/oauth/token`, gated by a per-client bcrypt-hashed allowlist on the proxy side.
+
+Two envs are involved, on two different containers:
+
+| Container | Env | Holds |
+|---|---|---|
+| `proxy-backend` | `OAUTH_FIRST_PARTY_CLIENTS` | Comma-separated `<client_id>:<bcrypt_hash>` pairs. Empty = silent SSO disabled, every flow falls back to interactive Privado. |
+| `block-explorer-api` | `SSO_CLIENT_ID` + `SSO_CLIENT_SECRET` | The same opaque `client_id` and the plaintext secret whose bcrypt hash is in `OAUTH_FIRST_PARTY_CLIENTS`. |
+
+### Generating the values (per environment)
+
+```bash
+id="explorer-${ENV}-$(openssl rand -hex 8)"   # opaque, not the literal 'explorer'
+secret=$(openssl rand -hex 32)
+hash=$(htpasswd -bnBC 12 '' "$secret" | tr -d ':\n')
+# Privacy-proxy:   OAUTH_FIRST_PARTY_CLIENTS=$id:$hash
+# Block-explorer:  SSO_CLIENT_ID=$id   SSO_CLIENT_SECRET=$secret
+```
+
+Cost 12 (~250ms hash) is the recommended floor. The proxy hashes once at startup, then compares per-request — no measurable hot-path cost. Source `secret` and `hash` from your secret store (AWS Secrets Manager / Vault); the proxy never sees the plaintext, the explorer never sees the hash.
+
+The proxy logs a `WARN` at startup if it sees the literal `explorer` client_id in production mode — use a per-env opaque ID so a leaked dev hash can't be used against prod.
+
+### Upgrading from older releases — **breaking format change**
+
+Pre-RD-1006 releases parsed `OAUTH_FIRST_PARTY_CLIENTS` as a comma-separated list of client IDs (`explorer` or `explorer,internal-tools`). Post-RD-1006 requires `<client_id>:<bcrypt_hash>` pairs. The proxy **panics at startup with a remediation message** if it sees the old format — fail-closed by design.
+
+Recommended rollout:
+
+1. Generate per-env `id` / `secret` / `hash` (recipe above) and store in Secrets Manager.
+2. Update the **explorer** deployment first to read `SSO_CLIENT_SECRET` (and `SSO_CLIENT_ID` if you're changing it from `explorer`). No behaviour change yet — the explorer just starts sending HTTP Basic at `/oauth/token`, which the old proxy ignores.
+3. Update the **proxy** deployment with the new `OAUTH_FIRST_PARTY_CLIENTS=$id:$hash` format. Silent SSO resumes.
+
+If the proxy upgrades first while the explorer is still old (no `SSO_CLIENT_SECRET`), every `/oauth/token` call returns `401 invalid_client` and silent SSO stops working — interactive Privado still functions, so this is a UX regression, not an outage.
+
+### Rotation
+
+Generate a new `secret`/`hash` pair, update both secrets in Secrets Manager, restart both containers. No DB migration. The session-token chain (`pp_access` cookie, refresh tokens) is unaffected — only future code-for-token exchanges need the new secret.
+
+### Gotchas
+
+- **Bcrypt hash starts with `$2a$12$` or `$2y$12$`.** If you template it through any shell that does variable expansion (`source .env`, `envsubst`, etc.), single-quote the value or the shell will eat `$2` as a positional parameter and the proxy will fail to start. Safe in raw K8s `Secret` / `ConfigMap` YAML (no expansion).
+- **Two containers, one truth.** The `client_id` on both sides and the `secret`/`hash` pair must match. Drift here is silent until the next `/oauth/token` call returns 401.
+- **Empty allowlist is a valid configuration**, not a misconfiguration — it disables silent SSO for every client (interactive Privado still works). Use this if you want to roll back the feature without code changes.
+
+For the full field-by-field reference see [Configuration → Compliance and Retention](/docs/configuration#compliance-and-retention) (the `OAUTH_FIRST_PARTY_CLIENTS` row) and [Block Explorer → Authentication](/docs/explorer#authentication--login-flow) (the `SSO_CLIENT_*` rows).
+
+---
+
 ## Super-admin maintenance endpoints
 
 A few admin endpoints are gated to the super-admin (`X-Admin-Token`) only — they change policy for every tenant in the cluster and JWT org admins, even tier-2 with full admin rights in their own org, cannot touch them. Operators are the audience.
