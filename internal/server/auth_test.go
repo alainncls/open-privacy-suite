@@ -25,10 +25,10 @@ import (
 
 // mockPrivadoVerifier is a mock for testing (implements PrivadoVerifier interface)
 type mockPrivadoVerifier struct {
-	createRequestFunc              func(verifierID, callbackURL, reason string) (*protocol.AuthorizationRequestMessage, error)
-	createHumanityRequestFunc      func(verifierID, callbackURL, reason, issuerDID string, hc auth.HumanityRequestConfig) (*protocol.AuthorizationRequestMessage, error)
-	verifyFunc                     func(ctx context.Context, jwzToken string, authRequest *protocol.AuthorizationRequestMessage, verifierID string) (string, error)
-	verifyWithProofDataFunc        func(ctx context.Context, jwzToken string, authRequest *protocol.AuthorizationRequestMessage, verifierID string) (*auth.VerificationResult, error)
+	createRequestFunc         func(verifierID, callbackURL, reason string) (*protocol.AuthorizationRequestMessage, error)
+	createHumanityRequestFunc func(verifierID, callbackURL, reason, issuerDID string, hc auth.HumanityRequestConfig) (*protocol.AuthorizationRequestMessage, error)
+	verifyFunc                func(ctx context.Context, jwzToken string, authRequest *protocol.AuthorizationRequestMessage, verifierID string) (string, error)
+	verifyWithProofDataFunc   func(ctx context.Context, jwzToken string, authRequest *protocol.AuthorizationRequestMessage, verifierID string) (*auth.VerificationResult, error)
 }
 
 func (m *mockPrivadoVerifier) CreateAuthorizationRequest(verifierID, callbackURL, reason string) (*protocol.AuthorizationRequestMessage, error) {
@@ -663,4 +663,111 @@ func TestHandleRevoke_WithAccessToken(t *testing.T) {
 	revoked, err = srv.db.IsAccessTokenRevoked(context.Background(), accessTokenID)
 	require.NoError(t, err)
 	assert.True(t, revoked, "access token should be revoked after /revoke call")
+}
+
+// RD-1008: handler-level coverage proving the pp_access cookie actually
+// ships on the three real production code paths (session-status poll on
+// login completion, refresh rotation, revoke/logout). Catches a future
+// regression that removes the SetAccessCookie / ClearAccessCookie call.
+
+// findCookie returns the cookie with the given name from a recorded response,
+// or nil if absent.
+func findCookie(t *testing.T, w *httptest.ResponseRecorder, name string) *http.Cookie {
+	t.Helper()
+	for _, c := range w.Result().Cookies() {
+		if c.Name == name {
+			return c
+		}
+	}
+	return nil
+}
+
+func TestHandleAuthSessionStatus_SetsAccessCookie(t *testing.T) {
+	srv, jwtService := setupTestServerForAuth(t)
+	defer srv.db.Close()
+
+	// Seed a completed session — what the auth callback would produce.
+	sessionID := srv.sessionStore.CreateSession(nil)
+	require.NotEmpty(t, sessionID)
+	subject := "did:privado:cookie-issue-1"
+	accessToken, err := jwtService.IssueAccessToken(subject, true)
+	require.NoError(t, err)
+	refreshToken, err := jwtService.IssueRefreshToken(subject)
+	require.NoError(t, err)
+	require.NoError(t, srv.sessionStore.CompleteSession(sessionID, accessToken, refreshToken))
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/api/v1/auth/session/:id/status", srv.handleAuthSessionStatus)
+
+	req := httptest.NewRequest("GET", "/api/v1/auth/session/"+sessionID+"/status", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	ck := findCookie(t, w, auth.AccessCookieName)
+	require.NotNil(t, ck, "session-status must set the pp_access cookie when returning a completed session — the cross-subdomain navigation to /oauth/authorize relies on it")
+	assert.Equal(t, accessToken, ck.Value)
+	assert.True(t, ck.HttpOnly)
+	assert.Equal(t, http.SameSiteLaxMode, ck.SameSite)
+	assert.Equal(t, "/", ck.Path)
+	assert.Equal(t, int(AccessTokenTTL.Seconds()), ck.MaxAge)
+}
+
+func TestHandleRefresh_SetsAccessCookie(t *testing.T) {
+	srv, jwtService := setupTestServerForAuth(t)
+	defer srv.db.Close()
+
+	subject := "did:privado:cookie-issue-2"
+	refreshToken, err := jwtService.IssueRefreshToken(subject)
+	require.NoError(t, err)
+	tokenHash := auth.HashToken(refreshToken)
+	require.NoError(t, srv.db.SaveRefreshToken(context.Background(), tokenHash, subject, time.Now().Add(7*24*time.Hour)))
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/refresh", srv.handleRefresh)
+
+	jsonBody, _ := json.Marshal(map[string]string{"refresh_token": refreshToken})
+	req := httptest.NewRequest("POST", "/refresh", bytes.NewReader(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	ck := findCookie(t, w, auth.AccessCookieName)
+	require.NotNil(t, ck, "refresh must re-issue the pp_access cookie so the browser stays in sync after rotation")
+	// Cookie value should match the new access token in the JSON body.
+	var resp AuthResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, resp.AccessToken, ck.Value)
+	assert.True(t, ck.HttpOnly)
+	assert.Equal(t, http.SameSiteLaxMode, ck.SameSite)
+	assert.Equal(t, int(AccessTokenTTL.Seconds()), ck.MaxAge)
+}
+
+func TestHandleRevoke_ClearsAccessCookie(t *testing.T) {
+	srv, jwtService := setupTestServerForAuth(t)
+	defer srv.db.Close()
+
+	subject := "did:privado:cookie-issue-3"
+	refreshToken, err := jwtService.IssueRefreshToken(subject)
+	require.NoError(t, err)
+	require.NoError(t, srv.db.SaveRefreshToken(context.Background(), auth.HashToken(refreshToken), subject, time.Now().Add(7*24*time.Hour)))
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/revoke", srv.handleRevoke)
+
+	jsonBody, _ := json.Marshal(map[string]string{"refresh_token": refreshToken})
+	req := httptest.NewRequest("POST", "/revoke", bytes.NewReader(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	ck := findCookie(t, w, auth.AccessCookieName)
+	require.NotNil(t, ck, "revoke/logout must clear the pp_access cookie")
+	assert.Empty(t, ck.Value)
+	assert.Less(t, ck.MaxAge, 0, "MaxAge<0 deletes the cookie on the client")
 }

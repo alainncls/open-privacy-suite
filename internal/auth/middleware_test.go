@@ -137,3 +137,140 @@ func TestJWTAuthMiddleware_RevokedToken(t *testing.T) {
 
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
+
+// RD-1008: middleware reads JWT from the access cookie when the Authorization
+// header is absent. The Bearer header takes precedence when both are
+// present (preserves API-client behaviour); cookie alone is what unblocks
+// silent SSO browser navigations.
+
+func TestJWTAuthMiddleware_CookieFallback(t *testing.T) {
+	service, err := NewJWTService("test-secret", "test-refresh-secret", 30*time.Minute, 7*24*time.Hour)
+	require.NoError(t, err)
+	token, err := service.IssueAccessToken("did:privado:cookie-user", true)
+	require.NoError(t, err)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/test", JWTAuthMiddleware(service, nil), func(c *gin.Context) {
+		subject, _ := c.Get("subject")
+		c.JSON(http.StatusOK, gin.H{"subject": subject})
+	})
+
+	req := httptest.NewRequest("POST", "/test", nil)
+	req.AddCookie(&http.Cookie{Name: AccessCookieName, Value: token})
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code, "cookie-only auth must succeed")
+}
+
+func TestJWTAuthMiddleware_BearerWinsOverCookie(t *testing.T) {
+	service, err := NewJWTService("test-secret", "test-refresh-secret", 30*time.Minute, 7*24*time.Hour)
+	require.NoError(t, err)
+	bearerTok, err := service.IssueAccessToken("did:privado:bearer-user", true)
+	require.NoError(t, err)
+	cookieTok, err := service.IssueAccessToken("did:privado:cookie-user", false)
+	require.NoError(t, err)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/test", JWTAuthMiddleware(service, nil), func(c *gin.Context) {
+		subject, _ := c.Get("subject")
+		c.JSON(http.StatusOK, gin.H{"subject": subject})
+	})
+
+	req := httptest.NewRequest("POST", "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+bearerTok)
+	req.AddCookie(&http.Cookie{Name: AccessCookieName, Value: cookieTok})
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), "did:privado:bearer-user",
+		"Bearer header must take precedence when both transports carry a token")
+}
+
+func TestOptionalJWTAuthMiddleware_CookieFallback(t *testing.T) {
+	service, err := NewJWTService("test-secret", "test-refresh-secret", 30*time.Minute, 7*24*time.Hour)
+	require.NoError(t, err)
+	token, err := service.IssueAccessToken("did:privado:initiator", true)
+	require.NoError(t, err)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/oauth/authorize", OptionalJWTAuthMiddleware(service, nil), func(c *gin.Context) {
+		subject, _ := c.Get("subject")
+		c.JSON(http.StatusOK, gin.H{"subject": subject})
+	})
+
+	// Browser-navigation case: no Authorization header, only the cookie.
+	// Pre-RD-1008 this would have left subject empty (anonymous), which is
+	// what made initiatorDID empty server-side and broke silent SSO.
+	req := httptest.NewRequest("GET", "/oauth/authorize", nil)
+	req.AddCookie(&http.Cookie{Name: AccessCookieName, Value: token})
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), "did:privado:initiator",
+		"OptionalJWT must capture subject from the cookie so /oauth/authorize can set initiatorDID")
+}
+
+func TestOptionalJWTAuthMiddleware_AnonymousStillPasses(t *testing.T) {
+	service, err := NewJWTService("test-secret", "test-refresh-secret", 30*time.Minute, 7*24*time.Hour)
+	require.NoError(t, err)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/oauth/authorize", OptionalJWTAuthMiddleware(service, nil), func(c *gin.Context) {
+		// subject must be empty for the anonymous case so the OAuth flow
+		// falls through to interactive Privado.
+		_, ok := c.Get("subject")
+		c.JSON(http.StatusOK, gin.H{"authenticated": ok})
+	})
+
+	req := httptest.NewRequest("GET", "/oauth/authorize", nil) // no header, no cookie
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), `"authenticated":false`)
+}
+
+func TestSetAndClearAccessCookie(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Run("SetAccessCookie writes HttpOnly Lax cookie with correct ttl", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest("GET", "/", nil)
+
+		SetAccessCookie(c, "the-jwt", 30*time.Minute)
+
+		cookies := w.Result().Cookies()
+		require.Len(t, cookies, 1)
+		ck := cookies[0]
+		assert.Equal(t, AccessCookieName, ck.Name)
+		assert.Equal(t, "the-jwt", ck.Value)
+		assert.Equal(t, "/", ck.Path)
+		assert.True(t, ck.HttpOnly, "must be HttpOnly so XSS can't lift the token")
+		assert.Equal(t, http.SameSiteLaxMode, ck.SameSite,
+			"Lax enables cross-subdomain top-level navigation under same eTLD+1")
+		assert.Equal(t, int((30 * time.Minute).Seconds()), ck.MaxAge)
+	})
+
+	t.Run("ClearAccessCookie sets MaxAge<0 to delete on the client", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest("GET", "/", nil)
+
+		ClearAccessCookie(c)
+
+		cookies := w.Result().Cookies()
+		require.Len(t, cookies, 1)
+		ck := cookies[0]
+		assert.Equal(t, AccessCookieName, ck.Name)
+		assert.Equal(t, "", ck.Value)
+		assert.Less(t, ck.MaxAge, 0)
+	})
+}

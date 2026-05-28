@@ -183,7 +183,7 @@ The plumbing can ship independently, but Path B stays off until these values are
 
 | **Issue** | **Severity** | **Rationale** |
 | --- | --- | --- |
-| User JWTs in sessionStorage; admin API token in localStorage | High | User access/refresh tokens live in `sessionStorage` (per-tab, cleared on tab close — `AuthContext.tsx:31`). Admin API token lives in `localStorage` (`adminClient.ts:5-15`). Any XSS payload on the page can read both; `sessionStorage` only limits persistence, not readability. Mitigated by CSP. Proper fix is httpOnly cookies + CSRF protection — needs auth rework. |
+| ~~User JWTs in sessionStorage~~ → HttpOnly cookie (RD-1008); admin API token in localStorage | High | **PP access JWT now mirrored into an HttpOnly `pp_access` cookie (RD-1008, May 2026).** Middleware (`internal/auth/middleware.go:extractAccessToken`) reads the cookie when the `Authorization: Bearer` header is absent, so browser navigations to server-side endpoints (`/oauth/authorize`) capture `initiatorDID` correctly — unblocking silent SSO across same-eTLD+1 subdomains. XSS can no longer lift the access token from storage. The JSON response body still carries the token for backward compatibility with existing API clients; frontend follow-up to drop the sessionStorage mirror is optional cleanup. Admin API token (super-admin `X-Admin-Token`) stays in `localStorage` — different threat model (operator-pasted bootstrap credential), left as a separate decision. |
 | `/me/admin-status` externally accessible | High | Frontend needs it. Read-only, JWT-protected, returns boolean only. |
 | No PKCE on Azure OAuth | Medium | Backend uses client secret (not a public client). |
 | No rate limiting on admin endpoints | Medium | Protected by network isolation + token auth. |
@@ -380,7 +380,7 @@ Over time, this can de-anonymize pseudonymous addresses, especially with off-cha
 | 4b | eth_call unfiltered responses | Blocking for MVP? |
 | 4c | Block-level `gasUsed` / size aggregates leak cross-org activity | Accept as consensus-layer, or obscure? |
 | 5 | KYC auto-set | Auto or manual approval? |
-| 6 | User JWTs in sessionStorage; admin token in localStorage | Accept (XSS = stolen tokens) or move to httpOnly cookies? |
+| 6 | ~~User JWTs in sessionStorage~~ | Resolved (RD-1008): moved to HttpOnly `pp_access` cookie, unblocked silent SSO across same-eTLD+1 subdomains. |
 | 8 | New members without explicit grants can't access any own-org contract (tier 3 admin/deploy claim no longer grants blanket access after RD-849) | Intended? Should default group get a baseline grant? |
 | 9 | SIEM sends DIDs, IPs, ETH addresses externally | Acceptable disclosure? Hash/anonymize? |
 | 10a | View functions return unfiltered data | Acceptable? Document for contract authors? |
