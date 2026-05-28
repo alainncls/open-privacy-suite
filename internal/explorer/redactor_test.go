@@ -40,7 +40,12 @@ func (m *mockDB) GetBatchVisibilityDetailed(_ context.Context, _ string, _ []str
 		case VisibilityHidden, VisibilityRedacted:
 			reason = ReasonNoAccess
 		case VisibilityPseudonymous:
-			reason = ReasonRBACGroupMember
+			// Pseudonymous level is only produced by disclosure-grant resolution
+			// (no other code path in GetBatchVisibility emits it). Tests that
+			// need to model a pseudonymous address get the grant reason
+			// automatically — anything richer (RBAC, own, etc) must go through
+			// newEngineDetailed to set the reason explicitly.
+			reason = ReasonDisclosureGrant
 		}
 		res[k] = AddressVisibility{Level: v, Reason: reason}
 	}
@@ -480,6 +485,9 @@ func TestRedactTransactions_RedactedTo_DroppedForNonParticipant(t *testing.T) {
 func TestRedactTransactions_PseudonymousAddress(t *testing.T) {
 	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	// mockDB derives Reason=ReasonDisclosureGrant for VisibilityPseudonymous —
+	// which is correct (pseudonymous only comes from grants) — and that's the
+	// trigger for counterparty demotion below.
 	engine := newEngine(VisibilityMap{
 		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityPseudonymous,
 		"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": VisibilityFull,
@@ -493,13 +501,98 @@ func TestRedactTransactions_PseudonymousAddress(t *testing.T) {
 	if len(result) != 1 {
 		t.Fatalf("expected 1 tx, got %d", len(result))
 	}
-	expectedPseudonym := GeneratePseudonym(from)
-	if result[0].From != expectedPseudonym {
-		t.Errorf("From should be pseudonym %q, got %q", expectedPseudonym, result[0].From)
+	expectedFromPseudonym := GeneratePseudonym(from)
+	if result[0].From != expectedFromPseudonym {
+		t.Errorf("From should be pseudonym %q, got %q", expectedFromPseudonym, result[0].From)
+	}
+	// Counterparty (To) must ALSO be pseudonymised: the disclosure-grant lens
+	// applies to the whole tx, not just the granted address — otherwise the
+	// counterparty's real address leaks alongside the granted party's
+	// pseudonym, defeating the limited-audit-lens promise.
+	expectedToPseudonym := GeneratePseudonym(to)
+	if result[0].To == nil || *result[0].To != expectedToPseudonym {
+		t.Errorf("To (counterparty) should be pseudonymised under pseudonymous-grant lens %q, got %v", expectedToPseudonym, result[0].To)
 	}
 	// Value not stripped for pseudonymous
 	if result[0].Value != "500" {
 		t.Errorf("Value should be unchanged for pseudonymous, got %s", result[0].Value)
+	}
+}
+
+// TestRedactTransactions_PseudonymousGrant_DemotesPublicCounterparty
+// pins the exact scenario behind the user-reported leak: a viewer with a
+// pseudonymous disclosure grant on one address sees a tx where the
+// counterparty is a public contract (e.g. USDC, a precompile, an
+// org-public contract). Pre-fix the contract's real address appeared
+// in the regular tx-list render alongside the granted target's
+// Address-XXXX — defeating the limited-audit-lens promise. The grant
+// page (getGrantTransactions) already rendered the same tx with the
+// contract as External-XXXX; this test makes the regular path consistent.
+func TestRedactTransactions_PseudonymousGrant_DemotesPublicCounterparty(t *testing.T) {
+	bob := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"           // pseudonymously disclosed to viewer
+	publicContract := "0xcccccccccccccccccccccccccccccccccccccccc" // e.g. USDC — viewer sees it everywhere else
+
+	engine := newEngineDetailed(
+		VisibilityMap{bob: VisibilityPseudonymous, publicContract: VisibilityFull},
+		map[string]AddressVisibility{
+			bob:            {Level: VisibilityPseudonymous, Reason: ReasonDisclosureGrant, Visible: true},
+			publicContract: {Level: VisibilityFull, Reason: ReasonPublicAddress, Visible: true},
+		},
+		nil,
+	)
+
+	txs := []Transaction{{Hash: "0x01", From: bob, To: strPtr(publicContract), Value: "1000"}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:test:eve")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx, got %d", len(result))
+	}
+	if result[0].From != GeneratePseudonym(bob) {
+		t.Errorf("From: expected Bob's pseudonym, got %q", result[0].From)
+	}
+	if result[0].To == nil || *result[0].To != GeneratePseudonym(publicContract) {
+		t.Errorf("To (public contract): expected pseudonym under grant lens, got %v — this is the leak the test catches", result[0].To)
+	}
+}
+
+// TestRedactTransactions_PseudonymousGrant_ParticipantOverrideWins
+// pins that direct participants STILL see real counterparty addresses
+// even when there's a pseudonymous grant on the other party — the
+// participant already knows who they sent to / received from via their
+// own wallet, so the grant's anonymisation lens is moot.
+func TestRedactTransactions_PseudonymousGrant_ParticipantOverrideWins(t *testing.T) {
+	viewerOwn := "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" // viewer's own address
+	bob := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"       // pseudonymously disclosed
+
+	engine := newEngineDetailed(
+		VisibilityMap{viewerOwn: VisibilityFull, bob: VisibilityPseudonymous},
+		map[string]AddressVisibility{
+			viewerOwn: {Level: VisibilityFull, Reason: ReasonOwnAddress, Visible: true},
+			bob:       {Level: VisibilityPseudonymous, Reason: ReasonDisclosureGrant, Visible: true},
+		},
+		[]string{viewerOwn}, // linked to viewerDID — drives the participant-override path
+	)
+
+	txs := []Transaction{{Hash: "0x01", From: viewerOwn, To: strPtr(bob), Value: "1000"}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:test:eve")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx, got %d", len(result))
+	}
+	if result[0].From != viewerOwn {
+		t.Errorf("From (viewer's own): expected real address, got %q — participant override must keep own addr visible", result[0].From)
+	}
+	// Counterparty: participant override revealed it; the grant's
+	// pseudonymisation still applies though (Bob is at VisibilityPseudonymous
+	// in the visibility map, and applyRedaction renders the pseudonym). The
+	// row is rendered with Bob's pseudonym, NOT real address, because the
+	// underlying visibility is Pseudonymous.
+	if result[0].To == nil || *result[0].To != GeneratePseudonym(bob) {
+		t.Errorf("To (Bob): expected pseudonym (per Bob's own visibility), got %v", result[0].To)
 	}
 }
 
@@ -953,12 +1046,17 @@ func TestRedactTransfers_Pseudonymous(t *testing.T) {
 	if len(result) != 1 {
 		t.Fatalf("expected 1 transfer, got %d", len(result))
 	}
-	expectedPseudonym := GeneratePseudonym(from)
-	if result[0].From != expectedPseudonym {
-		t.Errorf("From should be pseudonym %q, got %q", expectedPseudonym, result[0].From)
+	expectedFromPseudonym := GeneratePseudonym(from)
+	if result[0].From != expectedFromPseudonym {
+		t.Errorf("From should be pseudonym %q, got %q", expectedFromPseudonym, result[0].From)
 	}
-	if result[0].To != to {
-		t.Errorf("To (full-visibility) should be unchanged, got %q", result[0].To)
+	// Counterparty pseudonymised under the grant lens — see the parallel
+	// rationale in TestRedactTransactions_PseudonymousAddress. mockDB
+	// derives Reason=ReasonDisclosureGrant for VisibilityPseudonymous,
+	// which triggers the demotion.
+	expectedToPseudonym := GeneratePseudonym(to)
+	if result[0].To != expectedToPseudonym {
+		t.Errorf("To (counterparty) should be pseudonymised under pseudonymous-grant lens %q, got %q", expectedToPseudonym, result[0].To)
 	}
 	if result[0].Value != "777" {
 		t.Errorf("Value must NOT be stripped for pseudonymous transfers (compliance audits need amounts), got %s", result[0].Value)
@@ -1128,12 +1226,15 @@ func TestRedactInternalTransactions_Pseudonymous(t *testing.T) {
 		t.Fatalf("expected 1, got %d", len(result))
 	}
 	itx := result[0]
-	expectedPseudonym := GeneratePseudonym(from)
-	if itx.From != expectedPseudonym {
-		t.Errorf("From should be pseudonym %q, got %q", expectedPseudonym, itx.From)
+	expectedFromPseudonym := GeneratePseudonym(from)
+	if itx.From != expectedFromPseudonym {
+		t.Errorf("From should be pseudonym %q, got %q", expectedFromPseudonym, itx.From)
 	}
-	if itx.To == nil || *itx.To != to {
-		t.Errorf("To (full-visibility) should be unchanged, got %v", itx.To)
+	// Counterparty pseudonymised under the grant lens (see
+	// TestRedactTransactions_PseudonymousAddress for the rationale).
+	expectedToPseudonym := GeneratePseudonym(to)
+	if itx.To == nil || *itx.To != expectedToPseudonym {
+		t.Errorf("To (counterparty) should be pseudonymised under grant lens %q, got %v", expectedToPseudonym, itx.To)
 	}
 	if itx.Value != "888" {
 		t.Errorf("Value must NOT be stripped for pseudonymous, got %s", itx.Value)
