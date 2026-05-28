@@ -23,6 +23,7 @@ import (
 	"github.com/iden3/iden3comm/v2/protocol"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // setupTestServerForOAuth creates a test server with OAuth support
@@ -1507,4 +1508,149 @@ func TestOAuth_TokenExchange_ReturnsRefreshToken(t *testing.T) {
 	router.ServeHTTP(oldRefreshW, oldRefreshReq)
 
 	assert.Equal(t, http.StatusUnauthorized, oldRefreshW.Code, "old refresh token should be rejected after rotation")
+}
+
+// TestOAuth_TokenEndpoint_FirstPartyClientAuth — RD-1006: clients on the
+// first-party allowlist must authenticate at /oauth/token with the bcrypt-
+// hashed client_secret registered for their client_id. Verifies both
+// transport options (HTTP Basic and body parameter) and the bypass path for
+// non-first-party callers (preserves the pre-RD-1006 behaviour for any flow
+// that hasn't opted in).
+func TestOAuth_TokenEndpoint_FirstPartyClientAuth(t *testing.T) {
+	srv := setupTestServerForOAuth(t)
+	defer srv.db.Close()
+	defer srv.oauthSessionStore.Stop()
+	defer srv.sessionStore.Stop()
+
+	const (
+		clientID     = "explorer-test"
+		clientSecret = "correct-horse-battery-staple"
+		redirectURI  = "http://localhost:3000/callback"
+		userDID      = "did:privado:fpc-test"
+	)
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(clientSecret), bcrypt.MinCost)
+	require.NoError(t, err)
+	srv.config.OAuthFirstPartyClients = map[string]string{clientID: string(hash)}
+
+	// seedCode creates a fresh OAuth session bound to clientID + redirectURI
+	// and returns its single-use authorization code.
+	seedCode := func(authSessionID string) string {
+		sid := srv.oauthSessionStore.CreateSession(clientID, redirectURI, "state-x", authSessionID, "")
+		require.NotEmpty(t, sid)
+		code := generateSecureCode()
+		require.NoError(t, srv.oauthSessionStore.SetCode(sid, code, userDID, true))
+		return code
+	}
+
+	gin.SetMode(gin.TestMode)
+
+	type tweakReq func(req *http.Request, body *OAuthTokenRequest)
+
+	tests := []struct {
+		name           string
+		clientIDUsed   string // override for the request body's client_id (defaults to clientID)
+		allowlist      map[string]string
+		tweak          tweakReq
+		expectedStatus int
+		expectedError  string
+	}{
+		{
+			name: "first-party + correct HTTP Basic → 200",
+			tweak: func(req *http.Request, _ *OAuthTokenRequest) {
+				req.SetBasicAuth(clientID, clientSecret)
+			},
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name: "first-party + wrong HTTP Basic → 401 invalid_client",
+			tweak: func(req *http.Request, _ *OAuthTokenRequest) {
+				req.SetBasicAuth(clientID, "wrong-secret")
+			},
+			expectedStatus: http.StatusUnauthorized,
+			expectedError:  "invalid_client",
+		},
+		{
+			name: "first-party + correct client_secret_post → 200",
+			tweak: func(_ *http.Request, body *OAuthTokenRequest) {
+				body.ClientSecret = clientSecret
+			},
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name: "first-party + wrong client_secret_post → 401 invalid_client",
+			tweak: func(_ *http.Request, body *OAuthTokenRequest) {
+				body.ClientSecret = "wrong-secret"
+			},
+			expectedStatus: http.StatusUnauthorized,
+			expectedError:  "invalid_client",
+		},
+		{
+			name:           "first-party + no secret at all → 401 invalid_client",
+			tweak:          func(_ *http.Request, _ *OAuthTokenRequest) {}, // omit secret
+			expectedStatus: http.StatusUnauthorized,
+			expectedError:  "invalid_client",
+		},
+		{
+			name:      "non-first-party client bypasses RD-1006 (empty allowlist)",
+			allowlist: map[string]string{}, // override: allowlist empty for this case
+			tweak:     func(_ *http.Request, _ *OAuthTokenRequest) {},
+			// pre-RD-1006 behaviour: token endpoint accepts the code without
+			// client authentication when the client is not on the allowlist.
+			expectedStatus: http.StatusOK,
+		},
+	}
+
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Per-test allowlist (defaults to the bcrypt-hashed first-party config)
+			if tt.allowlist != nil {
+				srv.config.OAuthFirstPartyClients = tt.allowlist
+			} else {
+				srv.config.OAuthFirstPartyClients = map[string]string{clientID: string(hash)}
+			}
+
+			code := seedCode(fmt.Sprintf("auth-sess-fpc-%d", i))
+			body := OAuthTokenRequest{
+				GrantType:   "authorization_code",
+				Code:        code,
+				RedirectURI: redirectURI,
+				ClientID:    clientID,
+			}
+			raw, _ := json.Marshal(body)
+			req := httptest.NewRequest(http.MethodPost, "/oauth/token", bytes.NewReader(raw))
+			req.Header.Set("Content-Type", "application/json")
+
+			// Apply tweak — may set Basic auth, mutate body.ClientSecret, etc.
+			// Re-marshal afterwards if the body changed.
+			if tt.tweak != nil {
+				prev := body
+				tt.tweak(req, &body)
+				if body != prev {
+					raw, _ = json.Marshal(body)
+					req.Body = http.NoBody
+					req = httptest.NewRequest(http.MethodPost, "/oauth/token", bytes.NewReader(raw))
+					req.Header.Set("Content-Type", "application/json")
+					// Re-apply tweak so Basic auth header survives the rebuild.
+					tt.tweak(req, &body)
+				}
+			}
+
+			router := gin.New()
+			router.POST("/oauth/token", srv.handleOAuthToken)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			require.Equal(t, tt.expectedStatus, w.Code, "body=%s", w.Body.String())
+			if tt.expectedError != "" {
+				var errResp OAuthErrorResponse
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
+				assert.Equal(t, tt.expectedError, errResp.Error)
+			} else if tt.expectedStatus == http.StatusOK {
+				var ok OAuthTokenResponse
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &ok))
+				assert.NotEmpty(t, ok.AccessToken)
+			}
+		})
+	}
 }
