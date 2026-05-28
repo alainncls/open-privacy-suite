@@ -122,7 +122,8 @@ The Block Explorer never handles authentication directly — all credential veri
 | `PRIVACY_ENABLED` | Set `true` to show the Sign In button and enable SSO. |
 | `PRIVACY_PROXY_URL` | Internal URL used by the Block Explorer backend for API calls (e.g. `http://privacy-proxy-proxy-backend-1:8080`). |
 | `PRIVACY_PROXY_PUBLIC_URL` | Browser-accessible URL used to construct the OAuth redirect (e.g. `http://localhost:8080`). Defaults to `PRIVACY_PROXY_URL`. |
-| `SSO_CLIENT_ID` | OAuth client identifier sent in the authorize request. Defaults to `explorer`. |
+| `SSO_CLIENT_ID` | OAuth client identifier sent in the authorize request. Defaults to `explorer`. In production, use the per-environment opaque ID listed in the proxy's `OAUTH_FIRST_PARTY_CLIENTS` (e.g. `explorer-prod-${random}`). |
+| `SSO_CLIENT_SECRET` | Plaintext client secret sent at `/oauth/token` via HTTP Basic (RFC 6749 `client_secret_basic`). The proxy bcrypt-verifies it against the hash stored under this `SSO_CLIENT_ID` in `OAUTH_FIRST_PARTY_CLIENTS`. Required in production (RD-1006); leave empty in dev only if the proxy's allowlist is also empty. |
 | `SSO_REDIRECT_URI` | Callback URL for the Block Explorer after OAuth completes (e.g. `http://localhost:3001/api/auth/callback`). |
 
 ### Development Setup
