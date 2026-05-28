@@ -375,6 +375,15 @@ func TestHandleAuthVerify_DevelopmentOnly(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotEmpty(t, response.AccessToken)
 		assert.NotEmpty(t, response.RefreshToken)
+
+		// RD-1008: /auth/verify is the mock-login path — must also set the
+		// pp_access cookie so the browser carries it on cross-subdomain
+		// navigation to /oauth/authorize.
+		ck := findCookie(t, w2, auth.AccessCookieName)
+		require.NotNil(t, ck, "/auth/verify must set the pp_access cookie")
+		assert.Equal(t, response.AccessToken, ck.Value)
+		assert.True(t, ck.HttpOnly)
+		assert.Equal(t, http.SameSiteLaxMode, ck.SameSite)
 	}
 }
 

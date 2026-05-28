@@ -462,6 +462,12 @@ func (s *Server) handleAuthVerify(c *gin.Context) {
 		return // Error already sent in verifyAndIssueTokens
 	}
 
+	// RD-1008: mirror the access JWT into an HttpOnly cookie. /auth/verify
+	// is the path taken by the dev mock-login flow (and any browser
+	// posting the JWZ directly) — those callers receive the token here
+	// and never poll /status, so without this they'd get no cookie.
+	auth.SetAccessCookie(c, response.AccessToken, AccessTokenTTL)
+
 	c.JSON(http.StatusOK, response)
 }
 
