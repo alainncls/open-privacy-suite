@@ -932,6 +932,39 @@ func TestRedactTransfers_DBError(t *testing.T) {
 	}
 }
 
+// TestRedactTransfers_Pseudonymous pins the matrix row for token transfers
+// under a pseudonymous-level disclosure grant: the addr the viewer has a
+// grant on must be substituted with its Address-XXXX alias, while the
+// other party (here, full) stays as-is. Value is preserved for
+// pseudonymous (compliance audits need amounts).
+func TestRedactTransfers_Pseudonymous(t *testing.T) {
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		from: VisibilityPseudonymous,
+		to:   VisibilityFull,
+	})
+
+	transfers := []TokenTransfer{{ID: 1, From: from, To: to, Value: "777"}}
+	result, err := engine.RedactTransfers(context.Background(), transfers, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 transfer, got %d", len(result))
+	}
+	expectedPseudonym := GeneratePseudonym(from)
+	if result[0].From != expectedPseudonym {
+		t.Errorf("From should be pseudonym %q, got %q", expectedPseudonym, result[0].From)
+	}
+	if result[0].To != to {
+		t.Errorf("To (full-visibility) should be unchanged, got %q", result[0].To)
+	}
+	if result[0].Value != "777" {
+		t.Errorf("Value must NOT be stripped for pseudonymous transfers (compliance audits need amounts), got %s", result[0].Value)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // RedactInternalTransactions
 // ---------------------------------------------------------------------------
@@ -1070,6 +1103,40 @@ func TestRedactInternalTransactions_HiddenFrom_PublicTo_ShowsPrivate(t *testing.
 	}
 	if itx.Output != nil {
 		t.Errorf("Output should be nil")
+	}
+}
+
+// TestRedactInternalTransactions_Pseudonymous pins the matrix row for
+// internal txs under a pseudonymous-level disclosure grant: from is
+// substituted with Address-XXXX, value preserved, input/output preserved.
+func TestRedactInternalTransactions_Pseudonymous(t *testing.T) {
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	input := "0xdeadbeef"
+	output := "0x01"
+	engine := newEngine(VisibilityMap{
+		from: VisibilityPseudonymous,
+		to:   VisibilityFull,
+	})
+
+	itxs := []InternalTransaction{{ID: 1, From: from, To: strPtr(to), Value: "888", Input: &input, Output: &output}}
+	result, err := engine.RedactInternalTransactions(context.Background(), itxs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1, got %d", len(result))
+	}
+	itx := result[0]
+	expectedPseudonym := GeneratePseudonym(from)
+	if itx.From != expectedPseudonym {
+		t.Errorf("From should be pseudonym %q, got %q", expectedPseudonym, itx.From)
+	}
+	if itx.To == nil || *itx.To != to {
+		t.Errorf("To (full-visibility) should be unchanged, got %v", itx.To)
+	}
+	if itx.Value != "888" {
+		t.Errorf("Value must NOT be stripped for pseudonymous, got %s", itx.Value)
 	}
 }
 
