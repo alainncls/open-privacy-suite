@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/jackc/tern/v2/migrate"
 
 	"privacy-proxy/internal/db/migrations"
@@ -89,8 +89,44 @@ func (d *DB) Conn() *sql.DB {
 	return d.conn
 }
 
+// parseConfigUTC parses a Postgres URL and pins the session timezone to UTC.
+//
+// Plain TIMESTAMP (without time zone) columns store wall-clock components, so a
+// non-UTC session would skew NOW()/CURRENT_TIMESTAMP comparisons against
+// Go-written values and silently honour expired RBAC memberships (RD-1005).
+// Pinning timezone=UTC on every connection removes the dependency on the
+// server's default timezone GUC.
+func parseConfigUTC(databaseURL string) (*pgx.ConnConfig, error) {
+	cfg, err := pgx.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse database URL: %w", err)
+	}
+	cfg.RuntimeParams["timezone"] = "UTC"
+	return cfg, nil
+}
+
+// openPostgres opens a pgx-backed *sql.DB with the session timezone pinned to
+// UTC (see parseConfigUTC).
+func openPostgres(databaseURL string) (*sql.DB, error) {
+	cfg, err := parseConfigUTC(databaseURL)
+	if err != nil {
+		return nil, err
+	}
+	return stdlib.OpenDB(*cfg), nil
+}
+
+// connectPgxUTC opens a single pgx connection (used for migrations) with the
+// session timezone pinned to UTC (see parseConfigUTC).
+func (d *DB) connectPgxUTC(ctx context.Context) (*pgx.Conn, error) {
+	cfg, err := parseConfigUTC(d.databaseURL)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.ConnectConfig(ctx, cfg)
+}
+
 func New(databaseURL string) (*DB, error) {
-	conn, err := sql.Open("pgx", databaseURL)
+	conn, err := openPostgres(databaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -164,7 +200,7 @@ func (d *DB) Close() error {
 
 // Migrate runs all pending database migrations using tern.
 func (d *DB) Migrate(ctx context.Context) error {
-	pgxConn, err := pgx.Connect(ctx, d.databaseURL)
+	pgxConn, err := d.connectPgxUTC(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to connect for migrations: %w", err)
 	}
@@ -189,7 +225,7 @@ func (d *DB) Migrate(ctx context.Context) error {
 // MigrateWithProgress runs migrations with a progress callback for CLI usage.
 // The callback receives: sequence number, migration name, direction ("up"/"down"), and SQL.
 func (d *DB) MigrateWithProgress(ctx context.Context, onStart func(sequence int32, name, direction, sql string)) error {
-	pgxConn, err := pgx.Connect(ctx, d.databaseURL)
+	pgxConn, err := d.connectPgxUTC(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to connect for migrations: %w", err)
 	}
@@ -217,7 +253,7 @@ func (d *DB) MigrateWithProgress(ctx context.Context, onStart func(sequence int3
 
 // GetMigrationStatus returns the current migration version and pending migrations.
 func (d *DB) GetMigrationStatus(ctx context.Context) (currentVersion int32, pendingCount int, err error) {
-	pgxConn, err := pgx.Connect(ctx, d.databaseURL)
+	pgxConn, err := d.connectPgxUTC(ctx)
 	if err != nil {
 		return 0, 0, fmt.Errorf("failed to connect for migrations: %w", err)
 	}
@@ -910,7 +946,9 @@ func (d *DB) SaveRefreshToken(ctx context.Context, tokenHash, subject string, ex
 	          revoked = false,
 	          revoked_at = NULL`
 
-	_, err := d.conn.ExecContext(ctx, query, tokenHash, subject, expiresAt)
+	// expires_at is a plain TIMESTAMP; store UTC so the wall-clock pgx writes
+	// matches the UTC session used for comparisons (RD-1005).
+	_, err := d.conn.ExecContext(ctx, query, tokenHash, subject, expiresAt.UTC())
 	return err
 }
 
@@ -976,7 +1014,9 @@ func (d *DB) RevokeAccessToken(ctx context.Context, tokenID, subject string, exp
 	          VALUES ($1, $2, $3)
 	          ON CONFLICT(token_id) DO NOTHING`
 
-	_, err := d.conn.ExecContext(ctx, query, tokenID, subject, expiresAt)
+	// expires_at is a plain TIMESTAMP; store UTC so it stays consistent with
+	// the UTC session and the UTC cleanup comparison (RD-1005).
+	_, err := d.conn.ExecContext(ctx, query, tokenID, subject, expiresAt.UTC())
 	return err
 }
 
@@ -1015,8 +1055,9 @@ func (d *DB) IsUserBannedBySubject(ctx context.Context, subject string) (bool, e
 
 // CleanupExpiredTokens removes expired tokens from the database
 func (d *DB) CleanupExpiredTokens(ctx context.Context) error {
-	// Use current time from Go to ensure consistency with how tokens are stored
-	now := time.Now()
+	// Use current time from Go (UTC) to ensure consistency with how tokens are
+	// stored. UTC matters for the plain TIMESTAMP column — see RD-1005.
+	now := time.Now().UTC()
 
 	// Clean up expired refresh tokens
 	_, err := d.conn.ExecContext(ctx, `DELETE FROM refresh_tokens WHERE expires_at < $1`, now)

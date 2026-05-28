@@ -86,6 +86,10 @@ services:
       postgres:
         condition: service_healthy
     environment:
+      # Run the process in UTC — plain TIMESTAMP columns store wall-clock
+      # components, so a non-UTC process tz would skew RBAC expiry checks
+      # (RD-1005). The DB session is also pinned to UTC in code.
+      - TZ=UTC
       - ENVIRONMENT=production
       - GIN_MODE=release
       - MOCK_SIGNATURES=false

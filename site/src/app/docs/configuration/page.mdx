@@ -27,6 +27,12 @@ These variables **must** be set when `ENVIRONMENT=production`. The server will r
 
 ---
 
+## Timezone
+
+The proxy operates in **UTC**. The backend container image sets `TZ=UTC`, and the database connection pins the PostgreSQL session timezone to UTC, so timestamp-based checks (token and membership expiry) are correct regardless of the host or database server's local timezone. No action is required for the bundled deployment. If you run the database separately, leaving its timezone at the default (UTC) is recommended; the proxy does not depend on it but consistent UTC avoids confusion when inspecting rows directly.
+
+---
+
 ## Core Settings
 
 <EnvTable vars={[

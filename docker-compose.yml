@@ -59,6 +59,10 @@ services:
     ports:
       - "127.0.0.1:${HOST_PORT_PROXY:-8080}:8080"
     environment:
+      # Run the process in UTC (RD-1005): plain TIMESTAMP columns store
+      # wall-clock components, so a non-UTC process tz would skew RBAC
+      # expiry checks. The DB session is also pinned to UTC in code.
+      - TZ=UTC
       - NODE_URL=${NODE_URL:-http://anvil:8545}
       - DATABASE_URL=${DATABASE_URL:-postgres://postgres:postgres@postgres:5432/privacy_proxy?sslmode=disable}
       - PORT=8080
