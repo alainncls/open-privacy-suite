@@ -104,7 +104,53 @@ Block-level data is always public. Blocks are consensus-layer infrastructure, no
 
 ## Disclosure Levels
 
-Each address in the system is assigned a disclosure level that controls how much information about it is shared with different classes of viewers. See [Selective Disclosure](/docs/disclosure) for the full reference.
+A viewer holding an approved disclosure **grant** sees the granted target's
+addresses subject to the grant's `scope.disclosure_level`. The level controls
+the substitution applied to every address field on every response surface — not
+just the auditor dashboard. The mapping:
+
+| `disclosure_level` | `VisibilityLevel` (internal) | What the auditor sees for the granted address |
+|---|---|---|
+| `full` | `VisibilityFull` | Real hex address (`0xa32c…94cd`). For regulatory subpoenas. |
+| `pseudonymous` | `VisibilityPseudonymous` | Deterministic alias `Address-XXXX` (4-letter human-readable, stable per address). Counterparty patterns inferable; raw address never reaches the client. |
+| `redacted` | `VisibilityRedacted` | `[PRIVATE]` placeholder. Timing / direction / gas / status visible, no counterparty correlation. |
+| _missing / unknown_ | `VisibilityRedacted` (fail-safe) | Legacy or malformed grants do **not** silently upgrade to Full. |
+
+### Where the level is applied — cross-surface matrix
+
+Every surface that renders a `from` / `to` / log / holder address routes the
+real address through `applyRedaction(addr, level)`. So the field value the
+client receives is the *substituted* string (`Address-XXXX` / `[PRIVATE]`), not
+the raw address.
+
+| Surface | `full` grant | `pseudonymous` grant | `redacted` grant | No grant |
+|---|---|---|---|---|
+| `GET /tx/:hash` — `from` / `to` | Real address | `Address-XXXX` | `[PRIVATE]` | `[PRIVATE]` or row dropped |
+| `GET /block/:n` — embedded txs | Real address | `Address-XXXX` | `[PRIVATE]` | Row dropped (participant check) |
+| `GET /address/:addr` — tx list | Real address | `Address-XXXX` (rows for the granted address only) | `[PRIVATE]` (timing-only audit) | 404 / 403 |
+| Token transfer rows (`/transfers`) | Real address | `Address-XXXX` | `[PRIVATE]` | `[PRIVATE]` or row dropped |
+| Event logs — emitter address | Real address | `Address-XXXX` | `[PRIVATE]`; topics + `data` zeroed | Log denied or `[PRIVATE]` |
+| Event logs — indexed address topics | Real address | Topic slot zeroed (`0x000…000`) — see note | Topic slot zeroed | Topic slot zeroed |
+| Event logs — non-indexed `address` ABI params in `data` | Real address | Zeroed (pseudonym is non-hex, can't fit a 32-byte slot) | Zeroed | Zeroed |
+| Holder list (`/address/:contract/holders`) | Real holder address | `Address-XXXX` row | `[PRIVATE]` row | Row dropped |
+| Auditor dashboard (`PrivacyDashboard → Disclosed Addresses`) | Real address | `Address-XXXX` | `[PRIVATE]` | Empty list |
+| Granted-address page (`/grant/:grantId/:addressId`) | Real address | `Address-XXXX` header | `[PRIVATE]` header | 404 |
+| `value` (ETH / token amount) on a tx involving the granted address | Visible | Visible | Visible (timing-only audit explicitly preserves value) | Hidden |
+| `inputData` (calldata) on a tx involving the granted address | Visible | Visible | Visible | Hidden |
+
+> **Note on event topics with pseudonymous grants.** ABI-indexed address parameters live in 32-byte topic slots and must be valid hex. The `Address-XXXX` alias is a human-readable 12-character string, not hex, so it cannot be zero-padded into a topic slot. To avoid leaking the underlying address via `topic = 0x000…0a32c…94cd` reconstruction, the redactor zeros the slot for pseudonymous grants — the auditor sees that the event mentioned a granted-target address but not its alias inside the topics array. The emitter address (rendered separately) is still substituted to `Address-XXXX`.
+
+### Precedence
+
+When multiple sources claim a stake on the same address (own-address +
+disclosure grant, RBAC group + disclosure grant, two grants with different
+levels), the **most permissive** wins. Rank order: `Hidden < Redacted <
+Pseudonymous < Full`. A `redacted` grant cannot downgrade visibility the
+viewer already has via ownership or RBAC; a `full` grant overrides a
+co-existing `pseudonymous` grant on the same address.
+
+For the full grant workflow (request → approval → expiration → revocation)
+see [Selective Disclosure](/docs/disclosure).
 
 ---
 

@@ -198,16 +198,25 @@ func (d *DB) GetBatchVisibility(ctx context.Context, viewerDID string, addresses
 		}
 	}
 
-	// Check disclosure grants: viewer may have active full-disclosure grants on some
-	// addresses. Disclosed addresses should appear in regular explorer views, labeled
-	// "Disclosed" via addressMetadata. (G17 reverted — grants now upgrade visibility.)
+	// Check disclosure grants: viewer may have active disclosure grants on some
+	// addresses. Disclosed addresses appear in regular explorer views, labeled
+	// "Disclosed" via addressMetadata. The grant's scope.disclosure_level is
+	// mapped to the corresponding VisibilityLevel (full/pseudonymous/redacted) —
+	// see disclosureLevelToVisibility. Pre-fix this code path always upgraded
+	// to VisibilityFull, dropping the level and leaking real addresses on every
+	// tx-list / tx-detail surface for auditors holding pseudonymous or redacted
+	// grants.
 	if viewerDID != "" {
-		grantedAddrs, err := d.getDisclosedAddressesForViewer(ctx, viewerDID)
+		grantedAddrs, err := d.getDisclosedAddressesWithLevels(ctx, viewerDID)
 		if err == nil {
-			for _, addr := range grantedAddrs {
-				addr = strings.ToLower(addr)
-				if current, exists := result[addr]; exists && current != explorer.VisibilityFull {
-					result[addr] = explorer.VisibilityFull
+			for _, grant := range grantedAddrs {
+				addr := strings.ToLower(grant.Address)
+				current, exists := result[addr]
+				if !exists {
+					continue
+				}
+				if visibilityRank(grant.Level) > visibilityRank(current) {
+					result[addr] = grant.Level
 				}
 			}
 		}
@@ -422,19 +431,26 @@ func (d *DB) GetBatchVisibilityDetailed(ctx context.Context, viewerDID string, a
 		}
 	}
 
-	// Check disclosure grants: viewer may have active full-disclosure grants on some
-	// addresses. Disclosed addresses appear in regular explorer views with the
-	// "disclosure_grant" reason in addressMetadata. (G17 reverted.)
+	// Check disclosure grants — see GetBatchVisibility for rationale. The
+	// grant's scope.disclosure_level controls the resulting VisibilityLevel:
+	// "full" → VisibilityFull (real address shown), "pseudonymous" →
+	// VisibilityPseudonymous (Address-XXXX substituted by applyRedaction),
+	// "redacted" → VisibilityRedacted ([PRIVATE] substituted). Missing /
+	// unknown level fails safe to VisibilityRedacted.
 	if viewerDID != "" {
-		grantedAddrs, err := d.getDisclosedAddressesForViewer(ctx, viewerDID)
+		grantedAddrs, err := d.getDisclosedAddressesWithLevels(ctx, viewerDID)
 		if err == nil {
-			for _, addr := range grantedAddrs {
-				addr = strings.ToLower(addr)
-				if current, exists := result[addr]; exists && current.Level != explorer.VisibilityFull {
+			for _, grant := range grantedAddrs {
+				addr := strings.ToLower(grant.Address)
+				current, exists := result[addr]
+				if !exists {
+					continue
+				}
+				if visibilityRank(grant.Level) > visibilityRank(current.Level) {
 					result[addr] = explorer.AddressVisibility{
 						Address: addr,
-						Visible: true,
-						Level:   explorer.VisibilityFull,
+						Visible: grant.Level != explorer.VisibilityHidden,
+						Level:   grant.Level,
 						Reason:  explorer.ReasonDisclosureGrant,
 					}
 				}
@@ -446,21 +462,53 @@ func (d *DB) GetBatchVisibilityDetailed(ctx context.Context, viewerDID string, a
 }
 
 // getDisclosedAddressesForViewer returns ETH addresses that the viewer has an
-// active full-disclosure grant on. Used by GetBatchVisibility to upgrade
-// disclosed addresses to VisibilityFull in regular explorer views.
+// active disclosure grant on. Kept for the auditor-list code path and existing
+// tests; GetBatchVisibility uses getDisclosedAddressesWithLevels so the grant's
+// scope.disclosure_level can be honoured.
 //
-// The upgrade is scoped to disclosure requests whose `org_id` matches an org
-// the viewer is currently a member of. Without this scoping a disclosure grant
-// created in org A would upgrade visibility globally for the requester in
-// every other org's explorer view (M13: defence-in-depth against cross-org
-// disclosure creation, which is C3's primary fix).
+// The grant lookup is scoped to disclosure requests whose `org_id` matches an
+// org the viewer is currently a member of (M13: defence-in-depth against
+// cross-org leakage even if disclosure creation is partially exploited).
 func (d *DB) getDisclosedAddressesForViewer(ctx context.Context, viewerDID string) ([]string, error) {
+	grants, err := d.getDisclosedAddressesWithLevels(ctx, viewerDID)
+	if err != nil {
+		return nil, err
+	}
+	if len(grants) == 0 {
+		return nil, nil
+	}
+	addrs := make([]string, 0, len(grants))
+	for _, g := range grants {
+		addrs = append(addrs, g.Address)
+	}
+	return addrs, nil
+}
+
+// disclosedGrantedAddress is the per-address view of an active disclosure grant
+// the viewer holds. Address is the lowercased ETH address; Level is the
+// visibility ceiling the grant's scope.disclosure_level resolves to (see
+// disclosureLevelToVisibility for the mapping).
+type disclosedGrantedAddress struct {
+	Address string
+	Level   explorer.VisibilityLevel
+}
+
+// getDisclosedAddressesWithLevels returns each active disclosure-grant address
+// paired with the VisibilityLevel implied by the grant's
+// scope.disclosure_level. Same org-scoping (M13) as the bare-address sibling.
+//
+// When the viewer holds multiple grants on the same address (e.g. one legacy
+// grant with empty scope and one new grant with `disclosure_level=full`), the
+// caller-side merge in GetBatchVisibility / GetBatchVisibilityDetailed picks
+// the MAX level via visibilityRank — more permissive grants win.
+func (d *DB) getDisclosedAddressesWithLevels(ctx context.Context, viewerDID string) ([]disclosedGrantedAddress, error) {
 	if viewerDID == "" {
 		return nil, nil
 	}
 
 	query := `
-		SELECT DISTINCT LOWER(eal.eth_address)
+		SELECT LOWER(eal.eth_address),
+		       COALESCE(g.scope->>'disclosure_level', '')
 		FROM disclosure_grants g
 		JOIN disclosure_requests r ON g.request_id = r.id
 		JOIN users target_u ON r.target_user_id = target_u.id
@@ -481,15 +529,69 @@ func (d *DB) getDisclosedAddressesForViewer(ctx context.Context, viewerDID strin
 	}
 	defer rows.Close()
 
-	var addrs []string
+	// De-dupe by address while keeping the MAX level — handles the multi-grant
+	// case (same viewer, same target address, two grants of different levels).
+	byAddr := make(map[string]explorer.VisibilityLevel)
 	for rows.Next() {
-		var addr string
-		if err := rows.Scan(&addr); err != nil {
+		var addr, lvlStr string
+		if err := rows.Scan(&addr, &lvlStr); err != nil {
 			return nil, err
 		}
-		addrs = append(addrs, addr)
+		lvl := disclosureLevelToVisibility(lvlStr)
+		if existing, ok := byAddr[addr]; !ok || visibilityRank(lvl) > visibilityRank(existing) {
+			byAddr[addr] = lvl
+		}
 	}
-	return addrs, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	out := make([]disclosedGrantedAddress, 0, len(byAddr))
+	for addr, lvl := range byAddr {
+		out = append(out, disclosedGrantedAddress{Address: addr, Level: lvl})
+	}
+	return out, nil
+}
+
+// disclosureLevelToVisibility maps a disclosure_request.scope.disclosure_level
+// string to the VisibilityLevel the redactor uses. Unknown / empty levels fail
+// safe to VisibilityRedacted ([PRIVATE] placeholder) — see /docs/disclosure
+// §"Fail-Safe Defaults": legacy grants with empty scope must not silently
+// upgrade to Full just because a grant exists.
+func disclosureLevelToVisibility(level string) explorer.VisibilityLevel {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "full":
+		return explorer.VisibilityFull
+	case "pseudonymous":
+		return explorer.VisibilityPseudonymous
+	case "redacted":
+		return explorer.VisibilityRedacted
+	default:
+		return explorer.VisibilityRedacted
+	}
+}
+
+// visibilityRank assigns a total order over VisibilityLevel for use when two
+// independent sources (own-address, RBAC group, disclosure grant, multiple
+// grants of different levels) all claim a stake on the same address. The
+// higher rank wins: a less-permissive grant must NOT downgrade a more
+// permissive one. Mapping:
+//
+//	Hidden       → 0  (no signal)
+//	Redacted     → 1  ([PRIVATE] placeholder visible)
+//	Pseudonymous → 2  (Address-XXXX visible)
+//	Full         → 3  (real address visible)
+func visibilityRank(l explorer.VisibilityLevel) int {
+	switch l {
+	case explorer.VisibilityFull:
+		return 3
+	case explorer.VisibilityPseudonymous:
+		return 2
+	case explorer.VisibilityRedacted:
+		return 1
+	default:
+		return 0
+	}
 }
 
 // GetBatchEventAccess checks which contracts the viewer has event/log access to.
