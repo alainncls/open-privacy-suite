@@ -643,6 +643,12 @@ func (s *Server) handleAuthSessionStatus(c *gin.Context) {
 		return
 	}
 
+	// RD-1008: mirror the access JWT into an HttpOnly cookie so it travels
+	// on cross-subdomain browser navigations to server-side endpoints (e.g.
+	// /oauth/authorize), which is what silent SSO relies on. The Bearer
+	// header path keeps working for existing API clients.
+	auth.SetAccessCookie(c, session.AccessToken, AccessTokenTTL)
+
 	// Session is completed - return tokens
 	c.JSON(http.StatusOK, SessionStatusResponse{
 		Completed: true,
@@ -754,6 +760,10 @@ func (s *Server) handleRefresh(c *gin.Context) {
 	}
 
 	s.recordTokenRefresh("success")
+
+	// RD-1008: refresh the access-token cookie alongside the JSON response
+	// so browser navigations keep working after rotation.
+	auth.SetAccessCookie(c, accessToken, AccessTokenTTL)
 
 	c.JSON(http.StatusOK, AuthResponse{
 		AccessToken:  accessToken,
@@ -876,6 +886,11 @@ func (s *Server) handleRevoke(c *gin.Context) {
 			"auth: RevokeRefreshToken failed", "err", err)
 		return
 	}
+
+	// RD-1008: clear the access-token cookie too so the browser session
+	// is gone after logout. Idempotent — no-op for clients that never
+	// received the cookie (API callers, server-to-server flows).
+	auth.ClearAccessCookie(c)
 
 	c.JSON(http.StatusOK, gin.H{"message": "token revoked successfully"})
 }
