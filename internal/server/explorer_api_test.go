@@ -192,21 +192,27 @@ func createDisclosureGrant(t *testing.T, database *db.DB, requesterDID, targetUs
 
 	defaultOrgID, _ := ensureDefaultOrgMembership(t, database, requesterDID)
 
-	// Create disclosure request
+	// Create disclosure request. disclosure_level is set explicitly to "full"
+	// — historically this helper used `{}` scope, which the visibility layer
+	// treated as implicit Full. The fail-safe in PR #279 remaps empty scope
+	// to Redacted, so callers that previously relied on the implicit-Full
+	// behaviour now opt in explicitly. Existing call sites wanted "viewer
+	// with grant sees the address fully" — recording that as "full"
+	// preserves their intent.
 	requestID := uuid.New().String()
 	_, err := database.Conn().ExecContext(ctx,
 		`INSERT INTO disclosure_requests
 		(id, requester_did, target_user_id, org_id, scope, reason, status, requested_at)
-		VALUES ($1, $2, $3, $4, '{}', 'Test grant', 'approved', NOW())`,
+		VALUES ($1, $2, $3, $4, '{"disclosure_level":"full"}'::jsonb, 'Test grant', 'approved', NOW())`,
 		requestID, requesterDID, targetUserID, defaultOrgID)
 	require.NoError(t, err)
 
-	// Create grant
+	// Create grant — same level on the grant scope.
 	grantID := uuid.New().String()
 	_, err = database.Conn().ExecContext(ctx,
 		`INSERT INTO disclosure_grants
 		(id, request_id, grant_token_hash, scope, granted_at, expires_at)
-		VALUES ($1, $2, $3, '{}', NOW(), $4)`,
+		VALUES ($1, $2, $3, '{"disclosure_level":"full"}'::jsonb, NOW(), $4)`,
 		grantID, requestID, "test-hash-"+grantID, expiresAt)
 	require.NoError(t, err)
 

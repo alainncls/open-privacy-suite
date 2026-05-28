@@ -944,22 +944,25 @@ func setupDisclosureGrant(t *testing.T, database *DB, viewerDID, targetDID, targ
 	err = database.SystemLinkEthAddress(ctx, targetDID, targetEthAddr)
 	require.NoError(t, err)
 
-	// Create disclosure request (viewer → target)
+	// Create disclosure request (viewer → target). The "full" level here is
+	// intentional — the historical helper assumed full disclosure implicitly
+	// via empty scope; post-RD-1009 the level must be explicit, and full keeps
+	// the original test semantics intact.
 	requestID := uuid.New().String()
 	_, err = conn.ExecContext(ctx, `
 		INSERT INTO disclosure_requests
 			(id, requester_did, target_user_id, org_id, scope, reason, status, requested_at)
-		VALUES ($1, $2, $3, $4, '{}', 'Integration test', 'approved', NOW())`,
+		VALUES ($1, $2, $3, $4, '{"disclosure_level":"full"}'::jsonb, 'Integration test', 'approved', NOW())`,
 		requestID, viewerDID, targetUserID, orgID)
 	require.NoError(t, err)
 
-	// Create disclosure grant
+	// Create disclosure grant (mirrors the request's level — same rationale).
 	grantID = uuid.New().String()
 	tokenHash := "testhash_" + grantID[:8]
 	_, err = conn.ExecContext(ctx, `
 		INSERT INTO disclosure_grants
 			(id, request_id, grant_token_hash, scope, granted_at, expires_at)
-		VALUES ($1, $2, $3, '{}', NOW(), $4)`,
+		VALUES ($1, $2, $3, '{"disclosure_level":"full"}'::jsonb, NOW(), $4)`,
 		grantID, requestID, tokenHash, expiresAt)
 	require.NoError(t, err)
 
@@ -1187,6 +1190,154 @@ func TestGetBatchVisibility_DisclosureGrant(t *testing.T) {
 }
 
 // ============================================================================
+// GetBatchVisibility — disclosure_level honored (pseudonymous / redacted)
+//
+// Pre-fix: GetBatchVisibility upgraded every disclosure-grant address to
+// VisibilityFull regardless of the grant's scope.disclosure_level. Net effect
+// was a privacy bug: an auditor with a "pseudonymous" or "redacted" grant
+// saw real addresses on every tx-list / tx-detail surface (the auditor
+// dashboard's per-address render was correct because it used a different
+// code path; everywhere else the level was silently dropped).
+//
+// These tests pin the per-level mapping documented in
+// /docs/security/privacy-requirements#disclosure-levels:
+//
+//   disclosure_level=full          → VisibilityFull          (real address shown)
+//   disclosure_level=pseudonymous  → VisibilityPseudonymous  (Address-XXXX rendered by applyRedaction)
+//   disclosure_level=redacted      → VisibilityRedacted      ([PRIVATE] rendered by applyRedaction)
+//   disclosure_level missing/unknown → VisibilityRedacted    (fail-safe default — defensible per disclosure spec §"Fail-Safe Defaults")
+// ============================================================================
+
+// setupDisclosureGrantWithLevel is like setupDisclosureGrant but writes
+// the supplied disclosure_level into the request/grant scope JSON. Pass an
+// empty string to leave scope as `{}` (the pre-fix legacy shape) — these
+// tests exercise that path explicitly.
+func setupDisclosureGrantWithLevel(t *testing.T, database *DB, viewerDID, targetDID, targetEthAddr, level string, expiresAt time.Time) (orgID, targetUserID, grantID string) {
+	t.Helper()
+	ctx := context.Background()
+	conn := database.Conn()
+
+	orgID = uuid.New().String()
+	_, err := conn.ExecContext(ctx,
+		"INSERT INTO organizations (id, slug, name, settings) VALUES ($1, $2, $3, '{}')",
+		orgID, "disc-lvl-"+orgID[:8], "Disclosure Level Test Org")
+	require.NoError(t, err)
+
+	groupID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO groups (id, org_id, slug, name, depth, path) VALUES ($1, $2, 'members', 'Members', 0, 'members')",
+		groupID, orgID)
+	require.NoError(t, err)
+	addMember(t, database, viewerDID, groupID)
+
+	targetUserID = uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO users (id, external_id, kyc, banned, metadata) VALUES ($1, $2, false, false, '{}')",
+		targetUserID, targetDID)
+	require.NoError(t, err)
+
+	err = database.SystemLinkEthAddress(ctx, targetDID, targetEthAddr)
+	require.NoError(t, err)
+
+	scopeJSON := "{}"
+	if level != "" {
+		scopeJSON = `{"disclosure_level":"` + level + `"}`
+	}
+
+	requestID := uuid.New().String()
+	_, err = conn.ExecContext(ctx, `
+		INSERT INTO disclosure_requests
+			(id, requester_did, target_user_id, org_id, scope, reason, status, requested_at)
+		VALUES ($1, $2, $3, $4, $5::jsonb, 'level test', 'approved', NOW())`,
+		requestID, viewerDID, targetUserID, orgID, scopeJSON)
+	require.NoError(t, err)
+
+	grantID = uuid.New().String()
+	tokenHash := "testhash_lvl_" + grantID[:8]
+	_, err = conn.ExecContext(ctx, `
+		INSERT INTO disclosure_grants
+			(id, request_id, grant_token_hash, scope, granted_at, expires_at)
+		VALUES ($1, $2, $3, $4::jsonb, NOW(), $5)`,
+		grantID, requestID, tokenHash, scopeJSON, expiresAt)
+	require.NoError(t, err)
+
+	return orgID, targetUserID, grantID
+}
+
+func TestGetBatchVisibility_DisclosureGrant_LevelPseudonymous(t *testing.T) {
+	database := setupRBACTestDB(t)
+	defer cleanupTestDB(t, database)
+	ctx := context.Background()
+
+	const viewerDID = "did:test:lvl_pseudo_viewer"
+	const targetDID = "did:test:lvl_pseudo_target"
+	const targetEthAddr = "0xd15c000000000000000000000000000000000050"
+
+	setupDisclosureGrantWithLevel(t, database, viewerDID, targetDID, targetEthAddr,
+		"pseudonymous", time.Now().Add(24*time.Hour))
+
+	visMap, err := database.GetBatchVisibility(ctx, viewerDID, []string{targetEthAddr})
+	require.NoError(t, err)
+	assert.Equal(t, explorer.VisibilityPseudonymous, visMap[targetEthAddr],
+		"pseudonymous grant must map to VisibilityPseudonymous so applyRedaction substitutes the pseudonym, not the real address")
+}
+
+func TestGetBatchVisibility_DisclosureGrant_LevelRedacted(t *testing.T) {
+	database := setupRBACTestDB(t)
+	defer cleanupTestDB(t, database)
+	ctx := context.Background()
+
+	const viewerDID = "did:test:lvl_red_viewer"
+	const targetDID = "did:test:lvl_red_target"
+	const targetEthAddr = "0xd15c000000000000000000000000000000000051"
+
+	setupDisclosureGrantWithLevel(t, database, viewerDID, targetDID, targetEthAddr,
+		"redacted", time.Now().Add(24*time.Hour))
+
+	visMap, err := database.GetBatchVisibility(ctx, viewerDID, []string{targetEthAddr})
+	require.NoError(t, err)
+	assert.Equal(t, explorer.VisibilityRedacted, visMap[targetEthAddr],
+		"redacted grant must map to VisibilityRedacted so applyRedaction substitutes [PRIVATE], not the real address")
+}
+
+func TestGetBatchVisibility_DisclosureGrant_LevelFull(t *testing.T) {
+	database := setupRBACTestDB(t)
+	defer cleanupTestDB(t, database)
+	ctx := context.Background()
+
+	const viewerDID = "did:test:lvl_full_viewer"
+	const targetDID = "did:test:lvl_full_target"
+	const targetEthAddr = "0xd15c000000000000000000000000000000000052"
+
+	setupDisclosureGrantWithLevel(t, database, viewerDID, targetDID, targetEthAddr,
+		"full", time.Now().Add(24*time.Hour))
+
+	visMap, err := database.GetBatchVisibility(ctx, viewerDID, []string{targetEthAddr})
+	require.NoError(t, err)
+	assert.Equal(t, explorer.VisibilityFull, visMap[targetEthAddr],
+		"full grant must map to VisibilityFull")
+}
+
+func TestGetBatchVisibility_DisclosureGrant_LevelMissing_FailSafeRedacted(t *testing.T) {
+	database := setupRBACTestDB(t)
+	defer cleanupTestDB(t, database)
+	ctx := context.Background()
+
+	const viewerDID = "did:test:lvl_missing_viewer"
+	const targetDID = "did:test:lvl_missing_target"
+	const targetEthAddr = "0xd15c000000000000000000000000000000000053"
+
+	// scope = `{}` (no disclosure_level key) — exercises the legacy / missing path.
+	setupDisclosureGrantWithLevel(t, database, viewerDID, targetDID, targetEthAddr,
+		"", time.Now().Add(24*time.Hour))
+
+	visMap, err := database.GetBatchVisibility(ctx, viewerDID, []string{targetEthAddr})
+	require.NoError(t, err)
+	assert.Equal(t, explorer.VisibilityRedacted, visMap[targetEthAddr],
+		"missing disclosure_level must fail safe to VisibilityRedacted, not silently upgrade to Full (defence in depth against legacy / malformed grants)")
+}
+
+// ============================================================================
 // GetBatchVisibilityDetailed — disclosure grant reason
 // ============================================================================
 
@@ -1372,12 +1523,13 @@ func TestDisclosureGrant_MultipleAddresses(t *testing.T) {
 	err = database.SystemLinkEthAddress(ctx, targetDID, addr2)
 	require.NoError(t, err)
 
-	// Create disclosure grant
+	// Create disclosure grant. Multi-address test asserts the multi-row join
+	// behaviour; the level just needs to be a real, supported value (full).
 	requestID := uuid.New().String()
 	_, err = conn.ExecContext(ctx, `
 		INSERT INTO disclosure_requests
 			(id, requester_did, target_user_id, org_id, scope, reason, status, requested_at)
-		VALUES ($1, $2, $3, $4, '{}', 'Multi-address test', 'approved', NOW())`,
+		VALUES ($1, $2, $3, $4, '{"disclosure_level":"full"}'::jsonb, 'Multi-address test', 'approved', NOW())`,
 		requestID, viewerDID, targetUserID, orgID)
 	require.NoError(t, err)
 
@@ -1386,7 +1538,7 @@ func TestDisclosureGrant_MultipleAddresses(t *testing.T) {
 	_, err = conn.ExecContext(ctx, `
 		INSERT INTO disclosure_grants
 			(id, request_id, grant_token_hash, scope, granted_at, expires_at)
-		VALUES ($1, $2, $3, '{}', NOW(), $4)`,
+		VALUES ($1, $2, $3, '{"disclosure_level":"full"}'::jsonb, NOW(), $4)`,
 		grantID, requestID, tokenHash, time.Now().Add(24*time.Hour))
 	require.NoError(t, err)
 
