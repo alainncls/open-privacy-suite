@@ -16,6 +16,8 @@ import (
 	"privacy-proxy/internal/audit"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/proxy"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 // ExtraRPCNamespaces defines additional JSON-RPC method namespaces
@@ -247,7 +249,7 @@ type Config struct {
 	CORSAllowedOrigins     string              // Comma-separated list of allowed origins, or "*" for all (default: "*" in dev)
 	MockSignatures         bool                // If true, accept any signature without verification (dev/demo only, NEVER in production)
 	AllowMockLogin         bool                // If true, accept mock JWZ tokens for testing (dev/demo only, NEVER in production)
-	OAuthFirstPartyClients []string            // RD-993: client_ids eligible for silent SSO (OIDC prompt=none semantics). Empty = no client gets silent SSO; falls back to interactive Privado flow.
+	OAuthFirstPartyClients map[string]string   // RD-993 + RD-1006: client_id → bcrypt-hashed client_secret. Each first-party client must carry a secret; the proxy verifies it at /oauth/token. Empty map = no client gets silent SSO; falls back to interactive Privado flow.
 	DemoAutoAuthDelay      time.Duration       // Auto-complete auth sessions for demo recording (0 = disabled, forced off in production)
 	ExtraRPCNamespacesFile string              // Path to JSON file with additional RPC method namespaces (e.g. Linea's linea_*)
 	ExtraRPCNamespaces     *ExtraRPCNamespaces // Parsed from ExtraRPCNamespacesFile
@@ -569,7 +571,7 @@ func Load() *Config {
 		CORSAllowedOrigins:           corsOrigins,
 		MockSignatures:               mockSigs,
 		AllowMockLogin:               allowMockLogin,
-		OAuthFirstPartyClients:       getSliceEnv("OAUTH_FIRST_PARTY_CLIENTS", ","),
+		OAuthFirstPartyClients:       parseFirstPartyClients(getEnv("OAUTH_FIRST_PARTY_CLIENTS", "")),
 		DemoAutoAuthDelay:            demoDelay,
 		ExtraRPCNamespacesFile:       extraRPCNamespacesFile,
 		ExtraRPCNamespaces:           extraRPCNamespaces,
@@ -632,6 +634,33 @@ func getSliceEnv(key, sep string) []string {
 	return result
 }
 
+// parseFirstPartyClients parses OAUTH_FIRST_PARTY_CLIENTS into a {clientID:
+// bcryptHash} map. Format: comma-separated <clientID>:<bcryptHash> entries.
+// Fails closed: a malformed entry (missing :<hash>) panics at startup rather
+// than silently degrading silent SSO to "no client authentication" (RD-1006).
+// Empty raw → empty map → silent SSO disabled for every client.
+func parseFirstPartyClients(raw string) map[string]string {
+	out := map[string]string{}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return out
+	}
+	for _, e := range strings.Split(raw, ",") {
+		e = strings.TrimSpace(e)
+		if e == "" {
+			continue
+		}
+		id, hash, ok := strings.Cut(e, ":")
+		id = strings.TrimSpace(id)
+		hash = strings.TrimSpace(hash)
+		if !ok || id == "" || hash == "" {
+			panic(fmt.Sprintf("OAUTH_FIRST_PARTY_CLIENTS: entry %q must be <client_id>:<bcrypt_hash> (RD-1006). Generate a hash with: htpasswd -bnBC 12 \"\" \"$SECRET\" | tr -d ':\\n'", e))
+		}
+		out[id] = hash
+	}
+	return out
+}
+
 // IsProduction returns true if running in production mode
 func (c *Config) IsProduction() bool {
 	return c.Environment == "production"
@@ -648,12 +677,24 @@ func (c *Config) IsFirstPartyOAuthClient(clientID string) bool {
 	if clientID == "" {
 		return false
 	}
-	for _, allowed := range c.OAuthFirstPartyClients {
-		if allowed == clientID {
-			return true
-		}
+	_, ok := c.OAuthFirstPartyClients[clientID]
+	return ok
+}
+
+// VerifyFirstPartyClientSecret reports whether clientID is on the first-party
+// allowlist AND the provided plaintext secret matches its registered bcrypt
+// hash (RD-1006). Verification happens at the /oauth/token endpoint so the
+// secret travels server-to-server, never through a browser context. Returns
+// false for unknown clients, empty secrets, or any bcrypt mismatch.
+func (c *Config) VerifyFirstPartyClientSecret(clientID, secret string) bool {
+	if clientID == "" || secret == "" {
+		return false
 	}
-	return false
+	hash, ok := c.OAuthFirstPartyClients[clientID]
+	if !ok {
+		return false
+	}
+	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(secret)) == nil
 }
 
 // AzureADEnabled returns true if Azure AD authentication is configured.

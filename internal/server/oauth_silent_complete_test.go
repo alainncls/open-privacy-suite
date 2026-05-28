@@ -27,7 +27,10 @@ import (
 // configures the first-party allowlist for the test.
 func setupSilentCompleteTestRouter(t *testing.T, srv *Server, firstPartyClients []string) *gin.Engine {
 	t.Helper()
-	srv.config.OAuthFirstPartyClients = firstPartyClients
+	srv.config.OAuthFirstPartyClients = map[string]string{}
+	for _, id := range firstPartyClients {
+		srv.config.OAuthFirstPartyClients[id] = "$2a$10$placeholderhashfortestsXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+	}
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.POST(

@@ -39,6 +39,17 @@ func main() {
 		slog.Warn("MOCK_SIGNATURES=true - signature verification DISABLED - only for demo, never production")
 	}
 
+	// RD-1006 option A: warn when the default literal "explorer" client_id
+	// shows up on a production allowlist — operators should use opaque
+	// per-environment IDs (e.g. "explorer-prod-${random}") so a leaked or
+	// recorded ID from one env can't be replayed against another and audit
+	// logs aren't ambiguous across environments.
+	if cfg.IsProduction() {
+		if _, ok := cfg.OAuthFirstPartyClients["explorer"]; ok {
+			slog.Warn("OAUTH_FIRST_PARTY_CLIENTS contains the default literal \"explorer\" in production - use an opaque per-environment client_id (RD-1006 option A)")
+		}
+	}
+
 	// Log if demo auto-auth is enabled
 	if cfg.DemoAutoAuthDelay > 0 {
 		slog.Warn("demo mode: auth sessions will auto-complete", "delay", cfg.DemoAutoAuthDelay)

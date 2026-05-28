@@ -4,6 +4,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 func TestLoad_Defaults(t *testing.T) {
@@ -911,4 +913,89 @@ func TestExtraRPCNamespaces_UnmarshalJSON(t *testing.T) {
 			t.Fatalf("expected version-mismatch error, got %v", err)
 		}
 	})
+}
+
+// RD-1006: per-entry client_secret verification for the first-party allowlist.
+
+func bcryptHashFor(t *testing.T, secret string) string {
+	t.Helper()
+	h, err := bcrypt.GenerateFromPassword([]byte(secret), bcrypt.MinCost)
+	if err != nil {
+		t.Fatalf("bcrypt hash: %v", err)
+	}
+	return string(h)
+}
+
+func TestParseFirstPartyClients(t *testing.T) {
+	t.Run("empty raw returns empty map", func(t *testing.T) {
+		got := parseFirstPartyClients("")
+		if len(got) != 0 {
+			t.Fatalf("expected empty map, got %v", got)
+		}
+	})
+
+	t.Run("single entry parses", func(t *testing.T) {
+		hash := bcryptHashFor(t, "s3cret")
+		got := parseFirstPartyClients("explorer:" + hash)
+		if got["explorer"] != hash {
+			t.Fatalf("expected hash for explorer, got %q", got["explorer"])
+		}
+	})
+
+	t.Run("multiple entries parse, whitespace tolerated", func(t *testing.T) {
+		h1 := bcryptHashFor(t, "one")
+		h2 := bcryptHashFor(t, "two")
+		got := parseFirstPartyClients("  a:" + h1 + " , b:" + h2 + "  ")
+		if got["a"] != h1 || got["b"] != h2 {
+			t.Fatalf("missing entries: %v", got)
+		}
+	})
+
+	t.Run("malformed entry without colon panics fail-closed", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Fatalf("expected panic, got nil")
+			}
+		}()
+		_ = parseFirstPartyClients("explorer")
+	})
+
+	t.Run("empty hash panics fail-closed", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Fatalf("expected panic, got nil")
+			}
+		}()
+		_ = parseFirstPartyClients("explorer:")
+	})
+}
+
+func TestConfig_VerifyFirstPartyClientSecret(t *testing.T) {
+	hash := bcryptHashFor(t, "correct-horse-battery-staple")
+	c := &Config{OAuthFirstPartyClients: map[string]string{
+		"explorer-test": hash,
+	}}
+
+	if !c.IsFirstPartyOAuthClient("explorer-test") {
+		t.Fatalf("IsFirstPartyOAuthClient: known client returned false")
+	}
+	if c.IsFirstPartyOAuthClient("unknown") {
+		t.Fatalf("IsFirstPartyOAuthClient: unknown client returned true")
+	}
+
+	if !c.VerifyFirstPartyClientSecret("explorer-test", "correct-horse-battery-staple") {
+		t.Fatalf("expected valid secret to verify")
+	}
+	if c.VerifyFirstPartyClientSecret("explorer-test", "wrong") {
+		t.Fatalf("wrong secret should not verify")
+	}
+	if c.VerifyFirstPartyClientSecret("unknown-client", "anything") {
+		t.Fatalf("unknown client should not verify")
+	}
+	if c.VerifyFirstPartyClientSecret("explorer-test", "") {
+		t.Fatalf("empty secret should not verify")
+	}
+	if c.VerifyFirstPartyClientSecret("", "anything") {
+		t.Fatalf("empty client_id should not verify")
+	}
 }
