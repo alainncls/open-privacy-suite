@@ -28,9 +28,7 @@ func setupTestServerForEthLink(t *testing.T) *Server {
 
 	if dbURL == "" {
 		// Use testcontainers for local development
-		var cleanup func()
-		dbURL, cleanup = db.SetupTestContainer(t)
-		t.Cleanup(cleanup)
+		dbURL = sharedTestDBURL(t)
 	} else {
 		if err := db.EnsureTestDatabase(dbURL); err != nil {
 			t.Fatalf("PostgreSQL not available: %v", err)

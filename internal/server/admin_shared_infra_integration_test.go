@@ -39,9 +39,7 @@ type testServerSharedInfra struct {
 func setupTestServerForSharedInfra(t *testing.T) *testServerSharedInfra {
 	dbURL := os.Getenv("TEST_DATABASE_URL")
 	if dbURL == "" {
-		var cleanup func()
-		dbURL, cleanup = db.SetupTestContainer(t)
-		t.Cleanup(cleanup)
+		dbURL = sharedTestDBURL(t)
 	} else if err := db.EnsureTestDatabase(dbURL); err != nil {
 		t.Fatalf("PostgreSQL not available: %v", err)
 	}

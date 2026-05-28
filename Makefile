@@ -85,21 +85,30 @@ test: ensure-hooks test-go frontend-test
 # Run all Go tests (unit + e2e)
 test-go: test-unit test-e2e
 
-# Run Go unit tests only (with -p 1 to avoid database conflicts between packages)
-test-unit: test-db-ready
-	go test ./internal/... -v -p 1 -timeout 20m
+# Run Go unit tests only (with -p 1 to avoid database conflicts between packages).
+# Tests spin their own ephemeral Postgres containers via testcontainers — they
+# do NOT need the compose-managed dev postgres on host port 5432, so we don't
+# pull in test-db-ready here. Forcing the dev postgres up made test-unit fail
+# whenever another stack already held :5432 (RD-1010).
+#
+# Per-package timeout: 10m. The whole suite should finish in ~5min post-RD-1010
+# (internal/server alone dropped from 898s → 13s thanks to shared testcontainer).
+# A run that spills past 10m means something has regressed and should be fixed,
+# not papered over with a larger budget.
+test-unit:
+	go test ./internal/... -v -p 1 -timeout 10m
 
 # Minimum coverage threshold (percentage) - start at 45%, increase over time
 MIN_COVERAGE ?= 45
 
 # Run unit tests with coverage
-test-coverage: test-db-ready
+test-coverage:
 	go test ./internal/... -v -p 1 -coverprofile=coverage.out
 	go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
 
 # Run unit tests with coverage and enforce minimum threshold
-test-coverage-check: test-db-ready
+test-coverage-check:
 	go test ./internal/... -v -p 1 -coverprofile=coverage.out
 	@COVERAGE=$$(go tool cover -func=coverage.out | grep total | awk '{print $$3}' | sed 's/%//'); \
 	COVERAGE_INT=$${COVERAGE%.*}; \
@@ -117,7 +126,7 @@ test-db-ready:
 	@echo "PostgreSQL is ready"
 
 # Run Go E2E tests
-test-e2e: test-db-ready
+test-e2e:
 	go test ./e2e/... -v -p 1 -timeout 30m
 
 # Negative-network test for the privacy-mode deployment (RD-855 Phase 4b).

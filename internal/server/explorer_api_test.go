@@ -44,9 +44,7 @@ func setupTestServerForExplorer(t *testing.T) (*Server, *db.DB) {
 
 	if dbURL == "" {
 		// Use testcontainers for local development
-		var cleanup func()
-		dbURL, cleanup = db.SetupTestContainer(t)
-		t.Cleanup(cleanup)
+		dbURL = sharedTestDBURL(t)
 	} else {
 		if err := db.EnsureTestDatabase(dbURL); err != nil {
 			t.Fatalf("PostgreSQL not available: %v", err)
@@ -1399,9 +1397,7 @@ func setupTestServerForExplorerTransactions(t *testing.T) (*Server, *db.DB, *sql
 
 	dbURL := os.Getenv("TEST_DATABASE_URL")
 	if dbURL == "" {
-		var cleanup func()
-		dbURL, cleanup = db.SetupTestContainer(t)
-		t.Cleanup(cleanup)
+		dbURL = sharedTestDBURL(t)
 	} else {
 		if err := db.EnsureTestDatabase(dbURL); err != nil {
 			t.Fatalf("PostgreSQL not available: %v", err)
