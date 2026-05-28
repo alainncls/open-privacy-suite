@@ -44,6 +44,7 @@ export const disclosureApi = {
       const backendInput: Record<string, unknown> = {
         target_user_id: input.user_external_id, // user_external_id is actually the user UUID from dropdown
         requester_did: input.requester_did, // DID of auditor who will get access
+        org_id: input.org_id, // Required for JWT org admins; backend defaults to system default org if omitted.
         reason: input.purpose,
         legal_basis: input.legal_basis,
         scope: {

@@ -95,6 +95,11 @@ export interface CreateDisclosureRequestInput {
   valid_until?: string;
   request_reference?: string;
   legal_basis?: string;
+  // Org context for the request. Required for JWT-based org admins — the
+  // backend uses this to enforce requireFullAdminInScope. Omitting it falls
+  // back to the system default org, which fails closed for any admin not
+  // scoped to that org. Super-admin / dev-mode callers can omit it.
+  org_id?: string;
 }
 
 export interface ApproveDisclosureResponse {

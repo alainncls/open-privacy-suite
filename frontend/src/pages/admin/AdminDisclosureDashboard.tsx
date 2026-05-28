@@ -241,7 +241,10 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
   const handleCreateRequest = async (input: CreateDisclosureRequestInput) => {
     setIsCreating(true);
     try {
-      await disclosureApi.admin.createRequest(input);
+      // Bind the request to whichever org the dashboard is currently filtered
+      // to. Without this, the backend defaults to the system default org and
+      // a JWT admin scoped to any other org gets 403 from requireFullAdminInScope.
+      await disclosureApi.admin.createRequest({ ...input, org_id: filter.org_id });
       setCreateDialogOpen(false);
       await fetchData();
     } catch (err) {
