@@ -298,12 +298,18 @@ func TestRD944_ListGrants_JWTAdmin_SingleOrg_NoOrgID_OK(t *testing.T) {
 //
 // RD-944 added jwt_admin coverage for ListRequests / ListGrants but left
 // createDisclosureRequest untested under jwt_admin. The FE bug that prompted
-// this PR (frontend omitting org_id, backend defaulting to system default,
+// PR #278 (frontend omitting org_id, backend defaulting to system default,
 // caller of a non-default org getting 403) was structurally invisible to
 // `TestCreateDisclosureRequest` because that test runs without an
 // auth_method (i.e. dev-mode bypass — requireFullAdminInScope returns true
 // without checking org_ids). These tests close that gap by exercising the
 // same set of caller scopes RD-944 exercises for the list endpoints.
+//
+// RD-1011 then extended the RD-944 explicit-over-implicit rule from the
+// list endpoints to createDisclosureRequest itself, so the no-org_id path
+// resolves to the caller's single admin org (or 400 for multi-org admins)
+// instead of silently defaulting to the system default org. The AC #11
+// family of cases below pins that behaviour.
 // ---------------------------------------------------------------------------
 
 // seedTargetUserInOrg inserts a user plus a minimal group + membership
@@ -372,29 +378,108 @@ func TestRD944_CreateRequest_JWTAdmin_MatchingOrgID_201(t *testing.T) {
 	assert.Equal(t, orgA, resp.OrgID, "request must be scoped to the body's org_id, not the system default")
 }
 
-// AC #11 — single-org full admin omits org_id. Backend currently defaults
-// to the system default org ("00000000-...001"), which the caller is not
-// admin of, so requireFullAdminInScope 403s. This is the exact regression
-// the FE fix in this PR works around; the test pins the current backend
-// behaviour so a future relaxation (e.g. "pick caller's only org" like
-// listRequests does) is an intentional change with a test update.
-func TestRD944_CreateRequest_JWTAdmin_NoOrgID_DefaultOrgMismatch_403(t *testing.T) {
+// AC #11 (RD-1011) — single-org full admin omits org_id. Pre-RD-1011
+// the backend silently defaulted to the system default org and the
+// caller (admin of orgA, not of the default org) got a 403 from
+// requireFullAdminInScope; PR #278 worked around it by always sending
+// org_id from the FE. The defensive backend fix mirrors the RD-944
+// LIST behaviour: exactly one org in scope → pick it, so a future FE
+// regression "create with empty org_id" succeeds with the caller's
+// only org instead of failing opaquely against the system default.
+func TestRD944_CreateRequest_JWTAdmin_SingleOrg_NoOrgID_PicksOwnOrg(t *testing.T) {
 	srv, _, database := setupTestServerForDisclosure(t)
 	defer database.Close()
 
-	orgA := createTestOrgForHandler(t, database, "rd944-create-nooidA")
+	orgA := createTestOrgForHandler(t, database, "rd1011-create-singleA")
 	targetUserID := seedTargetUserInOrg(t, database, orgA)
 	router := setupDisclosureRouterWithAuth(srv, fakeAdminAuth("jwt_admin", []string{orgA}, nil))
 
 	w := postCreateRequest(t, router, map[string]any{
 		"target_user_id": targetUserID,
-		"reason":         "rd-944 create no org_id",
+		"reason":         "rd-1011 single-org no org_id",
+		// org_id intentionally omitted — single-org admin should fall back to orgA
+	})
+
+	require.Equalf(t, http.StatusCreated, w.Code,
+		"single-org JWT admin without org_id must fall back to their only admin org, not the system default. body=%s",
+		w.Body.String())
+	var resp disclosure.Request
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, orgA, resp.OrgID, "request must be scoped to the caller's only admin org, not the system default")
+}
+
+// AC #11b (RD-1011) — multi-org full admin omits org_id. Pre-RD-1011
+// the backend defaulted to the system default org; if the admin
+// happened to have rights there it would silently scope to it (wrong
+// org), otherwise 403 (opaque). Post-fix it MUST be a 400 with an
+// explicit "org_id is required" — symmetric with the LIST endpoints,
+// so multi-org admins are forced to pick a target explicitly.
+func TestRD944_CreateRequest_JWTAdmin_MultiOrg_NoOrgID_400(t *testing.T) {
+	srv, _, database := setupTestServerForDisclosure(t)
+	defer database.Close()
+
+	orgA := createTestOrgForHandler(t, database, "rd1011-create-multiA")
+	orgB := createTestOrgForHandler(t, database, "rd1011-create-multiB")
+	targetUserID := seedTargetUserInOrg(t, database, orgA)
+	_ = orgB
+
+	router := setupDisclosureRouterWithAuth(srv, fakeAdminAuth("jwt_admin", []string{orgA, orgB}, nil))
+
+	w := postCreateRequest(t, router, map[string]any{
+		"target_user_id": targetUserID,
+		"reason":         "rd-1011 multi-org no org_id",
 		// org_id intentionally omitted
 	})
 
-	require.Equalf(t, http.StatusForbidden, w.Code,
-		"jwt admin of non-default org without org_id falls to system-default org → must 403. body=%s",
+	require.Equalf(t, http.StatusBadRequest, w.Code,
+		"multi-org JWT admin without org_id must get 400 — silently scoping to one of several admin orgs is the bug we are fixing. body=%s",
 		w.Body.String())
+}
+
+// AC #11c (RD-1011) — super-admin / dev mode without org_id falls
+// back to the system default org. Preserved for backward compatibility
+// with admin scripts that target the system defaults, matching the
+// RD-944 super-admin behaviour on the LIST endpoints.
+func TestRD944_CreateRequest_SuperAdmin_NoOrgID_DefaultOrg(t *testing.T) {
+	srv, _, database := setupTestServerForDisclosure(t)
+	defer database.Close()
+
+	// Seed the system default org row (ResetTestDatabase truncates
+	// everything, and the foreign-key chain target_user → group →
+	// org requires the org row to exist before seedTargetUserInOrg
+	// can insert the group).
+	defaultOrgID := "00000000-0000-0000-0000-000000000001"
+	_, err := database.Conn().ExecContext(context.Background(),
+		`INSERT INTO organizations (id, slug, name, settings)
+		 VALUES ($1, $2, $3, '{}')
+		 ON CONFLICT (id) DO NOTHING`,
+		defaultOrgID, "default", "Default Organization")
+	require.NoError(t, err)
+
+	// Target user must live in the system default org so the
+	// requireUserInCallerScope gate downstream doesn't 403 the
+	// super-admin path before the org-resolution behaviour we want to
+	// pin gets exercised.
+	targetUserID := seedTargetUserInOrg(t, database, defaultOrgID)
+
+	// No fakeAdminAuth installed — auth_method stays empty, matching
+	// the dev / super-admin bypass path (requireFullAdminInScope
+	// returns true unconditionally for non-jwt_admin callers).
+	router := setupDisclosureRouterWithAuth(srv, nil)
+
+	w := postCreateRequest(t, router, map[string]any{
+		"target_user_id": targetUserID,
+		"reason":         "rd-1011 super-admin default-org fallback",
+		// org_id intentionally omitted
+	})
+
+	require.Equalf(t, http.StatusCreated, w.Code,
+		"super-admin / dev mode without org_id must keep falling back to the system default org. body=%s",
+		w.Body.String())
+	var resp disclosure.Request
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, defaultOrgID, resp.OrgID,
+		"super-admin fallback must resolve to the system default org")
 }
 
 // AC #12 — full admin of orgA, body carries orgB → 403. Cross-org probe

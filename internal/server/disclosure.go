@@ -13,38 +13,46 @@ import (
 	"privacy-proxy/internal/rbac"
 )
 
-// resolveAdminListOrgID is the shared "no org_id supplied → which org
-// does the caller mean?" helper used by listDisclosureRequests and
-// listDisclosureGrants (RD-944). It enforces the explicit-over-implicit
-// API contract: a JWT admin gets the fall-back ONLY when there is
-// exactly one valid choice across their full-admin and read-only-admin
-// scope; otherwise the caller must specify `?org_id=` and we surface
-// a 400 rather than silently scoping to one of several.
+// resolveAdminOrgID is the core "no org_id supplied → which org does
+// the caller mean?" decision shared by all disclosure handlers whose
+// route does not carry :org_id (list endpoints read org_id from the
+// query string; createDisclosureRequest reads it from the JSON body).
+// Callers pass the already-extracted explicit value in and a
+// caller-facing description of how that value should have been
+// supplied — used in the 400 error message so multi-org admins know
+// which field to set.
 //
-// Returns (orgID, ok). When ok is false the helper has already written
-// the response and the caller must return.
+// It enforces the explicit-over-implicit API contract: a JWT admin
+// gets the fall-back ONLY when there is exactly one valid choice
+// across their full-admin and read-only-admin scope; otherwise the
+// caller must supply org_id explicitly and we surface a 400 rather
+// than silently scoping to one of several.
+//
+// Returns (orgID, ok). When ok is false the helper has already
+// written the response and the caller must return.
 //
 // Behaviour matrix:
 //
-//   * Explicit `?org_id=` supplied (any caller) → use it. Cross-org
+//   - Explicit value supplied (any caller) → use it. Cross-org
 //     authority is verified separately by the caller via
-//     requireTargetInScope; this helper only resolves the *value*.
+//     requireTargetInScope / requireFullAdminInScope; this helper
+//     only resolves the *value*.
 //
-//   * JWT admin with exactly 1 distinct org in admin_org_ids ∪
+//   - JWT admin with exactly 1 distinct org in admin_org_ids ∪
 //     admin_readonly_admin_org_ids → use it (single-valid-case
 //     fall-back; matches the RD-877 single-real-org pattern on /rpc).
 //
-//   * JWT admin with 0 or ≥2 distinct admin orgs and no explicit
-//     org_id → 400 with "org_id query parameter is required".
-//     Frontends should pass org_id explicitly from the active org
-//     in their session; API clients must always pass it.
+//   - JWT admin with 0 or ≥2 distinct admin orgs and no explicit
+//     org_id → 400 with a "<field> is required" message. Frontends
+//     should pass org_id explicitly from the active org in their
+//     session; API clients must always pass it.
 //
-//   * Super admin / dev mode (auth_method != "jwt_admin") with no
-//     org_id → system default org. Preserved for backward
+//   - Super admin / dev mode (auth_method != "jwt_admin") with no
+//     explicit org_id → system default org. Preserved for backward
 //     compatibility with admin scripts that target the system
 //     defaults.
-func resolveAdminListOrgID(c *gin.Context) (string, bool) {
-	if explicit := c.Query("org_id"); explicit != "" {
+func resolveAdminOrgID(c *gin.Context, explicit, missingFieldDesc string) (string, bool) {
+	if explicit != "" {
 		return explicit, true
 	}
 
@@ -74,15 +82,21 @@ func resolveAdminListOrgID(c *gin.Context) (string, bool) {
 		// 0 (no admin scope at all — shouldn't happen given middleware
 		// already established jwt_admin authority, but defensive) or
 		// 2+ (genuine ambiguity — caller must choose explicitly).
-		respondBadRequest(c, "org_id query parameter is required")
+		respondBadRequest(c, missingFieldDesc+" is required")
 		return "", false
 	}
 	for id := range scope {
 		return id, true
 	}
 	// Unreachable — keeps the compiler happy.
-	respondBadRequest(c, "org_id query parameter is required")
+	respondBadRequest(c, missingFieldDesc+" is required")
 	return "", false
+}
+
+// resolveAdminListOrgID wraps resolveAdminOrgID for GET handlers that
+// read org_id from the `?org_id=` query string.
+func resolveAdminListOrgID(c *gin.Context) (string, bool) {
+	return resolveAdminOrgID(c, c.Query("org_id"), "org_id query parameter")
 }
 
 // registerDisclosureRoutes registers admin disclosure API endpoints.
@@ -168,12 +182,24 @@ func (s *Server) disclosureUserMiddleware() gin.HandlerFunc {
 // activity globally via getDisclosedAddressesForViewer. Now the
 // handler enforces both org_id ∈ caller_scope and target_user_id ∈
 // caller_scope.
+//
+// RD-1011: pre-fix an empty `org_id` in the JSON body silently
+// defaulted to the system default org ("00000000-…001"), so a tier-2
+// admin of a non-default org whose FE forgot to send org_id either
+// got a 403 from requireFullAdminInScope (single-org case) or could
+// be silently scoped to the wrong org if they happened to have admin
+// rights in the system default org. PR #278 already fixed the FE to
+// always send org_id; this is the defensive backend mirror of the
+// RD-944 LIST-endpoint rule so a future FE regression fails cleanly:
+// single-org JWT admins get their only org picked, multi-org JWT
+// admins must specify org_id (400 otherwise), super-admin / dev keeps
+// the system-default fall-back for admin scripts.
 func (s *Server) createDisclosureRequest(c *gin.Context) {
 	var input struct {
 		RequesterUserID string           `json:"requester_user_id"` // Optional - who's requesting (internal user ID)
 		RequesterDID    string           `json:"requester_did"`     // DID of authorized viewer (for block explorer auth)
 		TargetUserID    string           `json:"target_user_id" binding:"required"`
-		OrgID           string           `json:"org_id"` // Defaults to default org
+		OrgID           string           `json:"org_id"` // Optional for super-admin / single-org JWT admin; required for multi-org JWT admin (RD-1011)
 		Scope           disclosure.Scope `json:"scope"`
 		Reason          string           `json:"reason" binding:"required"`
 		LegalBasis      string           `json:"legal_basis"`
@@ -186,9 +212,9 @@ func (s *Server) createDisclosureRequest(c *gin.Context) {
 		return
 	}
 
-	orgID := input.OrgID
-	if orgID == "" {
-		orgID = "00000000-0000-0000-0000-000000000001" // Default org
+	orgID, ok := resolveAdminOrgID(c, input.OrgID, "org_id")
+	if !ok {
+		return
 	}
 
 	// Cross-org gate. Super-admin / dev: any org. JWT admin: org must
