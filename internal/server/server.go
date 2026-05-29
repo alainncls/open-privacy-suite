@@ -488,16 +488,28 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	rbacAuditChain := audit.NewHashChain(rbacAuditSeed)
 	database.SetRBACAuditChain(rbacAuditChain)
 
-	// Initialize SIEM forwarder if webhook URL is configured
+	// Initialize SIEM forwarder if webhook URL is configured.
+	// RD-950: NewSIEMForwarder now applies the SSRF guard at construction
+	// time and returns an error on a malformed/private URL. In production
+	// mode the same guard already runs in config.Validate (strict: HTTPS
+	// only, no loopback / RFC-1918 / link-local / CGNAT) — this is the
+	// defence-in-depth second line. In non-prod we relax to allow HTTP on
+	// loopback / private networks so local docker-compose dev with a
+	// stub SIEM still works.
 	var siemForwarder *audit.SIEMForwarder
 	if cfg.SIEMWebhookURL != "" {
-		siemForwarder = audit.NewSIEMForwarder(audit.SIEMConfig{
+		var siemErr error
+		siemForwarder, siemErr = audit.NewSIEMForwarder(audit.SIEMConfig{
 			WebhookURL:      cfg.SIEMWebhookURL,
 			AuthHeader:      cfg.SIEMAuthHeader,
 			BatchSize:       cfg.SIEMBatchSize,
 			FlushInterval:   cfg.SIEMFlushInterval,
 			FallbackLogPath: cfg.SIEMFallbackLogPath,
+			AllowInsecure:   !cfg.IsProduction(),
 		})
+		if siemErr != nil {
+			return nil, fmt.Errorf("init SIEM forwarder: %w", siemErr)
+		}
 		siemForwarder.SetMetrics(m.SIEMBatchesTotal, m.SIEMEventsDroppedTotal)
 		siemForwarder.Start()
 		s.siemForwarder = siemForwarder

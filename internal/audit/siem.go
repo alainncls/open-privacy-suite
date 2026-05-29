@@ -22,6 +22,11 @@ type SIEMConfig struct {
 	BatchSize       int
 	FlushInterval   time.Duration
 	FallbackLogPath string // If set, failed batches are appended here as JSON lines.
+	// AllowInsecure relaxes the SSRF guard so HTTP (not just HTTPS) and
+	// loopback/private destinations are accepted. Intended for tests and
+	// local development only — production callers MUST leave this false so
+	// ValidateWebhookURL (strict mode) is applied.
+	AllowInsecure bool
 }
 
 // SIEMEvent represents an audit event to forward to a SIEM system.
@@ -93,9 +98,11 @@ var blockedCIDRs = func() []*net.IPNet {
 	return nets
 }()
 
-// ValidateWebhookURL checks that the SIEM webhook URL is safe to use.
-// It rejects non-HTTPS schemes and private/loopback destinations to
-// prevent Server-Side Request Forgery (SSRF).
+// ValidateWebhookURL checks that the SIEM webhook URL is safe to use in
+// production. It rejects non-HTTPS schemes and private/loopback destinations
+// to prevent Server-Side Request Forgery (SSRF). See ValidateWebhookURLForEnv
+// for the env-aware variant used in non-prod where HTTP-on-localhost is
+// acceptable for development.
 //
 // IP range checks use net.ParseCIDR + subnet.Contains instead of
 // strings.HasPrefix to avoid the pitfalls documented in
@@ -107,12 +114,45 @@ var blockedCIDRs = func() []*net.IPNet {
 // startup. The https requirement and redirect-blocking on the client provide
 // additional defence for hostname-based URLs.
 func ValidateWebhookURL(rawURL string) error {
+	return ValidateWebhookURLForEnv(rawURL, false)
+}
+
+// ValidateWebhookURLForEnv runs the SSRF guard with an optional relaxation
+// for non-production environments (RD-950).
+//
+// In strict mode (allowInsecure=false) — the production default — the URL
+// must use HTTPS and the host must not resolve to a loopback / RFC-1918 /
+// link-local / CGNAT address. This is the only safe configuration for a
+// system that POSTs audit data from inside the VPC to an operator-supplied
+// destination.
+//
+// In relaxed mode (allowInsecure=true) HTTP is also accepted, but ONLY when
+// the host is a loopback or private-network destination — e.g. an httptest
+// server on 127.0.0.1, or a SIEM collector reachable over the Docker bridge
+// during local development. Public HTTP destinations are still rejected so
+// audit batches never traverse the public internet in cleartext.
+func ValidateWebhookURLForEnv(rawURL string, allowInsecure bool) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return fmt.Errorf("invalid SIEM webhook URL: %w", err)
 	}
-	if u.Scheme != "https" {
-		return fmt.Errorf("SIEM_WEBHOOK_URL must use https, got %q", u.Scheme)
+
+	switch u.Scheme {
+	case "https":
+		// Always allowed; fall through to the host check below.
+	case "http":
+		if !allowInsecure {
+			return fmt.Errorf("SIEM_WEBHOOK_URL must use https in production, got %q", u.Scheme)
+		}
+		// Allow HTTP only when the destination is loopback or a private
+		// network. Cleartext POST to a public host is still rejected so a
+		// misconfigured dev box can't leak audit data to the internet.
+		if err := requireLoopbackOrPrivate(u.Hostname()); err != nil {
+			return fmt.Errorf("SIEM_WEBHOOK_URL: %w", err)
+		}
+		return nil
+	default:
+		return fmt.Errorf("SIEM_WEBHOOK_URL scheme must be http or https, got %q", u.Scheme)
 	}
 
 	host := u.Hostname()
@@ -134,13 +174,71 @@ func ValidateWebhookURL(rawURL string) error {
 	return nil
 }
 
+// requireLoopbackOrPrivate enforces that an HTTP destination is loopback or
+// on a private network. Used by ValidateWebhookURLForEnv when running in the
+// relaxed mode — cleartext traffic is acceptable on the local box / VPC, but
+// not over the public internet.
+func requireLoopbackOrPrivate(host string) error {
+	if host == "localhost" {
+		return nil
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		// Domain name — cannot prove private at validation time without DNS,
+		// and we don't want cleartext POSTs to "evil.com". Reject.
+		return fmt.Errorf("http scheme is only allowed for loopback or private destinations, got hostname %q", host)
+	}
+	if ip.IsLoopback() {
+		return nil
+	}
+	for _, private := range allowedHTTPCIDRs {
+		if private.Contains(ip) {
+			return nil
+		}
+	}
+	return fmt.Errorf("http scheme is only allowed for loopback or private destinations, got %s", ip)
+}
+
+// allowedHTTPCIDRs lists private/loopback IP ranges that may use http://
+// when ValidateWebhookURLForEnv is called in relaxed mode (non-production).
+// Mirrors the operator-network ranges in server.localhostOnlyMiddleware so
+// the two trust boundaries share a single definition of "this is on our
+// network, cleartext is acceptable".
+var allowedHTTPCIDRs = func() []*net.IPNet {
+	ranges := []string{
+		"10.0.0.0/8",
+		"172.16.0.0/12",
+		"192.168.0.0/16",
+		"100.64.0.0/10",
+		"fc00::/7", // IPv6 ULA
+	}
+	nets := make([]*net.IPNet, 0, len(ranges))
+	for _, r := range ranges {
+		_, cidr, err := net.ParseCIDR(r)
+		if err != nil {
+			panic(fmt.Sprintf("audit: invalid allowedHTTPCIDR %q: %v", r, err))
+		}
+		nets = append(nets, cidr)
+	}
+	return nets
+}()
+
 // NewSIEMForwarder creates a new SIEM forwarder. Call Start() to begin flushing.
-func NewSIEMForwarder(cfg SIEMConfig) *SIEMForwarder {
+//
+// The WebhookURL is validated at construction time via
+// ValidateWebhookURLForEnv (RD-950) — a malformed or SSRF-prone destination
+// makes the forwarder fail fast at startup rather than at the first flush.
+// Callers in production must leave SIEMConfig.AllowInsecure=false so HTTPS
+// is required and loopback/RFC-1918/link-local destinations are rejected.
+func NewSIEMForwarder(cfg SIEMConfig) (*SIEMForwarder, error) {
 	if cfg.BatchSize <= 0 {
 		cfg.BatchSize = 100
 	}
 	if cfg.FlushInterval <= 0 {
 		cfg.FlushInterval = 30 * time.Second
+	}
+	if err := ValidateWebhookURLForEnv(cfg.WebhookURL, cfg.AllowInsecure); err != nil {
+		return nil, err
 	}
 
 	return &SIEMForwarder{
@@ -156,7 +254,7 @@ func NewSIEMForwarder(cfg SIEMConfig) *SIEMForwarder {
 		batch: make([]SIEMEvent, 0, cfg.BatchSize),
 		stop:  make(chan struct{}),
 		done:  make(chan struct{}),
-	}
+	}, nil
 }
 
 // Send queues an event for the next batch. If the batch is full, an immediate flush is triggered.
@@ -222,6 +320,16 @@ func (s *SIEMForwarder) send(events []SIEMEvent) error {
 	body, err := json.Marshal(events)
 	if err != nil {
 		return fmt.Errorf("marshal events: %w", err)
+	}
+
+	// RD-950: defence-in-depth re-validation immediately before the outbound
+	// request. NewSIEMForwarder already validates the URL at startup, but
+	// re-checking here means any future code that mutates s.cfg.WebhookURL
+	// (or any new flush path that constructs SIEMForwarder by hand) still
+	// has to clear the SSRF guard before reaching net/http. The check is
+	// cheap (no DNS, no network) and runs once per batch, not per event.
+	if err := ValidateWebhookURLForEnv(s.cfg.WebhookURL, s.cfg.AllowInsecure); err != nil {
+		return fmt.Errorf("SIEM webhook URL failed SSRF guard: %w", err)
 	}
 
 	var lastErr error
