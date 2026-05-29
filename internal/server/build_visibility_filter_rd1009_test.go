@@ -175,3 +175,112 @@ func TestBuildVisibilityFilter_UnionsTransferParticipantTxHashes_RD1009(t *testi
 
 	_ = database // returned by helper; not asserted on here but kept in scope for future expansion (e.g. driving the full redactor path).
 }
+
+// TestBuildRedactOptsForViewer_IncludesTransferParticipantTxHashes_RD1009 closes
+// the by-hash gap from the original RD-1009 fix. buildVisibilityFilter is used
+// by the LIST handlers (GET /transactions, /transfers, etc.); single-item
+// handlers like GET /transactions/:hash use buildRedactOptsForViewer. Pre-fix
+// buildRedactOptsForViewer only loaded GetVisibleTxHashesForDID (the explicit
+// visibleTo shares) and missed the transfer-participant union — so a tx hash
+// resolvable via the transfer feed would 404 at /transactions/:hash. Post-fix
+// buildRedactOptsForViewer delegates to buildVisibilityFilter → redactOptsFromFilter,
+// inheriting the union; this test asserts the inheritance with the same
+// reproducer fixture as TestBuildVisibilityFilter_UnionsTransferParticipantTxHashes_RD1009.
+func TestBuildRedactOptsForViewer_IncludesTransferParticipantTxHashes_RD1009(t *testing.T) {
+	srv, _, conn := setupTestServerForExplorerTransactions(t)
+
+	_, err := conn.ExecContext(context.Background(), extendedExplorerSchemaRD1009)
+	require.NoError(t, err, "create token_transfers table")
+	t.Cleanup(func() {
+		_, _ = conn.ExecContext(context.Background(), "DROP TABLE IF EXISTS token_transfers")
+	})
+
+	ctx := context.Background()
+
+	// Mirror the reproducer fixture from
+	// TestBuildVisibilityFilter_UnionsTransferParticipantTxHashes_RD1009 —
+	// admin org + visible org-mate contract + private wallet calling a private
+	// token contract that transfers to the org-mate. The transfer's
+	// admin-visible counterparty is what should keep the parent tx's hash in
+	// the opts allowlist for by-hash handlers.
+	orgID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO organizations (id, slug, name, settings) VALUES ($1, $2, $3, '{}')",
+		orgID, "rd1009-byhash-org", "RD-1009 By-Hash Test Org")
+	require.NoError(t, err)
+
+	adminUserID := uuid.New().String()
+	const adminDID = "did:privado:rd1009_byhash_admin"
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO users (id, external_id, kyc, banned, metadata) VALUES ($1, $2, false, false, '{}')",
+		adminUserID, adminDID)
+	require.NoError(t, err)
+
+	adminGroupID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO groups (id, org_id, slug, name, depth, path, is_org_admin) VALUES ($1, $2, 'admins', 'Admins', 0, 'admins', true)",
+		adminGroupID, orgID)
+	require.NoError(t, err)
+
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO user_memberships (id, user_id, group_id, source) VALUES ($1, $2, $3, 'admin')",
+		uuid.New().String(), adminUserID, adminGroupID)
+	require.NoError(t, err)
+
+	const orgMateContract = "0xcccccccccccccccccccccccccccccccccccccccd"
+	contractID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO contracts (id, org_id, address, name) VALUES ($1, $2, $3, $4)",
+		contractID, orgID, orgMateContract, "OrgMate Vault (by-hash)")
+	require.NoError(t, err)
+
+	const privateTokenContract = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbe"
+	otherOrgID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO organizations (id, slug, name, settings) VALUES ($1, $2, $3, '{}')",
+		otherOrgID, "rd1009-byhash-other-org", "Other Org (by-hash)")
+	require.NoError(t, err)
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO contracts (id, org_id, address, name) VALUES ($1, $2, $3, $4)",
+		uuid.New().String(), otherOrgID, privateTokenContract, "Private Token (by-hash)")
+	require.NoError(t, err)
+
+	const privateWalletEOA = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab"
+	otherUserID := uuid.New().String()
+	const otherDID = "did:privado:rd1009_byhash_other"
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO users (id, external_id, kyc, banned, metadata) VALUES ($1, $2, false, false, '{}')",
+		otherUserID, otherDID)
+	require.NoError(t, err)
+	_, err = conn.ExecContext(ctx,
+		`INSERT INTO eth_address_links (did, eth_address, link_type) VALUES ($1, $2, 'user')`,
+		otherDID, privateWalletEOA)
+	require.NoError(t, err)
+
+	blockNum := seedExplorerBlock(t, conn)
+
+	const reproducerTxHash = "0xrd1009_byhash_reproducer"
+	seedExplorerTransaction(t, conn, blockNum, reproducerTxHash, privateWalletEOA, privateTokenContract)
+	_, err = conn.ExecContext(ctx, `
+		INSERT INTO token_transfers (tx_hash, log_index, token_address, from_address, to_address, value, block_number)
+		VALUES ($1, 0, $2, $3, $4, 1000, $5)`,
+		reproducerTxHash, privateTokenContract, privateWalletEOA, orgMateContract, blockNum)
+	require.NoError(t, err)
+
+	// THE BY-HASH INVARIANT: buildRedactOptsForViewer must include the
+	// transfer-participant tx hash in opts.VisibleTxHashes. Pre-fix the map
+	// was empty (or only contained explicit visibleTo shares), so RedactTransactions
+	// downstream would drop the row via the bothHidden branch and the by-hash
+	// handler would 404. Post-fix the union is present.
+	opts := srv.buildRedactOptsForViewer(ctx, adminDID)
+	require.NotNil(t, opts.VisibleTxHashes,
+		"RD-1009 by-hash regression: buildRedactOptsForViewer must populate VisibleTxHashes via buildVisibilityFilter")
+	require.Truef(t, opts.VisibleTxHashes[reproducerTxHash],
+		"RD-1009 by-hash regression: buildRedactOptsForViewer must include tx %q in the allowlist (transfer-participant union missing on the by-hash path)",
+		reproducerTxHash)
+
+	// Anonymous viewer keeps the early-return — empty opts, no DB work.
+	emptyOpts := srv.buildRedactOptsForViewer(ctx, "")
+	require.Nil(t, emptyOpts.VisibleTxHashes, "anonymous viewer must skip the buildVisibilityFilter DB work")
+	require.False(t, emptyOpts.ViewerIsAdmin, "anonymous viewer is never admin")
+}

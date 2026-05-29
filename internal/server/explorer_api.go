@@ -948,22 +948,26 @@ func redactOptsFromFilter(filter *explorer.VisibilityFilter) explorer.RedactOpts
 	return explorer.RedactOpts{VisibleTxHashes: m}
 }
 
-// buildRedactOptsForViewer builds RedactOpts from the viewer's visibleTo
-// entries. Used by single-item endpoints that don't have a VisibilityFilter.
+// buildRedactOptsForViewer builds RedactOpts for single-item endpoints
+// (getExplorerTransaction et al). Mirrors the list-path opts derivation
+// (buildVisibilityFilter → redactOptsFromFilter) so the cross-redactor
+// row-survival invariant from RD-1009 holds on by-hash surfaces too —
+// without this, a tx whose tx.from / tx.to are both hidden but whose
+// derived token-transfer rows have an admin-visible counterparty would
+// 404 at GET /transactions/:hash while still appearing in /transfers and
+// in the /transactions list. Closing the gap at this single helper
+// applies the fix to every single-item handler that calls it (12 sites
+// across explorer_api.go).
+//
+// Anonymous viewers (viewerDID == "") get the empty-opts early-return so
+// we don't pay the buildVisibilityFilter DB work for callers that have
+// no possible visibility anyway.
 func (s *Server) buildRedactOptsForViewer(ctx context.Context, viewerDID string) explorer.RedactOpts {
-	opts := explorer.RedactOpts{}
 	if viewerDID == "" {
-		return opts
+		return explorer.RedactOpts{}
 	}
-	hashes, err := s.db.GetVisibleTxHashesForDID(ctx, viewerDID)
-	if err == nil && len(hashes) > 0 {
-		m := make(map[string]bool, len(hashes))
-		for _, h := range hashes {
-			m[strings.ToLower(h)] = true
-		}
-		opts.VisibleTxHashes = m
-	}
-	// Check if viewer is an admin of any org
+	filter := s.buildVisibilityFilter(ctx, viewerDID)
+	opts := redactOptsFromFilter(filter)
 	opts.ViewerIsAdmin = s.isViewerAdmin(ctx, viewerDID)
 	s.applyAdminTxView(&opts)
 	return opts
