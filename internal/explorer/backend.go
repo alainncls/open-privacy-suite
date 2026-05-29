@@ -58,6 +58,13 @@ type ExplorerBackend interface {
 	GetTransfersByAddress(ctx context.Context, address string, limit int, beforeBlock *uint64) ([]TokenTransfer, error)
 	GetTransfersByToken(ctx context.Context, tokenAddress string, limit int, offset int) ([]TokenTransfer, int64, error)
 	GetAllTransfers(ctx context.Context, limit int, offset int) ([]TokenTransfer, int64, error)
+	// FindTransferParticipantTxs closes the RD-1009 cross-redactor row-survival
+	// asymmetry by returning tx hashes whose token-transfer participants are
+	// visible to the viewer. See Store.FindTransferParticipantTxs for the full
+	// rationale and the privacy argument (the surviving transfer row already
+	// exposes the parent tx hash, so unioning these hashes into the tx-feed
+	// allowlist reveals nothing that wasn't already exposed).
+	FindTransferParticipantTxs(ctx context.Context, visibleAddrs []string, beforeBlock *uint64, limit int) (map[string]bool, error)
 
 	// Logs
 	GetLogsByTransaction(ctx context.Context, txHash string) ([]Log, error)

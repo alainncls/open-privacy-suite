@@ -347,7 +347,7 @@ A deployment-wide boolean flag (`ORG_ADMIN_VIEW_USER_TXS`, env var; `config.OrgA
 
 ## 4. Known Gaps
 
-The following gaps are numbered. G1, G2, G3, G5, G6, G7, G8, G9, G11, G14, G16, G20, G21, G22 are resolved. G4, G15, G23 are outstanding.
+The following gaps are numbered. G1, G2, G3, G5, G6, G7, G8, G9, G11, G14, G16, G20, G21, G22, G24 are resolved. G4, G15, G23 are outstanding.
 
 ### Resolved
 
@@ -360,6 +360,9 @@ The following gaps are numbered. G1, G2, G3, G5, G6, G7, G8, G9, G11, G14, G16, 
 - **G8 (resolved):** TokenHolder entries not dropped when address is Hidden — now dropped.
 - **G9 (resolved):** Log entries not dropped when emitter is Hidden — now dropped entirely.
 - **G14 (resolved):** Token endpoints (`/tokens`, `/tokens/:address`, `/tokens/:address/holders`, `/tokens/:address/transfers`) returned raw unredacted token data without any visibility checks. Now: Hidden tokens are dropped from lists and return 404 from single-token endpoints. Redacted tokens have sensitive fields masked (`[PRIVATE]`, nil names/symbols, zeroed counts). Sub-endpoints (holders, transfers) return 404 for Hidden or Redacted token addresses. List total reflects filtered count only.
+- **G24 (resolved, RD-1009): Cross-redactor row-survival asymmetry — tx dropped while its derived token-transfer row survived**
+  `RedactTransactions` and `RedactTransfers` apply the same drop predicate (`bothHidden → drop unless adminAuditView`), but they evaluate it on *different address sets*: `RedactTransactions` checks the EVM tx's `from` / `to` (typically the EOA caller and the token *contract address*), while `RedactTransfers` checks the ERC-20 event's `from` / `to` (the actual participants). For an admin viewing an org-mate's incoming USDC, the tx looked like `{from: hidden_user, to: hidden_token_contract}` → both hidden → tx dropped, while the transfer was `{from: hidden_user, to: visible_org_mate}` → kept. Result: `/transfers` surfaced the transfer (and via `TokenTransfer.TxHash`, the parent tx hash) while `/transactions` was missing the row — incoherent UX and an audit-trail gap. **Fix:** `buildVisibilityFilter` now unions in the tx hashes returned by `ExplorerBackend.FindTransferParticipantTxs(visibleAddrs, …)` — every tx whose token-transfer participants are admin-visible is added to `VisibilityFilter.VisibleTxHashes`, so it survives both the SQL allowlist filter and `RedactTransactions`' `bothHidden` branch. Privacy-safe by construction: those tx hashes are already exposed to the viewer via the surviving transfer row, so the union reveals nothing new. The redactor's per-row field stripping still applies; only the row-survival decision changes. Counter to the broader directions considered (drop the transfer instead, or render everything `[PRIVATE]` uniformly), this preserves the visibility the admin already has on the transfer side. **Single-tx-by-hash path** (`getExplorerTransaction`) is out of scope here — it doesn't go through `buildVisibilityFilter`. If a viewer dereferences a tx hash they obtained via the transfer feed, the redactor still drops it under strict privacy; tracked as follow-up if symptom evidence justifies it.
+
 - **G22 (resolved): Address page transaction count not filtered**
   The `/addresses/:address/stats` endpoint returned the pre-computed `tx_count` from the `address_stats` table without applying visibility filtering. A viewer who could only see 2 of 12 transactions still saw "Transactions: 12", leaking the total activity volume of the address. Same class of issue as RD-758 (fixed for paginated list endpoints and block counts) but missed for address summary counts. Fixed: the handler now computes a live `COUNT(*)` from the `transactions` table with the SQL-level visibility filter applied via `GetAddressTransactionCountFiltered`, overriding the stale `address_stats.tx_count`. The filter is built per-viewer using `buildVisibilityFilter`, matching the pattern used by block transaction counts.
 
@@ -455,6 +458,20 @@ Do not allow a gap to become invisible through test omission. For each known gap
 2. Asserts the **current (broken) behavior** with a comment: `// GAP G<N>: expected nil, returns actual value — fix before release`.
 
 This makes gaps visible in CI output and prevents accidental regression to worse behavior.
+
+### Cross-redactor consistency (RD-1009 / G24)
+
+Single-entity matrices above test each redactor in isolation. Real bugs hide in the gaps *between* them. Every change touching either `RedactTransactions` or `RedactTransfers` (or their SQL pre-filter `buildVisibilityFilter`) MUST include at least one assertion that the surviving tx-hash set from `/transfers` is a *subset* of the surviving set from `/transactions` on the same fixture for the same viewer.
+
+Required scenarios:
+
+| Fixture | Viewer | Expected |
+|---------|--------|----------|
+| EOA caller hidden, token contract hidden, transfer recipient admin-visible | Admin (flag off) | Both the tx and the transfer surface |
+| Same fixture | Non-admin, non-participant | Neither surfaces |
+
+The intent is to catch any future divergence in drop predicates between the two redactors before it ships. The bug class is invisible to per-entity matrices because each redactor passes its own assertions independently.
+
 
 ### Test structure
 
