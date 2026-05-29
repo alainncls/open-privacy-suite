@@ -594,6 +594,15 @@ type RedactStats struct {
 	// elevated org-admin audit view (OrgAdminViewUserTxs) was enabled —
 	// i.e. rows that would have been dropped under strict privacy.
 	AdminUserTxsRevealed int
+	// GrantFullReveals counts rows where a Full disclosure grant on one
+	// party caused the counterparty's effective level to be promoted above
+	// its base — i.e. a regulatory-subpoena reveal of an otherwise-private
+	// counterparty address. Each increment is audit-logged by the handler
+	// (see auditAdminUserTxView and auditGrantFullReveal) so the compliance
+	// trail captures who saw which counterparty under which grant. Strict
+	// privacy (no Full grants in this pass) keeps this at zero — the
+	// counter is only meaningful for grant-driven reveals.
+	GrantFullReveals int
 }
 
 // adminAuditView reports whether the elevated org-admin audit view applies
@@ -607,6 +616,79 @@ func (o RedactOpts) recordAdminReveal() {
 	if o.Stats != nil {
 		o.Stats.AdminUserTxsRevealed++
 	}
+}
+
+// recordGrantFullReveal bumps the grant-driven counterparty reveal counter when
+// stats tracking is enabled.
+func (o RedactOpts) recordGrantFullReveal() {
+	if o.Stats != nil {
+		o.Stats.GrantFullReveals++
+	}
+}
+
+// counterpartyLensLevel implements the per-grant-level counterparty rendering
+// rule from /docs/security/privacy-requirements §"Disclosure Levels":
+//
+//   - Full grant     → counterparty rendered at Full (real address). If the
+//     counterparty's base level was lower (Hidden / Redacted / Pseudonymous)
+//     this is a regulatory-subpoena reveal — promoted == true so the caller
+//     can bump GrantFullReveals for the audit log.
+//   - Pseudonymous   → counterparty rendered at Pseudonymous (Address-XXXX).
+//     Demotion when base was Full (PR #282), promotion-to-pseudonym when
+//     base was Hidden/Redacted. Either way the auditor sees a consistent
+//     `Address-XXXX` lens across the tx — never the real hex.
+//     promoted == false because the address material itself is not revealed.
+//   - Redacted       → counterparty rendered as [PRIVATE] regardless of its
+//     base level. Proof-of-activity lens — the row stays visible to the
+//     auditor (timing/value preserved by the redactor downstream) but no
+//     party's real address is disclosed. promoted == false.
+//
+// Returns the new level and a bool indicating whether the change constitutes
+// a Full-level counterparty reveal (the only class that requires per-row
+// audit logging). The legacy own-grant-level behaviour (granted target
+// renders at the grant level) is unaffected — that's handled by the
+// VisibilityMap layer.
+func counterpartyLensLevel(grantLevel, counterpartyLevel VisibilityLevel) (VisibilityLevel, bool) {
+	switch grantLevel {
+	case VisibilityFull:
+		if counterpartyLevel != VisibilityFull {
+			return VisibilityFull, true
+		}
+		return counterpartyLevel, false
+	case VisibilityPseudonymous:
+		if counterpartyLevel != VisibilityPseudonymous {
+			return VisibilityPseudonymous, false
+		}
+		return counterpartyLevel, false
+	case VisibilityRedacted:
+		if counterpartyLevel != VisibilityRedacted {
+			return VisibilityRedacted, false
+		}
+		return counterpartyLevel, false
+	default:
+		return counterpartyLevel, false
+	}
+}
+
+// disclosureGrantLevel returns (level, true) when the address's visibility
+// metadata indicates an active disclosure grant; (Hidden, false) otherwise.
+// Used by the redactor to compute counterparty lens behaviour:
+//   - Full grant     → promote counterparty to Full (regulatory subpoena reveal,
+//     audit-logged by the handler)
+//   - Pseudonymous   → demote counterparty to Pseudonymous (limited audit lens,
+//     RD-original / PR #282 behaviour preserved)
+//   - Redacted       → counterparty rendered as [PRIVATE], row survives
+//     (proof-of-activity audit lens)
+//
+// The grant signal is `Reason == ReasonDisclosureGrant`; the level is the
+// grant's resolved disclosure_level. Centralising the predicate keeps the
+// three redactors (transactions / transfers / internal-txs) in lock-step on
+// the matrix in /docs/security/privacy-requirements §"Disclosure Levels".
+func disclosureGrantLevel(v AddressVisibility) (VisibilityLevel, bool) {
+	if v.Reason != ReasonDisclosureGrant {
+		return VisibilityHidden, false
+	}
+	return v.Level, true
 }
 
 // RedactTransactions applies privacy rules to a list of transactions.
@@ -734,38 +816,64 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 		}
 
 		// Disclosure-grant lens: when this tx is visible to the viewer via a
-		// non-full disclosure grant (pseudonymous) on one party, demote the
-		// other party to the same level so the counterparty's real address
-		// doesn't leak alongside the granted target's pseudonym. The
-		// granted-address page (getGrantTransactions in explorer_api.go)
-		// applies the same anonymisation by rendering counterparties as
-		// External-XXXX — without this demotion, the regular tx list and the
-		// grant page would show the same tx at different masking levels.
+		// disclosure grant on one party, the counterparty's effective render
+		// is determined by the grant's level — never by the counterparty's
+		// own (privacy-default Hidden) base visibility. The /docs/security/
+		// privacy-requirements §"Disclosure Levels" matrix is the source of
+		// truth; this block applies all three cells (full / pseudonymous /
+		// redacted) symmetrically. Pre-fix only the pseudonymous demotion
+		// existed (PR #282); full was missing — counterparty leaked as
+		// [PRIVATE] — and redacted dropped the row via G10 / bothHidden.
 		//
 		// Participant-override wins: if the viewer is a direct participant
 		// in the tx (their own linked address is from / to / log-participant /
 		// in calldata), they already know the counterparty, so the grant's
-		// anonymisation lens is moot. visibleTo (RD-... explicit share via
-		// hash) wins for the same reason.
+		// lens is moot. visibleTo (explicit share via hash) wins for the
+		// same reason.
 		//
-		// Redacted-via-grant is a separate concern (the row would otherwise
-		// be dropped by the bothHidden path below — the audit-lens use case
-		// wants it kept with both sides [PRIVATE]). Not handled here; tracked
-		// as a follow-up.
+		// txVisibleViaGrant flag drives the row-survival bypass below
+		// (G10 / bothHidden / deployHidden) — the spec keeps the row for
+		// every grant level; only field-level rendering differs. Field
+		// rendering remains via the standard applyRedaction path on the
+		// resolved fromLevel / toLevel, so Full → real address,
+		// Pseudonymous → Address-XXXX, Redacted → [PRIVATE].
+		txVisibleViaGrant := false
 		if !viewerIsParticipant && !txVisibleToViewer {
 			fromVis := visibilityMapDetailed[strings.ToLower(tx.From)]
 			var toVis AddressVisibility
 			if tx.HasRecipient() {
 				toVis = visibilityMapDetailed[strings.ToLower(*tx.To)]
 			}
-			isGrantPseudonymous := func(v AddressVisibility) bool {
-				return v.Level == VisibilityPseudonymous && v.Reason == ReasonDisclosureGrant
+			fromGrantLvl, fromIsGrant := disclosureGrantLevel(fromVis)
+			toGrantLvl, toIsGrant := disclosureGrantLevel(toVis)
+			txVisibleViaGrant = fromIsGrant || toIsGrant
+
+			// Counterparty rendering — apply the grant's lens level to the
+			// non-granted side. Full PROMOTES the counterparty (reveals the
+			// real address — regulatory subpoena reveal, audit-logged below
+			// via GrantFullReveals); Pseudonymous DEMOTES Full counterparties
+			// (existing PR #282 behaviour, preserved); Redacted SETS the
+			// counterparty to Redacted so it renders as [PRIVATE] while the
+			// row stays visible (proof-of-activity audit lens).
+			revealedCounterpartyByFullGrant := false
+			if fromIsGrant && tx.HasRecipient() {
+				if newLvl, promoted := counterpartyLensLevel(fromGrantLvl, toLevel); newLvl != toLevel {
+					toLevel = newLvl
+					if promoted {
+						revealedCounterpartyByFullGrant = true
+					}
+				}
 			}
-			if isGrantPseudonymous(fromVis) && toLevel == VisibilityFull && tx.HasRecipient() {
-				toLevel = VisibilityPseudonymous
+			if toIsGrant {
+				if newLvl, promoted := counterpartyLensLevel(toGrantLvl, fromLevel); newLvl != fromLevel {
+					fromLevel = newLvl
+					if promoted {
+						revealedCounterpartyByFullGrant = true
+					}
+				}
 			}
-			if isGrantPseudonymous(toVis) && fromLevel == VisibilityFull {
-				fromLevel = VisibilityPseudonymous
+			if revealedCounterpartyByFullGrant {
+				ropts.recordGrantFullReveal()
 			}
 		}
 
@@ -777,8 +885,16 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 		// needs to audit user activity, and the row stays address-private (both
 		// sides remain [PRIVATE]); only value/timing are revealed below. Each
 		// such reveal is counted so the handler can audit-log the access.
+		//
+		// Grant override: when the tx is visible via a disclosure grant
+		// (txVisibleViaGrant), the row is kept by the grant's authority
+		// regardless of bothHidden. The redacted-grant cell of the matrix
+		// is the canonical reproducer: counterparty is private to the
+		// viewer (Hidden) and the granted party renders as [PRIVATE] under
+		// the redacted lens — both sides non-identifiable, yet the row
+		// must survive per the matrix ("proof of activity" audit lens).
 		bothHidden := isNonIdentifiable(fromLevel) && isNonIdentifiable(toLevel)
-		if bothHidden {
+		if bothHidden && !txVisibleViaGrant {
 			if !adminAuditView {
 				continue
 			}
@@ -790,8 +906,12 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 		// deployment activity, timing, and the resulting contract address). The
 		// elevated admin audit view keeps it (same gating + audit as above).
 		// Skip the re-count when bothHidden already counted this row.
+		//
+		// Grant override mirrors the bothHidden block above: the granted
+		// party may have deployed a contract and the viewer is entitled to
+		// see it under the grant's lens — keep the row.
 		deployHidden := tx.IsContractCreation() && isNonIdentifiable(fromLevel)
-		if deployHidden && !bothHidden {
+		if deployHidden && !bothHidden && !txVisibleViaGrant {
 			if !adminAuditView {
 				continue
 			}
@@ -803,7 +923,11 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 		// Exceptions:
 		// - Admins see all contract activity (they need to audit the network)
 		// - Both sides Full = both identifiable, no information leak
-		if !viewerIsParticipant && !txVisibleToViewer && !viewerIsAdmin {
+		// - txVisibleViaGrant: a disclosure grant on either party authorises
+		//   the row regardless of the counterparty's own (Hidden/Redacted)
+		//   level. Field-level rendering still applies via applyRedaction —
+		//   the flag only affects row-survival.
+		if !viewerIsParticipant && !txVisibleToViewer && !viewerIsAdmin && !txVisibleViaGrant {
 			if isNonIdentifiable(fromLevel) || isNonIdentifiable(toLevel) {
 				continue
 			}
@@ -848,7 +972,16 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 			// already read (RD-751). InputData stays stripped (calldata embeds
 			// addresses) and nonce stays nil (it links a private account's txs) —
 			// the view reveals volume/timing, never identity.
-			if !adminAuditView {
+			//
+			// txVisibleViaGrant: per /docs/security/privacy-requirements
+			// §"Disclosure Levels" line 141, redacted-grant rows MUST
+			// preserve value (timing-only audit explicitly preserves it).
+			// This is the proof-of-activity lens — the auditor sees that a
+			// tx of amount X happened to/from the granted target with both
+			// addresses [PRIVATE]. Same treatment for pseudonymous grants
+			// where the lens dropped a counterparty below Full. InputData
+			// stays stripped for both because calldata can embed addresses.
+			if !adminAuditView && !txVisibleViaGrant {
 				redactedTx.Value = JSONString("")
 			}
 			redactedTx.InputData = ""
@@ -1003,23 +1136,41 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 			}
 		}
 
-		// Disclosure-grant lens (same rationale as the parallel block in
-		// RedactTransactions): when the viewer's visibility into one party
-		// of this transfer comes from a non-full disclosure grant
-		// (pseudonymous), demote the counterparty to the same level so its
-		// real address doesn't leak alongside the granted target's
-		// pseudonym. Participant / visibleTo override wins.
+		// Disclosure-grant lens (same shape as RedactTransactions, see the
+		// matching block there for the full rationale). Applies the matrix
+		// in /docs/security/privacy-requirements §"Disclosure Levels"
+		// uniformly: Full promotes the counterparty (regulatory reveal,
+		// audit-logged), Pseudonymous demotes a Full counterparty (PR #282
+		// behaviour preserved), Redacted sets the counterparty to Redacted
+		// so the row stays with [PRIVATE] addresses (proof-of-activity).
+		// Participant / visibleTo overrides win.
+		txVisibleViaGrant := false
 		if !viewerIsParticipant && !txVisibleToViewer {
 			fromVis := visMapDetailed[strings.ToLower(t.From)]
 			toVis := visMapDetailed[strings.ToLower(t.To)]
-			isGrantPseudonymous := func(v AddressVisibility) bool {
-				return v.Level == VisibilityPseudonymous && v.Reason == ReasonDisclosureGrant
+			fromGrantLvl, fromIsGrant := disclosureGrantLevel(fromVis)
+			toGrantLvl, toIsGrant := disclosureGrantLevel(toVis)
+			txVisibleViaGrant = fromIsGrant || toIsGrant
+
+			revealedCounterpartyByFullGrant := false
+			if fromIsGrant {
+				if newLvl, promoted := counterpartyLensLevel(fromGrantLvl, toLevel); newLvl != toLevel {
+					toLevel = newLvl
+					if promoted {
+						revealedCounterpartyByFullGrant = true
+					}
+				}
 			}
-			if isGrantPseudonymous(fromVis) && toLevel == VisibilityFull {
-				toLevel = VisibilityPseudonymous
+			if toIsGrant {
+				if newLvl, promoted := counterpartyLensLevel(toGrantLvl, fromLevel); newLvl != fromLevel {
+					fromLevel = newLvl
+					if promoted {
+						revealedCounterpartyByFullGrant = true
+					}
+				}
 			}
-			if isGrantPseudonymous(toVis) && fromLevel == VisibilityFull {
-				fromLevel = VisibilityPseudonymous
+			if revealedCounterpartyByFullGrant {
+				ropts.recordGrantFullReveal()
 			}
 		}
 
@@ -1029,15 +1180,22 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 		// audit view (ORG_ADMIN_VIEW_USER_TXS) keeps the row instead — addresses
 		// stay [PRIVATE], only the amount/timing are revealed (below) — and the
 		// reveal is counted for audit logging.
-		if isNonIdentifiable(fromLevel) && isNonIdentifiable(toLevel) {
+		//
+		// Grant override: a disclosure grant on either party authorises the
+		// row even when bothHidden — covers the redacted-grant cell of the
+		// matrix where both sides render as [PRIVATE] but the row must
+		// survive (proof-of-activity audit lens).
+		if isNonIdentifiable(fromLevel) && isNonIdentifiable(toLevel) && !txVisibleViaGrant {
 			if !adminAuditView {
 				continue
 			}
 			ropts.recordAdminReveal()
 		}
 
-		// G10: non-participant, non-visibleTo, non-admin, one side hidden → drop
-		if !viewerIsParticipant && !txVisibleToViewer && !viewerIsAdminT {
+		// G10: non-participant, non-visibleTo, non-admin, one side hidden → drop.
+		// Grant override: a disclosure grant on either party bypasses G10 —
+		// see RedactTransactions for the symmetry rationale.
+		if !viewerIsParticipant && !txVisibleToViewer && !viewerIsAdminT && !txVisibleViaGrant {
 			if isNonIdentifiable(fromLevel) || isNonIdentifiable(toLevel) {
 				continue
 			}
@@ -1072,8 +1230,11 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 			}
 			// Elevated admin audit view preserves the transfer amount (consistent
 			// with the Transfer log the admin can already read); addresses remain
-			// [PRIVATE].
-			if !adminAuditView {
+			// [PRIVATE]. txVisibleViaGrant similarly preserves the amount per
+			// the matrix line 141 (timing-only audit preserves value for
+			// redacted grants; pseudonymous-lens transfers always preserve
+			// amount because the auditor's expectation is to see the volume).
+			if !adminAuditView && !txVisibleViaGrant {
 				redacted.Value = JSONString("")
 			}
 			result = append(result, redacted)
@@ -1205,24 +1366,40 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 			}
 		}
 
-		// Disclosure-grant lens (same rationale as RedactTransactions): demote
-		// the counterparty to pseudonymous when the viewer's visibility into
-		// the other party comes from a non-full disclosure grant. Participant
-		// and visibleTo overrides win.
+		// Disclosure-grant lens (same shape as RedactTransactions, see the
+		// matching block there for the full matrix-spec rationale).
+		// Participant and visibleTo overrides win.
+		txVisibleViaGrant := false
 		if !viewerIsParticipant && !txVisibleToViewer {
 			fromVis := visMapDetailed[strings.ToLower(t.From)]
 			var toVis AddressVisibility
 			if t.To != nil && *t.To != "" {
 				toVis = visMapDetailed[strings.ToLower(*t.To)]
 			}
-			isGrantPseudonymous := func(v AddressVisibility) bool {
-				return v.Level == VisibilityPseudonymous && v.Reason == ReasonDisclosureGrant
+			fromGrantLvl, fromIsGrant := disclosureGrantLevel(fromVis)
+			toGrantLvl, toIsGrant := disclosureGrantLevel(toVis)
+			txVisibleViaGrant = fromIsGrant || toIsGrant
+
+			hasTo := t.To != nil && *t.To != ""
+			revealedCounterpartyByFullGrant := false
+			if fromIsGrant && hasTo {
+				if newLvl, promoted := counterpartyLensLevel(fromGrantLvl, toLevel); newLvl != toLevel {
+					toLevel = newLvl
+					if promoted {
+						revealedCounterpartyByFullGrant = true
+					}
+				}
 			}
-			if isGrantPseudonymous(fromVis) && toLevel == VisibilityFull && t.To != nil && *t.To != "" {
-				toLevel = VisibilityPseudonymous
+			if toIsGrant {
+				if newLvl, promoted := counterpartyLensLevel(toGrantLvl, fromLevel); newLvl != fromLevel {
+					fromLevel = newLvl
+					if promoted {
+						revealedCounterpartyByFullGrant = true
+					}
+				}
 			}
-			if isGrantPseudonymous(toVis) && fromLevel == VisibilityFull {
-				fromLevel = VisibilityPseudonymous
+			if revealedCounterpartyByFullGrant {
+				ropts.recordGrantFullReveal()
 			}
 		}
 
@@ -1237,8 +1414,12 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 		// here cannot fire for visibleTo parents — closing the RD-1009-class
 		// gap. Kept as an explicit early-out for clarity even though the
 		// override would also have cleared it.
+		//
+		// Grant override mirrors RedactTransactions: a disclosure grant on
+		// either party keeps the row regardless of bothHidden — required
+		// for the redacted-grant cell of the matrix.
 		bothHidden := isNonIdentifiable(fromLevel) && isNonIdentifiable(toLevel)
-		if bothHidden {
+		if bothHidden && !txVisibleViaGrant {
 			if !adminAuditView {
 				continue
 			}
@@ -1276,7 +1457,9 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 			}
 			// Elevated admin audit view preserves value; Input/Output stay nil
 			// (they can embed addresses / decoded private data).
-			if !adminAuditView {
+			// txVisibleViaGrant preserves value per the matrix (line 141):
+			// redacted/pseudonymous-grant rows keep volume/timing.
+			if !adminAuditView && !txVisibleViaGrant {
 				redacted.Value = JSONString("")
 			}
 			redacted.Input = nil
