@@ -1130,6 +1130,7 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 	if len(opts) > 0 {
 		ropts = opts[0]
 	}
+	visibleHashes := ropts.VisibleTxHashes
 	adminAuditView := ropts.adminAuditView()
 
 	addrMap := make(map[string]bool)
@@ -1173,6 +1174,16 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 		viewerIsTo := t.To != nil && *t.To != "" && viewerAddrs[strings.ToLower(*t.To)]
 		viewerIsParticipant := viewerIsFrom || viewerIsTo
 
+		// visibleTo override: an internal tx inherits its parent's allowlist
+		// membership. When the parent tx is in VisibleTxHashes (either because
+		// the sender explicitly shared the hash, or because RD-1009's
+		// transfer-participant union added it), the internal tx must survive
+		// — otherwise /transactions/:hash/internal would drop a row whose
+		// parent /transactions and /transfers feeds just rendered. Same
+		// cross-surface row-survival bug class as RD-1009; same fix shape
+		// (parent-tx allowlist threaded into the drop predicate).
+		txVisibleToViewer := visibleHashes[strings.ToLower(t.TxHash)]
+
 		baseFromLevel := visMap[strings.ToLower(t.From)]
 		baseToLevel := VisibilityFull
 		if t.To != nil && *t.To != "" {
@@ -1181,8 +1192,11 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 		fromLevel := baseFromLevel
 		toLevel := baseToLevel
 
-		// Participant override: reveal counterparty.
-		if viewerIsParticipant {
+		// Participant or visibleTo override: reveal counterparty. visibleTo
+		// mirrors RedactTransactions/RedactTransfers — the parent tx already
+		// exposes these participants to the viewer via the surviving feed,
+		// so revealing them on the internal tx adds no information.
+		if viewerIsParticipant || txVisibleToViewer {
 			if isNonIdentifiable(fromLevel) {
 				fromLevel = VisibilityFull
 			}
@@ -1194,8 +1208,8 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 		// Disclosure-grant lens (same rationale as RedactTransactions): demote
 		// the counterparty to pseudonymous when the viewer's visibility into
 		// the other party comes from a non-full disclosure grant. Participant
-		// override wins.
-		if !viewerIsParticipant {
+		// and visibleTo overrides win.
+		if !viewerIsParticipant && !txVisibleToViewer {
 			fromVis := visMapDetailed[strings.ToLower(t.From)]
 			var toVis AddressVisibility
 			if t.To != nil && *t.To != "" {
@@ -1217,7 +1231,14 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 		// [PRIVATE], value/timing revealed below — and counts the reveal. This
 		// mirrors RedactTransactions/RedactTransfers so internal-tx lists do not
 		// contradict the surrounding count for the admin under the flag.
-		if isNonIdentifiable(fromLevel) && isNonIdentifiable(toLevel) {
+		//
+		// txVisibleToViewer above already upgraded fromLevel/toLevel to Full
+		// when the parent tx is in the allowlist, so the bothHidden branch
+		// here cannot fire for visibleTo parents — closing the RD-1009-class
+		// gap. Kept as an explicit early-out for clarity even though the
+		// override would also have cleared it.
+		bothHidden := isNonIdentifiable(fromLevel) && isNonIdentifiable(toLevel)
+		if bothHidden {
 			if !adminAuditView {
 				continue
 			}
@@ -1230,6 +1251,8 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 			aLower := strings.ToLower(addr)
 			if viewerIsParticipant && isNonIdentifiable(baseLvl) {
 				redacted.AddressMetadata[aLower] = ReasonParticipantOverride
+			} else if txVisibleToViewer && isNonIdentifiable(baseLvl) {
+				redacted.AddressMetadata[aLower] = ReasonVisibleToGrant
 			} else if meta, ok := visMapDetailed[aLower]; ok {
 				redacted.AddressMetadata[aLower] = meta.Reason
 			}
