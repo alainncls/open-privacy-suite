@@ -459,18 +459,30 @@ Do not allow a gap to become invisible through test omission. For each known gap
 
 This makes gaps visible in CI output and prevents accidental regression to worse behavior.
 
-### Cross-redactor consistency (RD-1009 / G24)
+### Cross-redactor consistency (RD-1009 / G24 + follow-up)
 
-Single-entity matrices above test each redactor in isolation. Real bugs hide in the gaps *between* them. Every change touching either `RedactTransactions` or `RedactTransfers` (or their SQL pre-filter `buildVisibilityFilter`) MUST include at least one assertion that the surviving tx-hash set from `/transfers` is a *subset* of the surviving set from `/transactions` on the same fixture for the same viewer.
+Single-entity matrices above test each redactor in isolation. Real bugs hide in the gaps *between* them. Every change touching `RedactTransactions`, `RedactTransfers`, `RedactInternalTransactions`, `RedactLogs`, the SQL pre-filter `buildVisibilityFilter`, or the by-hash helper `buildRedactOptsForViewer` MUST include at least one assertion that the surviving rows from a derived feed (transfers / internal txs / logs) imply the parent tx survives in the surrounding `/transactions` list and `GET /transactions/:hash` lookup.
 
-Required scenarios:
+Required scenarios (RD-1009 + follow-up):
 
 | Fixture | Viewer | Expected |
 |---------|--------|----------|
-| EOA caller hidden, token contract hidden, transfer recipient admin-visible | Admin (flag off) | Both the tx and the transfer surface |
-| Same fixture | Non-admin, non-participant | Neither surfaces |
+| EOA caller hidden, token contract hidden, transfer recipient admin-visible | Admin (flag off) | tx surfaces; transfer surfaces; internal tx for the same parent surfaces; Transfer log surfaces |
+| Same fixture | Non-admin, non-participant | None of the above surface |
+| Same fixture | Admin, by-hash (`GET /transactions/:hash`) | 200; matching `/internal`, `/transfers`, `/logs` all return rows |
 
-The intent is to catch any future divergence in drop predicates between the two redactors before it ships. The bug class is invisible to per-entity matrices because each redactor passes its own assertions independently.
+The bug class is invisible to per-entity matrices because each redactor passes its own assertions independently. The pinned invariants (`internal/server/explorer_coherence_e2e_test.go` drives all five surfaces against one fixture) catch divergence at PR time. Reviewers: a new explorer surface that derives rows from a parent tx MUST add a row to that coherence test before merge.
+
+The unified opts contract for handler authors:
+
+- **List handlers** call `s.buildVisibilityFilter(...)` then `redactOptsFromFilter(filter)` plus `ViewerIsAdmin` / `applyAdminTxView` wiring.
+- **Single-item handlers** call `s.buildRedactOptsForViewer(...)` — internally identical, by design.
+
+Constructing `explorer.RedactOpts{}` by hand silently skips the transfer-participant union, `visibleTo` shares, and the admin-flag wiring. PR review rejects hand-rolled opts.
+
+#### Why `RedactLogs` is NOT in the same bug class
+
+`RedactLogs` evaluates its drop predicate on the **emitting contract address** (`l.Address`), not on tx participants. It already honours `opts.VisibleTxHashes` through the `visibleTo` override (upgrades Hidden / Redacted emitter to Full when the parent tx is in the allowlist) and through the param-rule fallback. There is no related-feed redactor that surfaces "the same log row" at a different address set, so the RD-1009 asymmetry shape (two redactors evaluating `bothHidden` on different address sets) cannot apply. The log model has its own gating (deny-when-no-ABI, event_rules, dynamic-payload drop, M15) — orthogonal to row-survival coherence.
 
 
 ### Test structure
