@@ -974,13 +974,24 @@ func (s *Server) buildRedactOptsForViewer(ctx context.Context, viewerDID string)
 }
 
 // applyAdminTxView wires the deployment-wide ORG_ADMIN_VIEW_USER_TXS policy
-// into RedactOpts and, when the elevated view is actually in effect for this
-// viewer (admin + flag on), attaches a RedactStats so the caller can audit any
-// rows the view reveals. Keeping this in one place means every opts builder
-// gets identical treatment.
+// into RedactOpts and ensures a RedactStats is attached whenever any
+// audit-relevant code path may fire. Keeping this in one place means every
+// opts builder gets identical treatment.
+//
+// Two reveal classes require auditing:
+//   - AdminUserTxsRevealed — only when the elevated org-admin audit view
+//     is in effect (admin + ORG_ADMIN_VIEW_USER_TXS).
+//   - GrantFullReveals — whenever a Full disclosure grant promotes a
+//     counterparty's address above its base (regulatory subpoena reveal).
+//     Independent of the admin flag — Full-grant holders are typically
+//     auditors / regulators acting under a subpoena, not org admins.
+//
+// Both counters live on the same RedactStats so callers only thread one
+// pointer through opts; auditAdminUserTxView and auditGrantFullReveal
+// inspect their respective fields.
 func (s *Server) applyAdminTxView(opts *explorer.RedactOpts) {
 	opts.OrgAdminViewUserTxs = s.config.OrgAdminViewUserTxs
-	if opts.ViewerIsAdmin && opts.OrgAdminViewUserTxs {
+	if opts.Stats == nil {
 		opts.Stats = &explorer.RedactStats{}
 	}
 }
@@ -992,20 +1003,75 @@ func (s *Server) applyAdminTxView(opts *explorer.RedactOpts) {
 // records WHO (admin DID), WHAT (access), WHERE (endpoint label + target),
 // HOW MANY rows, and the client IP — addresses are never logged here because
 // the view itself never exposes them.
+//
+// This call sites also doubles as the audit-log hook for Full-grant
+// counterparty reveals (stats.GrantFullReveals > 0). Two reveal classes,
+// one Stats pointer threaded through every redactor — emit a separate
+// audit entry for each class actually triggered.
 func (s *Server) auditAdminUserTxView(c *gin.Context, viewerDID, endpoint, target string, stats *explorer.RedactStats) {
-	if stats == nil || stats.AdminUserTxsRevealed == 0 {
+	if stats == nil {
+		return
+	}
+	if stats.AdminUserTxsRevealed > 0 {
+		entry := &rbac.AuditLogEntry{
+			ActorExternalID: viewerDID,
+			Action:          rbac.AuditActionAccess,
+			ResourceType:    rbac.ResourceTypeExplorerUserTxs,
+			ResourceName:    endpoint,
+			NewValue: map[string]any{
+				"endpoint":      endpoint,
+				"target":        target,
+				"rows_revealed": stats.AdminUserTxsRevealed,
+				"elevated_by":   "ORG_ADMIN_VIEW_USER_TXS",
+			},
+			IPAddress: c.ClientIP(),
+		}
+		if target != "" {
+			entry.ResourceID = &target
+		}
+		if err := s.db.CreateAuditLog(c.Request.Context(), entry); err != nil {
+			slog.Error("failed to write admin-user-tx-view audit log",
+				"viewer", viewerDID, "endpoint", endpoint, "error", err)
+		}
+	}
+	s.auditGrantFullReveal(c, viewerDID, endpoint, target, stats)
+}
+
+// auditGrantFullReveal writes one rbac_audit_log entry per redactor pass
+// where a Full disclosure grant promoted at least one counterparty's
+// address from a private level (Hidden / Redacted / Pseudonymous) to Full.
+// This is a regulatory-subpoena reveal: the viewer holds an approved
+// Full-level grant and the redactor has just disclosed an otherwise-
+// private counterparty's real address. The compliance trail captures
+// WHO (viewer DID — the grant requester), WHERE (endpoint + target), HOW
+// MANY counterparties were revealed, and the client IP.
+//
+// The address material itself is never logged — the audit row is a
+// volume / locus signal, not a content record. Investigators chasing a
+// specific reveal correlate via (actor, endpoint, target_tx_hash,
+// timestamp) against the disclosure_grants table.
+//
+// Resource type is the disclosure-grant (not explorer_user_txs) so audit
+// reviewers can pivot from a grant ID to every reveal it produced.
+// ResourceName is the endpoint label; ResourceID is the target tx hash
+// or address when single-item, empty for list surfaces.
+//
+// Best-effort, matching the other audit-log call sites: a write failure
+// is logged loudly but does not fail the read.
+func (s *Server) auditGrantFullReveal(c *gin.Context, viewerDID, endpoint, target string, stats *explorer.RedactStats) {
+	if stats == nil || stats.GrantFullReveals == 0 {
 		return
 	}
 	entry := &rbac.AuditLogEntry{
 		ActorExternalID: viewerDID,
 		Action:          rbac.AuditActionAccess,
-		ResourceType:    rbac.ResourceTypeExplorerUserTxs,
+		ResourceType:    rbac.ResourceTypeDisclosureGrant,
 		ResourceName:    endpoint,
 		NewValue: map[string]any{
-			"endpoint":      endpoint,
-			"target":        target,
-			"rows_revealed": stats.AdminUserTxsRevealed,
-			"elevated_by":   "ORG_ADMIN_VIEW_USER_TXS",
+			"endpoint":                  endpoint,
+			"target":                    target,
+			"counterparties_revealed":   stats.GrantFullReveals,
+			"reveal_class":              "disclosure_grant_full_counterparty",
 		},
 		IPAddress: c.ClientIP(),
 	}
@@ -1013,7 +1079,7 @@ func (s *Server) auditAdminUserTxView(c *gin.Context, viewerDID, endpoint, targe
 		entry.ResourceID = &target
 	}
 	if err := s.db.CreateAuditLog(c.Request.Context(), entry); err != nil {
-		slog.Error("failed to write admin-user-tx-view audit log",
+		slog.Error("failed to write grant-full-reveal audit log",
 			"viewer", viewerDID, "endpoint", endpoint, "error", err)
 	}
 }
@@ -1231,11 +1297,46 @@ func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string) *e
 		return filter
 	}
 
-	var visible []string
+	// SQL-allowlist membership covers two row-survival paths:
+	//   1. VisibilityFull addresses — the viewer can see the real address,
+	//      so rows mentioning them MUST survive the allowlist.
+	//   2. Disclosure-grant addresses at non-Full levels (Pseudonymous /
+	//      Redacted) — the matrix in /docs/security/privacy-requirements
+	//      §"Disclosure Levels" requires rows mentioning the granted party
+	//      to surface in /transactions and /transfers (under the grant's
+	//      lens). Field-level rendering still hides the actual addresses
+	//      via applyRedaction; the SQL-level inclusion only affects which
+	//      rows reach the redactor. Without this, a row whose tx.from is
+	//      Bob@Pseudonymous and tx.to is a private contract would be
+	//      pre-dropped by the allowlist before the redactor's grant lens
+	//      could run — breaking the by-hash/list coherence invariant for
+	//      grant-only viewers.
+	//
+	// The detailed lookup is required because we only want to include
+	// grant-driven non-Full addresses, not RBAC-resolved ones (which can
+	// never be Pseudonymous / Redacted in current resolution but we keep
+	// the guard tight for future-proofing). visibilityRank order means
+	// Full grants already register as VisibilityFull above and would
+	// take this path too — the explicit grant lookup catches the
+	// non-Full grant cells.
+	visMapDetailed, _ := s.db.GetBatchVisibilityDetailed(ctx, viewerDID, allAddrs)
+
+	visibleSet := make(map[string]bool, len(visMap))
 	for addr, level := range visMap {
 		if level == explorer.VisibilityFull {
-			visible = append(visible, addr)
+			visibleSet[addr] = true
 		}
+	}
+	for addr, meta := range visMapDetailed {
+		if meta.Reason == explorer.ReasonDisclosureGrant &&
+			(meta.Level == explorer.VisibilityPseudonymous ||
+				meta.Level == explorer.VisibilityRedacted) {
+			visibleSet[addr] = true
+		}
+	}
+	visible := make([]string, 0, len(visibleSet))
+	for addr := range visibleSet {
+		visible = append(visible, addr)
 	}
 	filter.VisibleAddresses = visible
 

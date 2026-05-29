@@ -1633,11 +1633,24 @@ func TestExplorerTransactions_ParticipantSeesOwnTransaction(t *testing.T) {
 	assert.Equal(t, addrB, strings.ToLower(*txs[0].To))
 }
 
-// TestExplorerTransactions_GrantVisibleInRegularExplorer verifies that
-// disclosure grants upgrade address visibility but do NOT exempt the viewer
-// from G10 non-participant drop. When viewer A has a full disclosure grant on
-// user B and B sends a tx to hidden user C, the tx is dropped because A is not
-// a participant and one side (C) is non-identifiable.
+// TestExplorerTransactions_GrantVisibleInRegularExplorer pins the row-
+// survival behaviour for a disclosure-grant viewer when the granted target's
+// counterparty is otherwise-private to the viewer. Per the matrix in
+// /docs/security/privacy-requirements §"Row-survival rules per surface":
+//
+//	`GET /transactions` (list) | full grant | pseudonymous | redacted |
+//	keep + real                 | keep + lens | keep + [PRIVATE]        |
+//
+// Pre-fix (Bug A) G10 dropped the row whenever the counterparty was
+// non-identifiable, even though the grant explicitly authorised the viewer
+// to see the granted target's activity. Post-fix the row survives under
+// the grant's authority and field-level rendering follows the grant's
+// level: Full reveals the counterparty (regulatory subpoena reveal,
+// audit-logged), Pseudonymous renders both as Address-XXXX (PR #282
+// lens), Redacted renders both as [PRIVATE] (proof-of-activity audit).
+//
+// Non-grant viewers still hit the original G10 drop — the change is
+// scoped strictly to the grant code path.
 func TestExplorerTransactions_GrantVisibleInRegularExplorer(t *testing.T) {
 	srv, database, conn := setupTestServerForExplorerTransactions(t)
 	router := setupExplorerTransactionsRouter(srv)
@@ -1669,9 +1682,8 @@ func TestExplorerTransactions_GrantVisibleInRegularExplorer(t *testing.T) {
 	txHash := "0xtx_grant_1"
 	seedExplorerTransaction(t, conn, blockNum, txHash, addrB, addrC)
 
-	// Request as viewer A — the grant makes B visible (Full), but C is hidden.
-	// G10: A is not a participant (from/to/calldata), not visibleTo, not admin,
-	// and one side (C) is non-identifiable, so the tx is dropped.
+	// Request as viewer A — the Full grant on B keeps the row and
+	// promotes C's address from Hidden to Full (regulatory reveal).
 	req := httptest.NewRequest("GET", "/api/v1/explorer/transactions", nil)
 	addBearerToken(t, req, srv, didA)
 	w := httptest.NewRecorder()
@@ -1680,9 +1692,12 @@ func TestExplorerTransactions_GrantVisibleInRegularExplorer(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 
 	txs := parseTransactionsResponse(t, w.Body.Bytes())
-	require.Len(t, txs, 0, "G10: disclosure grant viewer is not a participant — tx with hidden counterparty is dropped")
+	require.Len(t, txs, 1, "full-grant viewer must see the granted target's tx even when the counterparty is private — matrix row-survival")
+	require.Equal(t, addrB, txs[0].From, "granted target rendered as real address")
+	require.NotNil(t, txs[0].To)
+	require.Equal(t, addrC, *txs[0].To, "Full grant promotes the counterparty to real address (subpoena reveal)")
 
-	// Viewer without grant should also NOT see the tx.
+	// Viewer without grant must NOT see the tx — G10 unchanged for non-grant viewers.
 	didD := "did:d:nogrant"
 	createTestUserForExplorer(t, database, didD)
 
@@ -1693,7 +1708,7 @@ func TestExplorerTransactions_GrantVisibleInRegularExplorer(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w2.Code)
 	txs2 := parseTransactionsResponse(t, w2.Body.Bytes())
-	assert.Len(t, txs2, 0, "viewer without grant should NOT see hidden address txs")
+	assert.Len(t, txs2, 0, "viewer without grant — G10 still drops the row (non-grant code path unchanged)")
 }
 
 // TestExplorerTransactions_UnownedAddresses_HiddenByDefault verifies that

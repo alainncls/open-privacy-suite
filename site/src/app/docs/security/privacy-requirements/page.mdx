@@ -291,6 +291,21 @@ any one of them is a privacy or UX regression:
    the field-rendering axis decides *what shape* it takes when it
    does. Mixing the two axes in one drop predicate is the bug
    class RD-1009 named.
+5. **Disclosure-grant rows survive regardless of counterparty privacy.**
+   When the viewer holds an active disclosure grant on either tx party
+   (any level: `full`, `pseudonymous`, `redacted`), the row survives
+   in `/transactions`, `/transactions/:hash`, `/transfers`, and
+   `/internal` regardless of the counterparty's own visibility.
+   Field-level rendering follows the grant level: `full` reveals
+   the counterparty's real address (audited as a regulatory subpoena
+   reveal — `RedactStats.GrantFullReveals` → `rbac_audit_log` with
+   `resource_type=disclosure_grant`); `pseudonymous` renders both
+   parties under the `Address-XXXX` lens; `redacted` renders both
+   as `[PRIVATE]` with `value` preserved (proof-of-activity audit
+   lens). Participants and `visibleTo` recipients bypass the grant
+   lens — they already know the counterparty via their own wallet.
+   Pinned by `internal/explorer/redactor_disclosure_grant_matrix_test.go`
+   and `internal/server/explorer_grant_byhash_test.go`.
 
 ---
 
