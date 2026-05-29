@@ -43,6 +43,8 @@ When both the sender and receiver of a transaction are private, the transaction 
 
 When one side is private and the other is public, the transaction remains visible but the private party is shown as `[PRIVATE]` and all sensitive financial fields are hidden.
 
+**Coherence with token transfers.** A tx that calls a token contract has its EVM-level `to` set to the token contract address — separate from the actual recipient on the ERC-20 transfer log. When the transfer surfaces to the viewer (because one of its participants is visible to them), the parent tx row also surfaces, so `/transactions` is always a superset of `/transfers`. Field-level redaction still applies — the EVM-level `from` and `to` follow the same `[PRIVATE]` / real-address rules described above; only the row-survival decision is unified.
+
 ### Token Transfers
 
 | Field | What an unauthorized viewer sees |

@@ -931,6 +931,87 @@ func (s *Store) FindLogParticipantTxs(ctx context.Context, viewerAddrs []string,
 	return out, nil
 }
 
+// FindTransferParticipantTxs returns the subset of tx hashes whose token_transfers
+// row references any of the supplied addresses on either side (from_address or
+// to_address). Used by buildVisibilityFilter to close the RD-1009 cross-redactor
+// row-survival asymmetry: a tx whose tx.from / tx.to are both hidden to the
+// viewer would normally be dropped by the SQL allowlist filter and by
+// RedactTransactions' bothHidden branch — but if one of that tx's derived
+// token-transfer rows has an admin-visible counterparty, RedactTransfers keeps
+// the transfer (which already exposes the parent tx hash via TokenTransfer.TxHash).
+// Surfacing those tx hashes here lets the tx row survive too, so /transactions
+// is a superset of /transfers and the admin UX stays coherent.
+//
+// Inputs:
+//   - visibleAddrs: lowercase 0x-prefixed 20-byte hex. Empty slice → empty map.
+//   - beforeBlock: optional upper bound (exclusive) on block_number. When the
+//     caller is paginating through a windowed tx feed (e.g. getExplorerTransactions
+//     with ?before=N), passing the same bound here keeps the cardinality scan-safe.
+//     nil means "no upper bound."
+//   - limit: optional cap on rows scanned for the union. Bounded scan is
+//     intentional — visible-address sets can be large in an org admin's view
+//     and we don't want to walk the entire token_transfers table on every
+//     /transactions hit. 0 or negative → no LIMIT clause (caller takes
+//     responsibility, used by tests).
+//
+// Returns lowercase tx hashes. Empty input addresses → empty map (no work).
+func (s *Store) FindTransferParticipantTxs(ctx context.Context, visibleAddrs []string, beforeBlock *uint64, limit int) (map[string]bool, error) {
+	out := make(map[string]bool)
+	if len(visibleAddrs) == 0 {
+		return out, nil
+	}
+
+	// Normalise once so callers can't poison the query with mixed-case input,
+	// matching the convention used by FindLogParticipantTxs above.
+	norm := make([]string, 0, len(visibleAddrs))
+	for _, a := range visibleAddrs {
+		addr := strings.TrimSpace(strings.ToLower(a))
+		if addr == "" {
+			continue
+		}
+		norm = append(norm, addr)
+	}
+	if len(norm) == 0 {
+		return out, nil
+	}
+
+	// Window the scan to the same pagination cursor the surrounding tx feed
+	// uses; without this, an admin view on a chain with millions of transfers
+	// would do a full table scan on every /transactions hit.
+	query := `SELECT DISTINCT tx_hash FROM token_transfers
+		WHERE (LOWER(from_address) = ANY($1) OR LOWER(to_address) = ANY($1))`
+	args := []any{pq.Array(norm)}
+	if beforeBlock != nil {
+		query += ` AND block_number < $2`
+		args = append(args, *beforeBlock)
+	}
+	// ORDER BY ensures the LIMIT picks the most recent matches — same shape
+	// the surrounding tx feed renders, so the visibility-union mirrors what
+	// the user will scroll through.
+	query += ` ORDER BY tx_hash`
+	if limit > 0 {
+		query += fmt.Sprintf(` LIMIT %d`, limit)
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("FindTransferParticipantTxs: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err != nil {
+			return nil, fmt.Errorf("FindTransferParticipantTxs scan: %w", err)
+		}
+		out[strings.ToLower(h)] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("FindTransferParticipantTxs rows.Err: %w", err)
+	}
+	return out, nil
+}
+
 // GetTransfersByAddress returns token transfers involving a specific address.
 func (s *Store) GetTransfersByAddress(ctx context.Context, address string, limit int, beforeBlock *uint64) ([]TokenTransfer, error) {
 	address = strings.ToLower(address)

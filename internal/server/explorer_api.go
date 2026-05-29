@@ -69,6 +69,13 @@ const (
 	ReasonVisibleToGrant  = explorer.ReasonVisibleToGrant
 )
 
+// transferParticipantUnionLimit caps the number of tx hashes that
+// buildVisibilityFilter unions in from FindTransferParticipantTxs (RD-1009).
+// Generous enough to cover the most-recent matches a tx feed would render,
+// bounded enough to keep the join scan-safe on chains with millions of
+// historical transfers. Tune via empirical query plans rather than guesswork.
+const transferParticipantUnionLimit = 10000
+
 // ResolveAddressResponse is returned when resolving an address_id.
 // SECURITY: RealAddress is only populated for "full" disclosure level.
 type ResolveAddressResponse struct {
@@ -941,22 +948,26 @@ func redactOptsFromFilter(filter *explorer.VisibilityFilter) explorer.RedactOpts
 	return explorer.RedactOpts{VisibleTxHashes: m}
 }
 
-// buildRedactOptsForViewer builds RedactOpts from the viewer's visibleTo
-// entries. Used by single-item endpoints that don't have a VisibilityFilter.
+// buildRedactOptsForViewer builds RedactOpts for single-item endpoints
+// (getExplorerTransaction et al). Mirrors the list-path opts derivation
+// (buildVisibilityFilter → redactOptsFromFilter) so the cross-redactor
+// row-survival invariant from RD-1009 holds on by-hash surfaces too —
+// without this, a tx whose tx.from / tx.to are both hidden but whose
+// derived token-transfer rows have an admin-visible counterparty would
+// 404 at GET /transactions/:hash while still appearing in /transfers and
+// in the /transactions list. Closing the gap at this single helper
+// applies the fix to every single-item handler that calls it (12 sites
+// across explorer_api.go).
+//
+// Anonymous viewers (viewerDID == "") get the empty-opts early-return so
+// we don't pay the buildVisibilityFilter DB work for callers that have
+// no possible visibility anyway.
 func (s *Server) buildRedactOptsForViewer(ctx context.Context, viewerDID string) explorer.RedactOpts {
-	opts := explorer.RedactOpts{}
 	if viewerDID == "" {
-		return opts
+		return explorer.RedactOpts{}
 	}
-	hashes, err := s.db.GetVisibleTxHashesForDID(ctx, viewerDID)
-	if err == nil && len(hashes) > 0 {
-		m := make(map[string]bool, len(hashes))
-		for _, h := range hashes {
-			m[strings.ToLower(h)] = true
-		}
-		opts.VisibleTxHashes = m
-	}
-	// Check if viewer is an admin of any org
+	filter := s.buildVisibilityFilter(ctx, viewerDID)
+	opts := redactOptsFromFilter(filter)
 	opts.ViewerIsAdmin = s.isViewerAdmin(ctx, viewerDID)
 	s.applyAdminTxView(&opts)
 	return opts
@@ -1234,6 +1245,42 @@ func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string) *e
 		visibleTxHashes, err := s.db.GetVisibleTxHashesForDID(ctx, viewerDID)
 		if err == nil && len(visibleTxHashes) > 0 {
 			filter.VisibleTxHashes = visibleTxHashes
+		}
+	}
+
+	// RD-1009: union in tx hashes whose token-transfer participants the viewer
+	// can see. Without this the SQL filter drops a tx whose tx.from / tx.to are
+	// both hidden (typically an EOA wallet + a private token contract) even
+	// when one of its derived token-transfer rows has an admin-visible
+	// counterparty — so /transfers surfaces the transfer (and its parent
+	// tx_hash via TokenTransfer.TxHash) but /transactions is missing the row.
+	// Cross-redactor row asymmetry is the bug; unioning here closes it at the
+	// SQL filter so both feeds agree.
+	//
+	// Privacy-safe by construction: every tx hash added here is one that the
+	// transfer feed already exposes to this viewer via the surviving transfer
+	// row — no new address material is revealed. The redactor's per-row field
+	// stripping still applies; this only flips the row-survival decision.
+	//
+	// Bounded scan: we cap at transferParticipantUnionLimit to keep the join
+	// O(window) rather than O(full table). The cap is generous enough to
+	// cover the most-recent N matching tx hashes that would actually be
+	// rendered by the surrounding tx feed.
+	if len(visible) > 0 {
+		transferTxs, err := s.explorerStore.FindTransferParticipantTxs(
+			ctx, visible, nil /* beforeBlock */, transferParticipantUnionLimit)
+		if err == nil && len(transferTxs) > 0 {
+			// Dedup against any hashes the visibleTo lookup already added.
+			existing := make(map[string]bool, len(filter.VisibleTxHashes))
+			for _, h := range filter.VisibleTxHashes {
+				existing[strings.ToLower(h)] = true
+			}
+			for h := range transferTxs {
+				if !existing[h] {
+					filter.VisibleTxHashes = append(filter.VisibleTxHashes, h)
+					existing[h] = true
+				}
+			}
 		}
 	}
 
