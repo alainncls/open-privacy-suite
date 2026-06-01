@@ -54,6 +54,17 @@ export function useOrgContext() {
   return context;
 }
 
+/**
+ * useOrgContextOptional returns the org context if the caller is rendered
+ * within RBACManager's provider, or null otherwise. Used by components that
+ * legitimately render both inside the RBAC tree (where the selected org is
+ * meaningful) and in isolation in unit tests (where it isn't), without
+ * forcing every such test to wrap in a provider.
+ */
+export function useOrgContextOptional(): OrgContextType | null {
+  return useContext(OrgContext);
+}
+
 export default function RBACManager() {
   const location = useLocation();
   const navigate = useNavigate();

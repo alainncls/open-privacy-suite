@@ -782,11 +782,13 @@ func (s *Server) setupRouter() *gin.Engine {
 			// Compliance endpoints (travel rule)
 			s.registerComplianceRoutes(admin)
 
-			// RD-928: "View as user" impersonation surface. Mounted under
-			// /api/v1/admin/impersonate/:target_did/{explorer,rpc}/... with
-			// its own middleware that re-enforces tier-2 admin (rejecting
-			// super-admin and read-only admin), same-org check, GET-only,
-			// and per-request impersonation_log writes.
+			// RD-928 / RD-994: "View as user" impersonation surface. Mounted
+			// under /api/v1/admin/impersonate/:target_did/in/:org_id/{explorer,rpc}/...
+			// with its own middleware that re-enforces tier-2 admin (rejecting
+			// super-admin and read-only admin), verifies the explicit :org_id
+			// is one of the caller's orgs (403 otherwise) and that the target
+			// is a member of it (404 otherwise), GET-only, and per-request
+			// impersonation_log writes. The bare route (no /in/:org_id) is 400.
 			s.registerImpersonationRoutes(admin)
 
 			// Dev-only endpoints
@@ -860,15 +862,19 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 		return
 	}
 
-	// Extract optional org_id from path (for /rpc/:org_id route)
+	// Extract optional org_id from path (for the production /rpc/:org_id
+	// route).
 	orgID := c.Param("org_id")
-	// Under impersonation, anchor org resolution to the admin's same-org
-	// match (set by the middleware) when the path didn't carry one. This
-	// avoids the multi-org disambiguation prompt for impersonated reads
-	// since we've already picked the org via the admin's admin_org_ids.
-	if impersonating && orgID == "" {
+	// RD-994: under impersonation the org is the explicit :org_id the gate
+	// validated and pinned in the context. It is authoritative — we anchor
+	// to it unconditionally, ignoring any /rpc/:nested_org_id segment a
+	// caller might tack on. This guarantees the impersonated read is scoped
+	// to exactly the org the admin named in the URL (and was authorised for
+	// + the target was verified a member of), not some other org reachable
+	// via the nested param.
+	if impersonating {
 		if oid, ok := c.Get(impersonationOrgIDContextKey); ok {
-			if s, ok := oid.(string); ok {
+			if s, ok := oid.(string); ok && s != "" {
 				orgID = s
 			}
 		}

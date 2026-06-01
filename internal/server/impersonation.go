@@ -17,35 +17,48 @@ import (
 )
 
 // RD-928 — "View as user" impersonation surface.
+// RD-994 — explicit, path-supplied org for multi-org admins.
 //
 // Tier-2 org admins can browse the explorer / call read-only RPC as if they
-// were a target user in the same org, without ever minting a user-shaped JWT.
-// The mechanism is a parallel URL tree:
+// were a target user in a specific org, without ever minting a user-shaped
+// JWT. The org is named explicitly in the URL — the proxy no longer guesses
+// it via a first-match against the admin's admin_org_ids. The mechanism is a
+// parallel URL tree:
 //
-//   /api/v1/admin/impersonate/:target_did/explorer/<sub-path>
-//   /api/v1/admin/impersonate/:target_did/rpc[/:org_id]
+//   /api/v1/admin/impersonate/:target_did/in/:org_id/api/v1/explorer/<sub-path>
+//   /api/v1/admin/impersonate/:target_did/in/:org_id/rpc[/:nested_org_id]
 //
 // These re-use the existing explorer / RPC handlers via a single per-request
 // override carried in gin.Context. impersonationGateMiddleware does all the
 // gating up front:
 //
 //   1. tier-2 admin only (super-admin token + tier-3 + read-only admin → 403)
-//   2. target user exists AND has a membership in the admin's org (else 404,
-//      same shape as RD-872 dry-run — never reveal cross-org existence)
-//   3. self-impersonation rejected
-//   4. GET-only on this surface (write methods 405) — Phase 2 of RD-872 is
+//   2. :org_id MUST be one of the caller's admin_org_ids (else 403) — RD-994
+//   3. target user exists AND has a membership in :org_id (else 404,
+//      same shape as RD-872 dry-run / a cross-org target — never reveal
+//      cross-org existence)
+//   4. self-impersonation rejected
+//   5. GET-only on this surface (write methods 405) — Phase 2 of RD-872 is
 //      strictly read-only by design
-//   5. defensive header strip: X-Admin-Token and any X-Impersonate-* headers
+//   6. defensive header strip: X-Admin-Token and any X-Impersonate-* headers
 //      from the client are removed before the request hits the downstream
 //      handler chain (the BFF should never have forwarded them, but DiD)
-//   6. per-request impersonation_log row, fail-closed: if the audit write
+//   7. per-request impersonation_log row, fail-closed: if the audit write
 //      errors we refuse the response rather than expose data unlogged
+//
+// RD-994 backwards-compat decision: the bare /impersonate/:target_did/...
+// route (no /in/:org_id) is NOT supported. It returns 400. The project
+// policy (MVP close to release, no backwards-compat shims) plus the security
+// argument — silent first-match org selection is exactly the opacity RD-994
+// removes — means we force explicit org selection rather than fall back to
+// the old resolveImpersonationOrg behaviour. The BFF and dashboard always
+// supply the org, so there is no legitimate caller of the bare route.
 //
 // On success the middleware sets:
 //
 //   c.Set(viewerDIDOverrideContextKey, target_did)
 //   c.Set(impersonationActorDIDContextKey, admin_did)
-//   c.Set(impersonationOrgIDContextKey, admin_org_id)
+//   c.Set(impersonationOrgIDContextKey, org_id)   // the explicit :org_id
 //
 // Downstream:
 //
@@ -61,7 +74,8 @@ import (
 // contract in their org, so any data exposed through the impersonated viewer
 // is already in the admin's reach via direct calls. Net new data: zero. The
 // surface is an *ergonomics* tool wrapped in audit logging, not a privilege
-// expansion. Cross-org structurally impossible because the same-org check
+// expansion. Cross-org is structurally impossible because (a) :org_id must be
+// one of the admin's own orgs and (b) the target-membership check in :org_id
 // runs before the override is set.
 
 // Context keys for the impersonation override. Strings, not custom types,
@@ -80,48 +94,53 @@ const (
 var errImpersonationTargetNotFound = errors.New("user not found")
 
 // registerImpersonationRoutes mounts the impersonation surface as a
-// path-prepend namespace: every existing read-side URL on the proxy is
-// reachable under
+// path-prepend namespace with an explicit org segment: every existing
+// read-side URL on the proxy is reachable under
 //
-//	/api/v1/admin/impersonate/:target_did<original-url>
+//	/api/v1/admin/impersonate/:target_did/in/:org_id<original-url>
 //
 // i.e. an explorer call to /api/v1/explorer/blocks/123 becomes
-// /api/v1/admin/impersonate/<did>/api/v1/explorer/blocks/123, and an RPC
-// call to /rpc becomes /api/v1/admin/impersonate/<did>/rpc. The BFF
-// rewrites paths by simple concatenation — no segment surgery — which keeps
-// the contract robust as new explorer endpoints are added.
+// /api/v1/admin/impersonate/<did>/in/<org>/api/v1/explorer/blocks/123, and an
+// RPC call to /rpc becomes /api/v1/admin/impersonate/<did>/in/<org>/rpc. The
+// BFF rewrites paths by simple concatenation — no segment surgery — which
+// keeps the contract robust as new explorer endpoints are added.
 //
 // The route group inherits localhost-only + admin-auth from the parent admin
 // group. impersonationGateMiddleware re-enforces tier-2 admin specifically
-// (rejecting super-admin token + read-only admin) and adds the same-org
-// check.
+// (rejecting super-admin token + read-only admin), verifies :org_id is one of
+// the caller's orgs, and verifies the target is a member of :org_id.
 //
-// Two sub-trees:
+// Two sub-trees under /in/:org_id:
 //   - /api/v1/explorer/* re-uses bindExplorerEndpoints (shared with the
 //     production explorer routes) but with the impersonation gate +
 //     viewer override.
-//   - /rpc[/:org_id] re-uses handleJSONRPC.
+//   - /rpc[/:nested_org_id] re-uses handleJSONRPC.
+//
+// RD-994: the bare /impersonate/:target_did/... routes (no /in/:org_id) are
+// registered separately and unconditionally return 400 — we force the caller
+// to name the org explicitly rather than silently first-matching it.
 //
 // auth.OptionalJWTAuthMiddleware is NOT applied here — the admin gate
 // already validated the caller's JWT, and we don't want an anonymous viewer
 // fallback under this tree.
 func (s *Server) registerImpersonationRoutes(adminGroup *gin.RouterGroup) {
-	imp := adminGroup.Group("/impersonate/:target_did")
-	imp.Use(s.impersonationGateMiddleware())
+	// Explicit-org subtree: /impersonate/:target_did/in/:org_id/...
+	impIn := adminGroup.Group("/impersonate/:target_did/in/:org_id")
+	impIn.Use(s.impersonationGateMiddleware())
 
 	// Explorer subtree is re-mounted at /api/v1/explorer (matching its
 	// production prefix) so the BFF just prepends
-	// /api/v1/admin/impersonate/<did> to whatever explorer URL it was
-	// going to call. Reuse the same log-redaction middleware production
+	// /api/v1/admin/impersonate/<did>/in/<org> to whatever explorer URL it
+	// was going to call. Reuse the same log-redaction middleware production
 	// explorer routes use — impersonated paths can still embed Ethereum
 	// addresses we don't want in access logs.
-	explorerImp := imp.Group("/api/v1/explorer")
+	explorerImp := impIn.Group("/api/v1/explorer")
 	explorerImp.Use(explorerLogRedactionMiddleware())
 	s.bindExplorerEndpoints(explorerImp)
 
-	// RPC subtree: mirror the production /rpc and /rpc/:org_id shapes.
+	// RPC subtree: mirror the production /rpc and /rpc/:nested_org_id shapes.
 	// /rpc has no /api/v1 prefix in production so it sits directly under
-	// /api/v1/admin/impersonate/:target_did/rpc here too.
+	// /api/v1/admin/impersonate/:target_did/in/:org_id/rpc here too.
 	//
 	// We register Any() (not GET) so non-GET methods reach the middleware's
 	// 405 check instead of gin's no-route 404 — surfaces the right HTTP
@@ -129,13 +148,51 @@ func (s *Server) registerImpersonationRoutes(adminGroup *gin.RouterGroup) {
 	// and makes the "POST under impersonation is rejected" assertion
 	// auditable. The middleware unconditionally rejects c.Request.Method
 	// != GET.
-	imp.Any("/rpc", s.handleJSONRPC)
-	imp.Any("/rpc/:org_id", s.handleJSONRPC)
+	//
+	// :nested_org_id is the production /rpc/:org_id shape; under
+	// impersonation the gate's explicit :org_id is authoritative for org
+	// anchoring (handleJSONRPC prefers the path :nested_org_id only when the
+	// gate hasn't pinned one, which it always has here).
+	impIn.Any("/rpc", s.handleJSONRPC)
+	impIn.Any("/rpc/:nested_org_id", s.handleJSONRPC)
+
+	// RD-994: bare routes without /in/:org_id. Mirror the same shapes so a
+	// caller of the old URL tree gets a clear 400 ("org required") instead
+	// of a 404 no-route. We deliberately do NOT run the gate here — there is
+	// no org to anchor to, so there's nothing to authorise; the request is
+	// malformed by construction.
+	bare := adminGroup.Group("/impersonate/:target_did")
+	bareReject := func(c *gin.Context) {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+			"error": "org_id is required: use /api/v1/admin/impersonate/:target_did/in/:org_id/...",
+		})
+	}
+	bareExplorer := bare.Group("/api/v1/explorer")
+	s.bindImpersonationBareReject(bareExplorer, bareReject)
+	bare.Any("/rpc", bareReject)
+	bare.Any("/rpc/:nested_org_id", bareReject)
 }
 
-// impersonationGateMiddleware enforces the RD-928 gate rules and sets the
-// viewer override + audit-log identity context values. See the package-level
-// doc on this file for the full enforcement matrix.
+// bindImpersonationBareReject mirrors the explorer endpoint shapes registered
+// by bindExplorerEndpoints, but wires every one to the supplied reject
+// handler. It exists so the bare (org-less) impersonation tree returns a
+// clean 400 on the exact same set of explorer paths the /in/:org_id tree
+// serves, rather than a confusing no-route 404. A single wildcard would be
+// simpler but gin forbids mixing a wildcard with the explicit child routes
+// already registered on the sibling /in/:org_id group at the shared prefix,
+// so we enumerate the prefix instead and let gin's tree match sub-paths via a
+// catch-all under this group only.
+func (s *Server) bindImpersonationBareReject(g *gin.RouterGroup, reject gin.HandlerFunc) {
+	// A catch-all under the explorer prefix covers blocks, txs, addresses,
+	// logs, transfers, tokens, chain-id, stats, etc. without coupling to the
+	// concrete bindExplorerEndpoints route list. The /in/:org_id sibling owns
+	// the real handlers; this group only ever returns 400.
+	g.Any("/*any", reject)
+}
+
+// impersonationGateMiddleware enforces the RD-928/RD-994 gate rules and sets
+// the viewer override + audit-log identity context values. See the
+// package-level doc on this file for the full enforcement matrix.
 func (s *Server) impersonationGateMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Super-admin token bypasses orgScopingMiddleware on regular admin
@@ -190,6 +247,36 @@ func (s *Server) impersonationGateMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		// RD-994: org is explicit and path-supplied. The route guarantees
+		// the param is present; defend against an empty value anyway.
+		orgID := strings.TrimSpace(c.Param("org_id"))
+		if orgID == "" {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+				"error": "org_id is required: use /api/v1/admin/impersonate/:target_did/in/:org_id/...",
+			})
+			return
+		}
+
+		// The caller must themselves be a tier-2 admin OF :org_id. Anything
+		// outside their admin_org_ids is a 403 — this is the authorisation
+		// boundary (vs the 404 target-membership check below, which is an
+		// existence-hiding boundary). We answer 403 here and not 404 because
+		// the org id is the admin's own claim surface: a tier-2 admin always
+		// knows which orgs they administer, so there is nothing to hide.
+		adminScoped := false
+		for _, id := range orgIDs {
+			if id == orgID {
+				adminScoped = true
+				break
+			}
+		}
+		if !adminScoped {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"error": "not a tier-2 admin of the requested org",
+			})
+			return
+		}
+
 		// Defensive header strip: a misbehaving BFF (or compromised one)
 		// must not be able to smuggle alternate identity envelopes into
 		// the downstream chain. RD-877's `subject` claim is JWT-derived
@@ -199,19 +286,20 @@ func (s *Server) impersonationGateMiddleware() gin.HandlerFunc {
 		c.Request.Header.Del("X-Impersonate-User-DID")
 		c.Request.Header.Del("X-Impersonate-Token")
 
-		// Resolve the target user in one of the admin's orgs. We don't
-		// take an org_id from the URL — we infer the org from the
-		// intersection of the admin's admin_org_ids with the target's
-		// memberships. If the target is in multiple admin orgs the first
-		// match wins (rare; org admins are typically single-org). If
-		// none match → 404 (no info disclosure).
-		orgID, lookupErr := s.resolveImpersonationOrg(c.Request.Context(), targetDID, orgIDs)
+		// Verify the target user exists AND is a member of the explicit
+		// :org_id. A non-existent user, a user with no membership in
+		// :org_id, and a user who only exists in some OTHER org all collapse
+		// to the same generic 404 — so the response shape can't be used as a
+		// cross-org user-existence oracle. (Authorisation of the admin over
+		// :org_id was already settled above; this check is purely about the
+		// target's presence in that org.)
+		lookupErr := s.verifyImpersonationTargetInOrg(c.Request.Context(), targetDID, orgID)
 		if errors.Is(lookupErr, errImpersonationTargetNotFound) {
 			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "user not found"})
 			return
 		}
 		if lookupErr != nil {
-			slog.Error("impersonation: org resolution failed", "admin_did", adminDID, "err", lookupErr)
+			slog.Error("impersonation: target membership check failed", "admin_did", adminDID, "err", lookupErr)
 			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 			return
 		}
@@ -261,38 +349,38 @@ func (s *Server) impersonationGateMiddleware() gin.HandlerFunc {
 	}
 }
 
-// resolveImpersonationOrg returns the admin-scoped org ID in which the target
-// user has a membership, or errImpersonationTargetNotFound if the target
-// doesn't exist OR isn't in any of the admin's orgs.
+// verifyImpersonationTargetInOrg returns nil iff the target user exists AND
+// has at least one group membership in orgID. It returns
+// errImpersonationTargetNotFound for a non-existent user OR a user with no
+// membership in orgID (including a user who only exists in some other org).
 //
-// Cross-org targets and never-seen DIDs collapse to the same sentinel — by
-// design, so the response shape can't be used as a user-existence oracle
-// across org boundaries.
-func (s *Server) resolveImpersonationOrg(ctx context.Context, targetDID string, adminOrgIDs []string) (string, error) {
+// RD-994: the org is now the explicit, caller-supplied :org_id — we no longer
+// scan the intersection of admin/target orgs to pick one. The caller's
+// authorisation over orgID is checked separately in the gate (a 403, not a
+// 404). Here, never-seen DIDs and cross-org-only targets collapse to the same
+// sentinel by design, so the response shape can't be used as a user-existence
+// oracle across org boundaries.
+func (s *Server) verifyImpersonationTargetInOrg(ctx context.Context, targetDID, orgID string) error {
 	if s.db == nil {
-		return "", fmt.Errorf("db not configured")
+		return fmt.Errorf("db not configured")
 	}
 	user, err := s.db.GetUserByExternalID(ctx, targetDID)
 	if err != nil {
-		return "", fmt.Errorf("user lookup: %w", err)
+		return fmt.Errorf("user lookup: %w", err)
 	}
 	if user == nil {
-		return "", errImpersonationTargetNotFound
+		return errImpersonationTargetNotFound
 	}
 	userOrgIDs, err := s.rbacAccessCtrl.GetUserOrgIDs(ctx, user.ID)
 	if err != nil {
-		return "", fmt.Errorf("user org lookup: %w", err)
-	}
-	adminSet := make(map[string]struct{}, len(adminOrgIDs))
-	for _, id := range adminOrgIDs {
-		adminSet[id] = struct{}{}
+		return fmt.Errorf("user org lookup: %w", err)
 	}
 	for _, uOrg := range userOrgIDs {
-		if _, ok := adminSet[uOrg]; ok {
-			return uOrg, nil
+		if uOrg == orgID {
+			return nil
 		}
 	}
-	return "", errImpersonationTargetNotFound
+	return errImpersonationTargetNotFound
 }
 
 // getEffectiveViewerDID returns the impersonation override if set, else the

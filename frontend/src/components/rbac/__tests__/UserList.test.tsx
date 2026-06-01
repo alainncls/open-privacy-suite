@@ -16,10 +16,11 @@ import { mockUser } from '@/test/mocks/handlers';
 // Mock the useOrgContext hook from RBACManager
 // Use the shared TestOrgContext from test-utils so MockOrgProvider works
 vi.mock('../RBACManager', async () => {
-  const { TestOrgContext, useOrgContext } = await import('./test-utils');
+  const { TestOrgContext, useOrgContext, useOrgContextOptional } = await import('./test-utils');
   return {
     OrgContext: TestOrgContext,
     useOrgContext,
+    useOrgContextOptional,
   };
 });
 

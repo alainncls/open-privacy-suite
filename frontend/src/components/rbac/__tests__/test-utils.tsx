@@ -27,6 +27,13 @@ export function useOrgContext() {
   return context;
 }
 
+// Non-throwing variant mirroring RBACManager.useOrgContextOptional. Returns
+// null when no provider is present (so components that read it in isolation
+// don't blow up).
+export function useOrgContextOptional() {
+  return useContext(TestOrgContext);
+}
+
 // Alias for backwards compatibility
 export const OrgContext = TestOrgContext;
 

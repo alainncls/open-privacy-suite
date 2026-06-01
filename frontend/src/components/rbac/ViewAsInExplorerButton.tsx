@@ -2,16 +2,26 @@ import { Glasses } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAuthOptional } from '@/contexts/AuthContext';
 import { resolveExplorerUrl } from '@/lib/explorerUrl';
+import { useOrgContextOptional } from './RBACManager';
 
 /**
- * RD-928 — primary entry point for the "View as user" flow.
+ * RD-928 / RD-994 — primary entry point for the "View as user" flow.
  *
  * Navigates (same tab) to the block-explorer's /view-as handoff, passing the
- * target DID via a query param. The explorer FE picks up ?did=… on mount,
- * mints an opaque session token via its own BFF (`POST /api/impersonation/start`),
- * and lands the admin on the explorer home with the banner active. The
- * privacy-proxy is the authoritative gate; non-tier-2 / cross-org / unknown
- * target all surface as 404 in the explorer UI.
+ * target DID AND the currently-selected org via query params
+ * (?did=<did>&org=<org_id>). The explorer FE picks up both on mount, mints an
+ * opaque session token via its own BFF (`POST /api/impersonation/start` with
+ * { target_did, org_id }), and lands the admin on the explorer home with the
+ * banner active. The privacy-proxy is the authoritative gate; non-tier-2 /
+ * org-not-administered / target-not-in-org / unknown target all surface as
+ * 403/404 in the explorer UI.
+ *
+ * RD-994: the org is explicit. For an admin who is tier-2 in multiple orgs,
+ * the impersonated session is anchored to the org currently selected in the
+ * dashboard's org-context dropdown — not a silent first-match. When no org is
+ * selected (e.g. the org-less "all orgs" view), we omit ?org= and the
+ * downstream proxy rejects the bare route with a clear 400; the explorer
+ * surfaces that as "select an org first".
  *
  * Visibility: parent renders only for tier-2 admins (is_org_admin) — read-only
  * admins (ROA) and super-admin token holders never see this affordance.
@@ -43,6 +53,13 @@ export function ViewAsInExplorerButton({
   const auth = useAuthOptional();
   const userDID = auth?.userDID ?? null;
 
+  // Optional org-context read: in production the button always renders inside
+  // RBACManager (which provides OrgContext), so selectedOrg reflects the
+  // dropdown. In isolated unit tests there's no provider — fall back to null
+  // (no ?org=) rather than throwing.
+  const orgCtx = useOrgContextOptional();
+  const selectedOrgId = orgCtx?.selectedOrg?.id ?? null;
+
   // Self-impersonation is rejected by the privacy-proxy with 400 anyway;
   // we hide the affordance client-side so the operator never sees a control
   // that can't do anything. Compare lowercase since DID casing isn't
@@ -59,7 +76,13 @@ export function ViewAsInExplorerButton({
   const handleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!explorerUrl) return;
-    const url = `${explorerUrl}/view-as?did=${encodeURIComponent(targetDID)}`;
+    // RD-994: include the currently-selected org so the impersonated session
+    // anchors to the org the admin is looking at. Omitted when no org is
+    // selected; the downstream proxy then rejects the bare route (400).
+    const orgParam = selectedOrgId
+      ? `&org=${encodeURIComponent(selectedOrgId)}`
+      : '';
+    const url = `${explorerUrl}/view-as?did=${encodeURIComponent(targetDID)}${orgParam}`;
     // Same-tab navigation, not a new tab. Why:
     //
     // AuthProvider stores PP session state in sessionStorage (per-tab by

@@ -8,10 +8,11 @@ import { mockContracts, mockOrganizations } from '@/test/mocks/rbac-fixtures';
 
 // RBACManager → orgcontext mock pattern matches the other RBAC tests.
 vi.mock('../RBACManager', async () => {
-  const { TestOrgContext, useOrgContext } = await import('./test-utils');
+  const { TestOrgContext, useOrgContext, useOrgContextOptional } = await import('./test-utils');
   return {
     OrgContext: TestOrgContext,
     useOrgContext,
+    useOrgContextOptional,
   };
 });
 

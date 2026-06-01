@@ -29,6 +29,7 @@ vi.mock('../RBACManager', async () => {
   return {
     OrgContext: MockOrgContext,
     useOrgContext: () => mockUseOrgContext(),
+    useOrgContextOptional: () => mockUseOrgContext(),
   };
 });
 

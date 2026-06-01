@@ -14,7 +14,22 @@ Tier-2 org admins can answer "what does this user see right now?" without engine
 - **Audit walk-through**: an auditor inspecting an access-control decision asks "what would this admin's revoked user actually have been able to read?". The admin walks the answer instead of explaining it.
 - **Pre-flight a grant change**: before flipping a `contract_grants` row, confirm what the affected user sees with and without it.
 
-The mechanism is a parallel URL tree on the privacy-proxy. The block-explorer dashboard wraps it in a "View as user" button + amber banner. No user-shaped JWT is ever minted; the admin's own session keeps its admin identity throughout.
+The mechanism is a parallel URL tree on the privacy-proxy that always names an explicit organization: `/api/v1/admin/impersonate/<target_did>/in/<org_id>/…`. The block-explorer dashboard wraps it in a "View as user" button + amber banner. No user-shaped JWT is ever minted; the admin's own session keeps its admin identity throughout.
+
+---
+
+## Which org you view as
+
+View-as always resolves against **one explicit organization** — the org named in the URL.
+
+In the dashboard, that org is the one currently selected in the org-context dropdown. When an admin clicks **View as user**, the session is anchored to that org: the impersonated view shows what the target user sees **in that org**, evaluated against that org's grants.
+
+This matters for admins who are tier-2 in more than one org. If you administer both Org A and Org B, and the target user is a member of both, then:
+
+- Selecting **Org A** in the dropdown shows the user's Org A view (Org A's grants decide what's visible).
+- Selecting **Org B** shows the user's Org B view, which can differ when the underlying grants diverge.
+
+The org is never guessed. If no org is selected, the dashboard does not start a View-as session, and a hand-crafted request without an org returns **400 "org_id is required"**. There is no silent "first matching org" fallback — the org you see is always the org you picked.
 
 ---
 
@@ -47,14 +62,16 @@ What the admin sees vs what the user sees: **the redaction layer is identical to
 
 ---
 
-## Same-org boundary
+## Org boundary
 
-The target must be a member of one of the admin's `admin_org_ids`. If they are not:
-- The dashboard's user-list filters them out — they never appear as a clickable target.
-- A hand-crafted URL targeting a cross-org DID returns **404 "user not found"**, identical to the response for a never-seen DID.
-- The privacy-proxy never confirms or denies the existence of a cross-org user via this surface.
+Two independent checks gate every View-as request, in this order:
 
-This 404-uniformity is by design (audit-scope item M3): a tier-2 admin in Org A must not be able to use View-as to enumerate which DIDs exist in Org B.
+1. **The admin must administer the named org.** The `<org_id>` in the URL must be one of the caller's own `admin_org_ids`. If it is not, the request returns **403** — the admin is naming an org they do not administer. (A tier-2 admin always knows which orgs they administer, so there is nothing to hide here.)
+2. **The target must be a member of the named org.** If the target user is not a member of `<org_id>` — whether because the user does not exist, or exists only in some other org — the request returns **404 "user not found"**, identical to the response for a never-seen DID.
+
+The dashboard's user-list also filters out users who are not members of the selected org, so they never appear as a clickable target.
+
+The 404-uniformity is by design (audit-scope item M3): a tier-2 admin in Org A must not be able to use View-as to enumerate which DIDs exist in Org B. Note the deliberate split — naming an org you don't administer is a 403 (an authorization error about *your* claims), while naming a target who isn't in an org you *do* administer is a 404 (an existence-hiding error about *someone else's* membership).
 
 ---
 
@@ -66,7 +83,7 @@ Every impersonated request writes one row to `impersonation_log` (migration 047)
 |--------|-------|
 | `actor_did` | The admin's DID (from their JWT) |
 | `impersonated_did` | The target user's DID |
-| `org_id` | The admin's org for this session |
+| `org_id` | The explicit org named in the View-as URL for this session |
 | `method` | The HTTP method + path that ran (e.g. `GET /api/v1/explorer/blocks/123`) |
 | `params_hash` | SHA-256 of the request query string — raw query bytes are never persisted |
 | `decision` | `allow` (2xx), `deny` (4xx), or `error` (5xx) |

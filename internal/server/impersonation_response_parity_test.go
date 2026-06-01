@@ -137,7 +137,7 @@ func TestImpersonation_ExplorerResponseParity_ViewableAddresses(t *testing.T) {
 	// → sets viewerDIDOverrideContextKey → getViewerDIDFromRequest
 	// reads the override.
 	impReq := httptest.NewRequest(http.MethodGet,
-		"/api/v1/admin/impersonate/"+f.userDID+"/api/v1/explorer/viewable-addresses", nil)
+		impersonatePath(f.userDID, f.orgID, "/api/v1/explorer/viewable-addresses"), nil)
 	impReq.Header.Set("X-Test-Auth-Method", "jwt_admin")
 	impReq.Header.Set("X-Test-Admin-Subject", f.adminDID)
 	impReq.Header.Set("X-Test-Admin-Org-IDs", f.orgID)
