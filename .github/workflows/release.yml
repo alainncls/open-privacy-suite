@@ -51,6 +51,16 @@ jobs:
             org.opencontainers.image.created=${{ github.event.release.created_at }}
             org.opencontainers.image.revision=${{ github.sha }}
 
+      # RD-1023: resolve the build identity stamped into the binary via
+      # -ldflags. The build context excludes .git, so we compute these on the
+      # runner and forward them as build-args.
+      - name: Resolve build metadata
+        id: build_meta
+        run: |
+          echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+          echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       - name: Build and push Backend image
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
         with:
@@ -61,6 +71,10 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.build_meta.outputs.version }}
+            GIT_COMMIT=${{ steps.build_meta.outputs.short_sha }}
+            BUILD_TIME=${{ steps.build_meta.outputs.build_time }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

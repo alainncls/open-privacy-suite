@@ -253,6 +253,30 @@ In development, these endpoints are also accessible from localhost without authe
 
 ---
 
+### System
+
+<ApiEndpoint method="GET" path="/api/v1/admin/system/version" description="Build identity of the running binary" />
+
+Returns the version, git commit, and build time the running proxy was built from — useful for confirming which build is deployed.
+
+**Response:**
+
+```json
+{
+  "version": "v0.10.1",
+  "commit": "0ee21ce",
+  "build_time": "2026-06-01T10:00:00Z"
+}
+```
+
+<Callout variant="info" title="Where else the version appears">
+
+The same build identity is logged once at startup (`"msg":"build info"` in the container logs) and exported on the `build_info` Prometheus metric. It is **not** returned by the unauthenticated `/health` endpoint, and the standard `web3_clientVersion` JSON-RPC method continues to report the **upstream node's** version — not the proxy's — so the proxy build is never disclosed to unauthenticated callers.
+
+</Callout>
+
+---
+
 ### Organizations
 
 | Method | Endpoint | Description |

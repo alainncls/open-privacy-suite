@@ -11,9 +11,8 @@ import (
 
 	"privacy-proxy/internal/config"
 	"privacy-proxy/internal/server"
+	"privacy-proxy/internal/version"
 )
-
-const Version = "0.1.0"
 
 func main() {
 	// Set up structured logging: JSON in production, text in dev
@@ -25,8 +24,17 @@ func main() {
 	}
 	slog.SetDefault(slog.New(logHandler))
 
+	// Emit the build identity first thing so every deployment's logs say
+	// exactly which binary is running (RD-1023). Values are injected via
+	// -ldflags at build time; a plain `go build` logs version=dev.
+	slog.Info("build info",
+		"version", version.Version,
+		"commit", version.Commit,
+		"built", version.BuildTime,
+	)
+
 	cfg := config.Load()
-	cfg.Version = Version
+	cfg.Version = version.Version
 
 	// Validate configuration (fails fast in production if required values missing)
 	if err := cfg.Validate(); err != nil {
