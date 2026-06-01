@@ -27,6 +27,10 @@ export function ContractInfoPanel({ contractAddress }: ContractInfoPanelProps) {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastAddress = useRef<string>('');
 
+  // reason: debounced lookup keyed on contractAddress only. `data` is read at
+  // line 42 purely as a guard to skip a redundant refetch for the same address;
+  // it is set inside this effect, so listing it as a dep would cause a loop. It
+  // is intentionally not a trigger.
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
@@ -64,6 +68,7 @@ export function ContractInfoPanel({ contractAddress }: ContractInfoPanelProps) {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contractAddress]);
 
   if (!ADDRESS_REGEX.test(contractAddress.trim().toLowerCase())) return null;

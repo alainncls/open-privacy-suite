@@ -35,8 +35,17 @@ interface OrgContextType {
   refreshOrgs: () => Promise<void>;
 }
 
+// reason: OrgContext + useOrgContext are the org-selection context that
+// RBACManager provides and its sub-tabs (OrganizationList, UserList, etc.)
+// consume. They are intentionally co-located with the providing component, and
+// the test suite mocks them via vi.mock('../RBACManager'). Splitting would
+// touch every sub-tab and test mock; the only cost here is full reload (not
+// HMR) when editing this manager file.
+// eslint-disable-next-line react-refresh/only-export-components
 export const OrgContext = createContext<OrgContextType | null>(null);
 
+// reason: consumer hook for OrgContext above; same co-location rationale.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useOrgContext() {
   const context = useContext(OrgContext);
   if (!context) {
@@ -110,11 +119,19 @@ export default function RBACManager() {
     }
   };
 
+  // reason: mount-only load of organizations. loadOrganizations is a
+  // non-memoised helper; this must run exactly once on mount, so the empty dep
+  // array is intentional.
   useEffect(() => {
     loadOrganizations();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Sync org from URL when search params change
+  // reason: re-derives the selected org from the URL when the org list or query
+  // string changes. selectedOrg?.id is read only as a guard against a redundant
+  // setState (avoiding a render loop); it is intentionally not a trigger, so it
+  // is omitted from the deps.
   useEffect(() => {
     const orgIdFromUrl = searchParams.get('org');
     if (orgIdFromUrl && organizations.length > 0) {
@@ -123,6 +140,7 @@ export default function RBACManager() {
         setSelectedOrg(org);
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, organizations]);
 
   const handleOrgChange = (orgId: string) => {

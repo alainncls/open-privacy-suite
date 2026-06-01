@@ -46,6 +46,10 @@ const customTheme = lightTheme({
   overlayBlur: 'small'
 });
 
+// reason: main.tsx is the Vite entry module — it is never imported, it only
+// calls ReactDOM.createRoot().render() below. Fast Refresh cannot apply to the
+// root render, so the "move component to a separate file" hint does not apply.
+// eslint-disable-next-line react-refresh/only-export-components
 function Root() {
   return (
     <WagmiProvider config={wagmiConfig}>

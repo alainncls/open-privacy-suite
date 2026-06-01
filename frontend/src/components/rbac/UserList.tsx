@@ -153,9 +153,13 @@ export default function UserList() {
   }, [selectedOrg, debouncedSearch, selectedGroupIds, roleFilter, offset]);
 
   // Load users when org / search / filters change - reset to first page
+  // reason: intentional reload when the listed filter keys change. loadUsers is
+  // a non-memoised helper that reads current state via closure; adding it to
+  // deps would require useCallback and risk a refetch loop.
   useEffect(() => {
     setOffset(0);
     loadUsers(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedOrg, debouncedSearch, selectedGroupIds, roleFilter]);
 
   // Open modal if userId is in URL

@@ -130,9 +130,13 @@ export default function TravelRuleRecordList() {
     }
   };
 
+  // reason: intentional reload-on-orgId. loadRecords is a non-memoised helper
+  // that reads current state via closure; adding it to deps would require
+  // useCallback and risk a refetch loop.
   useEffect(() => {
     setOffset(0);
     loadRecords(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId]);
 
   const handleDelete = async () => {

@@ -83,6 +83,10 @@ export function CurrencyProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
+// reason: useCurrency is the consumer hook for CurrencyProvider, intentionally
+// co-located with it. Cost of co-location is full reload (not HMR) when editing
+// this file; acceptable for this admin/compliance widget.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useCurrency() {
   const context = useContext(CurrencyContext);
   if (!context) {

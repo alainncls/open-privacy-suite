@@ -305,7 +305,10 @@ export function LoginPage() {
       setState(prev => ({ ...prev, step: 'init', error: null }));
       return false;
     }
-  }, [isOAuthMode, oauthSessionId, isAuthenticated, accessToken]);
+    // isOAuthMode / oauthSessionId are module-scope constants derived once from
+    // window.location.search — they never change after load, so they are not
+    // reactive deps (eslint flags listing them as unnecessary).
+  }, [isAuthenticated, accessToken]);
 
   // Auto-start on mount. Branches, evaluated in priority order:
   //
@@ -356,12 +359,12 @@ export function LoginPage() {
     } else {
       startAuth();
     }
+    // isOAuthMode / oauthSessionId are module-scope constants (see note at the
+    // trySilentSSO dep array) — not reactive, so they are intentionally omitted.
   }, [
     state.step,
     isLoading,
     isAuthenticated,
-    isOAuthMode,
-    oauthSessionId,
     trySilentSSO,
     handleMockLogin,
     startAuth,
@@ -437,7 +440,7 @@ export function LoginPage() {
       mounted = false;
       clearTimeout(timer);
     };
-  }, [state.step, state.sessionId, login, navigate]);
+  }, [state.step, state.sessionId, login, navigate, from]);
 
   // Handle mobile deep link
   const handleMobileAuth = () => {

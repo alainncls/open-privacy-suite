@@ -53,12 +53,20 @@ export default function GroupAccessForm({
   // allowed_methods (the backend honors it via HasMethod + MatchWildcard).
   const [extraWildcards, setExtraWildcards] = useState<Record<string, { prefix: string; deny?: string[] }>>({});
 
+  // reason: intentional reload-on-groupId. loadAccess/loadExtraNamespaces are
+  // non-memoised helpers that read current state via closure; adding them to
+  // deps would require useCallback and risk a refetch loop.
   useEffect(() => {
     loadAccess();
     loadExtraNamespaces();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groupId]);
 
   // Auto-detect preset whenever methods change (but skip if a preset was just applied)
+  // reason: this effect must fire only when allowedMethods changes. presetApplied
+  // is read as a one-shot guard that this effect itself resets; including it as a
+  // dep would refire the effect on that reset and defeat the skip. Intentionally
+  // omitted.
   useEffect(() => {
     if (presetApplied) {
       setPresetApplied(false);
@@ -66,6 +74,7 @@ export default function GroupAccessForm({
     }
     const match = detectMatchingPreset(allowedMethods);
     setSelectedPresetId(match);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allowedMethods]);
 
   const loadAccess = async () => {

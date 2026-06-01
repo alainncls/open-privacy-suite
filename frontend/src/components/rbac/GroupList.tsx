@@ -78,10 +78,14 @@ export default function GroupList() {
     }
   };
 
+  // reason: intentional reload when orgId/search change. loadGroups is a
+  // non-memoised helper that reads current state via closure; adding it to deps
+  // would require useCallback and risk a refetch loop.
   useEffect(() => {
     if (orgId) {
       loadGroups(0);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, debouncedSearch]);
 
   const loadGroups = async (newOffset: number = offset) => {

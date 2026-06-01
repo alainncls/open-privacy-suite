@@ -68,8 +68,8 @@ export function BatchDeleteConfirmDialog({
       await rbacApi.groups.batchDelete(orgId, { group_ids: groupIds });
       onSuccess();
       onOpenChange(false);
-    } catch (err: any) {
-      setError(err?.message ?? 'Failed to delete groups');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to delete groups');
     } finally {
       setDeleting(false);
     }

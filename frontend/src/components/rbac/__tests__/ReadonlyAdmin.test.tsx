@@ -4,7 +4,6 @@ import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import { renderWithRBACContext } from './test-utils';
 import { useAdmin } from '@/components/auth/RequireAdmin';
-import { mockContract, mockOrganization } from '@/test/mocks/handlers';
 import { mockContracts, mockOrganizations } from '@/test/mocks/rbac-fixtures';
 
 // RBACManager → orgcontext mock pattern matches the other RBAC tests.

@@ -10,7 +10,7 @@
  * - Loading states across multiple data fetches
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
@@ -27,7 +27,6 @@ import {
   mockGroupHierarchy,
   mockUsers,
   mockContracts,
-  mockUserMemberships,
   mockMembershipsWithDetails,
   mockFullEffectivePermissions,
   mockLinkedAddresses,
@@ -35,12 +34,7 @@ import {
   createMockGroup,
 } from '@/test/mocks/rbac-fixtures';
 import {
-  mockOrganization,
-  mockGroup,
   mockUser,
-  mockContract,
-  mockMembershipWithDetails,
-  mockEffectivePermissions,
   mockGroupAccess,
 } from '@/test/mocks/handlers';
 import type { Organization, Group, User, Contract } from '@/types/rbac';
@@ -217,7 +211,7 @@ describe('RBACManager Integration Tests', () => {
     });
 
     it('navigates to Contracts tab', async () => {
-      const { user } = renderRBACManager({ initialRoute: '/admin/rbac/contracts?org=org-1' });
+      renderRBACManager({ initialRoute: '/admin/rbac/contracts?org=org-1' });
 
       await waitFor(() => {
         expect(screen.getByTestId('rbac-manager')).toBeInTheDocument();

@@ -43,6 +43,9 @@ export default function MembershipForm({
     [existingMemberships]
   );
 
+  // reason: intentional reload-on-selectedOrgId. loadGroups is a non-memoised
+  // helper that reads current state via closure; adding it to deps would require
+  // useCallback and risk a refetch loop.
   useEffect(() => {
     if (selectedOrgId) {
       loadGroups();
@@ -51,9 +54,14 @@ export default function MembershipForm({
       setAvailableGroups([]);
       setSelectedGroupId('');
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedOrgId]);
 
   // Filter out groups user is already in whenever allGroups or existingGroupIds change
+  // reason: this effect recomputes availableGroups from allGroups/existingGroupIds.
+  // selectedGroupId is read only to clear a now-invalid selection; it is reset by
+  // this effect, so listing it as a dep would refire on that reset. Intentionally
+  // omitted.
   useEffect(() => {
     const filtered = allGroups.filter(g => !existingGroupIds.has(g.id));
     setAvailableGroups(filtered);
@@ -61,6 +69,7 @@ export default function MembershipForm({
     if (selectedGroupId && !filtered.some(g => g.id === selectedGroupId)) {
       setSelectedGroupId('');
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allGroups, existingGroupIds]);
 
   const loadGroups = async () => {

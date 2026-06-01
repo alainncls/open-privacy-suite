@@ -47,6 +47,12 @@ export function UserContextPanel({ jwtToken, onUserLoaded }: UserContextPanelPro
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastDid = useRef<string>('');
 
+  // reason: debounced lookup keyed on jwtToken only. `data` is read at line 64
+  // purely as a guard to skip a redundant refetch for the same DID (it is set
+  // inside this effect, so listing it would loop). `onUserLoaded` is a parent
+  // callback invoked as a side effect, not a trigger — adding it would refire
+  // the effect whenever the parent re-renders without memoising it. Both are
+  // intentionally omitted.
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
@@ -89,6 +95,7 @@ export function UserContextPanel({ jwtToken, onUserLoaded }: UserContextPanelPro
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jwtToken]);
 
   if (!jwtToken || !jwtToken.includes('.')) return null;

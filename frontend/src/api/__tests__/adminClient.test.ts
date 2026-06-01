@@ -4,11 +4,6 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 // and inspecting which headers the axios interceptor applies.
 
 const AUTH_STORAGE_KEY = 'privacy_proxy_auth';
-const ADMIN_TOKEN_KEYS = [
-  'privacy_proxy_admin_api_token',
-  'privacy_proxy_admin_token',
-  'admin_api_token',
-] as const;
 
 function clearAllStorage() {
   localStorage.clear();

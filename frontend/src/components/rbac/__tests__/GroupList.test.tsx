@@ -12,7 +12,7 @@ import {
   mockGroupAccessFull,
   mockGroupAccessReadOnly,
 } from '@/test/mocks/rbac-fixtures';
-import { mockGroup, mockGroupAccess, mockOrganization } from '@/test/mocks/handlers';
+import { mockGroup, mockGroupAccess } from '@/test/mocks/handlers';
 
 // Mock the useOrgContext hook from RBACManager
 // Note: vi.mock is hoisted, so create context inside the factory

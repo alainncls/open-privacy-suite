@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { http, HttpResponse, delay } from 'msw';
 import { server } from '@/test/mocks/server';
 import { renderWithComplianceContext } from './test-utils';
-import { mockSanctionedAddresses, mockOrganization } from '@/test/mocks/handlers';
+import { mockOrganization } from '@/test/mocks/handlers';
 
 vi.mock('../ComplianceManager', async () => {
   const { TestComplianceOrgContext, useComplianceOrgContext } = await import('./test-utils');

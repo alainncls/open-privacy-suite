@@ -17,6 +17,11 @@ export interface AdminContextType {
 
 const AdminContext = createContext<AdminContextType | undefined>(undefined);
 
+// reason: useAdmin is deliberately co-located with its RequireAdmin provider so
+// the admin-gate context and its consumer hook live in one file. This is admin
+// dashboard UI; the only cost is a full reload (instead of HMR) when editing
+// this file, which is acceptable here.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAdmin() {
   const context = useContext(AdminContext);
   if (context === undefined) {

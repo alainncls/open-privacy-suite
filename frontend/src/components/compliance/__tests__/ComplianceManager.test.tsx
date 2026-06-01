@@ -20,10 +20,6 @@ import TravelRuleRecordList from '../TravelRuleRecordList';
 import AddressThresholdList from '../AddressThresholdList';
 import ComplianceLogList from '../ComplianceLogList';
 import {
-  mockOrganization,
-  mockComplianceConfig,
-} from '@/test/mocks/handlers';
-import {
   mockOrganizations,
 } from '@/test/mocks/rbac-fixtures';
 

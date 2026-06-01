@@ -133,12 +133,18 @@ describe('TravelRuleRecordList', () => {
     });
 
     it('submits record with structured fields', async () => {
+      interface TravelRuleCreateBody {
+        originator_data?: { name?: string };
+        beneficiary_data?: { name?: string };
+        beneficiary_address?: string;
+        amount_wei?: string;
+      }
       let createCalled = false;
-      let createBody: any;
+      let createBody: TravelRuleCreateBody = {};
 
       server.use(
         http.post('/api/v1/admin/orgs/:orgId/compliance/travel-rule-records', async ({ request }) => {
-          createBody = await request.json();
+          createBody = (await request.json()) as TravelRuleCreateBody;
           createCalled = true;
           // C3: amount_fiat is computed server-side, not provided by the client
           return HttpResponse.json({
@@ -196,8 +202,8 @@ describe('TravelRuleRecordList', () => {
       });
 
       // Verify structured data was sent
-      expect(createBody.originator_data.name).toBe('Alice Smith');
-      expect(createBody.beneficiary_data.name).toBe('Bob Jones');
+      expect(createBody.originator_data?.name).toBe('Alice Smith');
+      expect(createBody.beneficiary_data?.name).toBe('Bob Jones');
       // 1.5 ETH with 18 decimals = 1500000000000000000 wei
       expect(createBody.amount_wei).toBe('1500000000000000000');
     });

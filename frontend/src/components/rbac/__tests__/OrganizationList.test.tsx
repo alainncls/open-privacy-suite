@@ -6,7 +6,7 @@ import { server } from '@/test/mocks/server';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from '@/contexts/AuthContext';
-import { mockOrganizations, createMockOrganization } from '@/test/mocks/rbac-fixtures';
+import { mockOrganizations } from '@/test/mocks/rbac-fixtures';
 import type { Organization } from '@/types/rbac';
 import React, { useState } from 'react';
 
