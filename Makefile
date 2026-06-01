@@ -14,13 +14,28 @@ $(HOOKS_MARKER):
 
 ensure-hooks: $(HOOKS_MARKER)
 
+# Build identity injected into the binary via -ldflags (RD-1023).
+# Overridable from the environment / CI; falls back to safe values when git
+# is unavailable so a plain `make build` never fails.
+VERSION    ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
+BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+VERSION_PKG := privacy-proxy/internal/version
+LDFLAGS := -X $(VERSION_PKG).Version=$(VERSION) -X $(VERSION_PKG).Commit=$(GIT_COMMIT) -X $(VERSION_PKG).BuildTime=$(BUILD_TIME)
+
 # Build backend (dev, with mock auth)
 build: ensure-hooks
-	go build -tags mockauth -o bin/privacy-proxy ./cmd/server
+	go build -tags mockauth -ldflags "$(LDFLAGS)" -o bin/privacy-proxy ./cmd/server
 
-# Build production Docker image (no mock auth, no dev shortcuts)
+# Build production Docker image (no mock auth, no dev shortcuts).
+# Build identity is passed in as build-args because the build context
+# usually excludes .git, so `git describe` can't run inside the container.
 build-prod: ensure-hooks
-	docker build -f Dockerfile.backend --target prod -t privacy-proxy:prod .
+	docker build -f Dockerfile.backend --target prod \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
+		--build-arg BUILD_TIME=$(BUILD_TIME) \
+		-t privacy-proxy:prod .
 
 # Build authproxy
 authproxy: ensure-hooks

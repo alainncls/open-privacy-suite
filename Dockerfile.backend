@@ -17,13 +17,29 @@ RUN go mod download
 # Copy source code
 COPY . .
 
+# Build identity (RD-1023). Passed in as build-args because the build
+# context excludes .git, so `git describe` can't run here — the host
+# Makefile / CI resolves these and forwards them. Each stage redeclares the
+# ARGs with defaults (ARG values do not cross FROM boundaries), so an
+# arg-less `docker build` still works and just reports version=dev.
+
 # --- Dev build: includes mock auth for testing ---
 FROM builder-base AS builder-dev
-RUN CGO_ENABLED=1 GOOS=linux go build -tags mockauth -o /app/bin/privacy-proxy ./cmd/server
+ARG VERSION=dev
+ARG GIT_COMMIT=none
+ARG BUILD_TIME=unknown
+RUN CGO_ENABLED=1 GOOS=linux go build -tags mockauth \
+	-ldflags "-X privacy-proxy/internal/version.Version=${VERSION} -X privacy-proxy/internal/version.Commit=${GIT_COMMIT} -X privacy-proxy/internal/version.BuildTime=${BUILD_TIME}" \
+	-o /app/bin/privacy-proxy ./cmd/server
 
 # --- Production build: no mock auth, no dev shortcuts ---
 FROM builder-base AS builder-prod
-RUN CGO_ENABLED=1 GOOS=linux go build -tags production -o /app/bin/privacy-proxy ./cmd/server
+ARG VERSION=dev
+ARG GIT_COMMIT=none
+ARG BUILD_TIME=unknown
+RUN CGO_ENABLED=1 GOOS=linux go build -tags production \
+	-ldflags "-X privacy-proxy/internal/version.Version=${VERSION} -X privacy-proxy/internal/version.Commit=${GIT_COMMIT} -X privacy-proxy/internal/version.BuildTime=${BUILD_TIME}" \
+	-o /app/bin/privacy-proxy ./cmd/server
 
 # --- Runtime base (shared) ---
 FROM debian:bookworm-slim AS runtime-base

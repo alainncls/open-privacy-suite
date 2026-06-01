@@ -802,6 +802,10 @@ func (s *Server) setupRouter() *gin.Engine {
 		{
 			system.GET("/eth-call-tracing", s.handleGetEthCallTracing)
 			system.POST("/eth-call-tracing", s.handlePostEthCallTracing)
+
+			// RD-1023: build identity of the running binary. Read-only,
+			// admin-gated; intentionally not on /health or web3_clientVersion.
+			system.GET("/version", s.handleGetVersion)
 		}
 	}
 

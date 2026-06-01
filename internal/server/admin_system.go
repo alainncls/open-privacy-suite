@@ -9,7 +9,34 @@ import (
 
 	"privacy-proxy/internal/audit"
 	"privacy-proxy/internal/rbac"
+	"privacy-proxy/internal/version"
 )
+
+// systemVersionResponse is the GET /api/v1/admin/system/version shape.
+type systemVersionResponse struct {
+	Version   string `json:"version"`
+	Commit    string `json:"commit"`
+	BuildTime string `json:"build_time"`
+}
+
+// handleGetVersion returns the build identity (version / commit / build time)
+// of the running binary. Admin-gated via the /api/v1/admin/system group
+// (localhost + admin auth). It is deliberately NOT surfaced on the
+// unauthenticated /health endpoint, nor injected into the standard
+// web3_clientVersion RPC (RD-1023): web3_clientVersion is in the anonymous
+// allowlist (migration 044) and is defined as the *execution client's*
+// version, so broadcasting the proxy build there would both leak our exact
+// build to unauthenticated callers and break the method's semantics. The
+// build identity is operational data for ops/support, so it lives behind the
+// admin surface (plus the startup log line and the Prometheus build_info
+// label).
+func (s *Server) handleGetVersion(c *gin.Context) {
+	c.JSON(http.StatusOK, systemVersionResponse{
+		Version:   version.Version,
+		Commit:    version.Commit,
+		BuildTime: version.BuildTime,
+	})
+}
 
 // Admin "system" endpoints — fleet-wide settings the super-admin can flip
 // at runtime without a redeploy. Pre-RD-915 the eth_call cross-org tracing
