@@ -674,7 +674,7 @@ describe('UserDetail', () => {
 
     it('calls update endpoint when saving changes', async () => {
       let updateCalled = false;
-      let updatePayload: any = null;
+      let updatePayload: Record<string, unknown> | null = null;
 
       server.use(
         http.put('/api/v1/admin/users/:userId', async ({ request }) => {
@@ -707,7 +707,7 @@ describe('UserDetail', () => {
 
       await waitFor(() => {
         expect(updateCalled).toBe(true);
-        expect(updatePayload.kyc).toBe(false);
+        expect(updatePayload?.kyc).toBe(false);
         expect(onUpdate).toHaveBeenCalled();
       });
     });

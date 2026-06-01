@@ -247,7 +247,7 @@ describe('ContractGrantForm', () => {
   // ===========================================================================
 
   describe('Event Rules', () => {
-    const navigateToEvents = async (user: any) => {
+    const navigateToEvents = async (user: ReturnType<typeof userEvent.setup>) => {
       await user.selectOptions(screen.getByRole('combobox'), 'group-1');
       await user.click(screen.getByRole('button', { name: 'Next' }));
     };
@@ -344,11 +344,8 @@ describe('ContractGrantForm', () => {
       const pickerButton = transferButtons.find(b => b.hasAttribute('disabled'));
       expect(pickerButton).toBeTruthy();
 
-      // Remove it by clicking the X button next to the selected event
-      // The remove button is inside the selected event rule's container
-      const removeButtons = screen.getAllByRole('button').filter(
-        b => b.querySelector('svg.w-3.h-3')
-      );
+      // Remove it by clicking the X button next to the selected event.
+      // The remove button is inside the selected event rule's container.
       // Click the last remove-like button (the X on the event rule)
       const eventRuleContainer = screen.getByText('Visible events:').parentElement;
       const removeBtn = eventRuleContainer?.querySelector('button[type="button"]:last-of-type');

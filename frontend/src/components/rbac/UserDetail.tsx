@@ -108,17 +108,32 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
   const [error, setError] = useState<string | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
 
+  // reason: intentional reload when the viewed user changes. loadMemberships /
+  // loadLinkedAddresses are non-memoised helpers that read current state via
+  // closure; adding them to deps would require useCallback and risk a refetch
+  // loop.
   useEffect(() => {
     loadMemberships();
     loadLinkedAddresses();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user.id]);
 
+  // Stable string key for the org-id set so the effect below re-runs only when
+  // the actual membership set changes (extracted out of the dep array so eslint
+  // can statically check it).
+  const userOrgIdsKey = userOrgIds.join(',');
+
   // Load effective permissions for all orgs user is a member of
+  // reason: intentional reload keyed on the membership set (userOrgIdsKey).
+  // loadAllEffectivePermissions is a non-memoised helper that reads current
+  // state via closure; adding it (or userOrgIds.length) to deps would require
+  // useCallback and risk a refetch loop.
   useEffect(() => {
     if (userOrgIds.length > 0) {
       loadAllEffectivePermissions();
     }
-  }, [userOrgIds.join(',')]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userOrgIdsKey]);
 
   useEffect(() => {
     setHasChanges(kyc !== user.kyc || banned !== user.banned || note !== (user.note || ''));

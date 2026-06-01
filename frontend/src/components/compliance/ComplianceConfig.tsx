@@ -59,8 +59,13 @@ export default function ComplianceConfig() {
     }
   };
 
+  // reason: intentional reload-on-orgId. loadConfig is a non-memoised helper
+  // that reads current state via closure; re-running only when orgId changes is
+  // the desired behaviour. Adding it to deps would require useCallback and risk
+  // a refetch loop.
   useEffect(() => {
     loadConfig();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId]);
 
   const handleSave = async () => {

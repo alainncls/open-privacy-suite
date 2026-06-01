@@ -38,7 +38,6 @@ describe('resolveExplorerUrl', () => {
 
   it('rejects non-http(s) schemes (defence-in-depth)', () => {
     window.__runtimeConfig = {
-      // eslint-disable-next-line no-script-url
       VITE_BLOCK_EXPLORER_URL: 'javascript:alert(1)',
     };
     expect(resolveExplorerUrl()).toBe('');

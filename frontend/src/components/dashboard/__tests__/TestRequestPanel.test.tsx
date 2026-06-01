@@ -5,6 +5,15 @@ import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import { TestRequestPanel } from '../TestRequestPanel';
 
+// Shape of the JSON body the panel POSTs to /api/v1/admin/test-request.
+// params is heterogeneous (e.g. [{ to, data }, 'latest']) so its elements
+// are typed as unknown and narrowed at the individual assertion sites.
+interface TestRequestBody {
+  method?: string;
+  params?: unknown[];
+  jwt_token?: string;
+}
+
 function setupEthPriceHandlers(price: number = 2500) {
   server.use(
     http.get('/api/v1/admin/orgs', () => {
@@ -21,10 +30,10 @@ function setupEthPriceHandlers(price: number = 2500) {
   );
 }
 
-function setupSuccessHandler(handler?: (body: any) => void) {
+function setupSuccessHandler(handler?: (body: TestRequestBody) => void) {
   server.use(
     http.post('/api/v1/admin/test-request', async ({ request }) => {
-      const body = await request.json();
+      const body = (await request.json()) as TestRequestBody;
       handler?.(body);
       return HttpResponse.json({
         result: '0x1234',
@@ -246,7 +255,7 @@ describe('TestRequestPanel', () => {
   describe('Form submission - RPC methods', () => {
     it('sends request with default method and empty params', async () => {
       const user = userEvent.setup();
-      let capturedBody: any;
+      let capturedBody: TestRequestBody | undefined;
       setupSuccessHandler((body) => {
         capturedBody = body;
       });
@@ -257,13 +266,13 @@ describe('TestRequestPanel', () => {
       await user.click(sendButton);
 
       await waitFor(() => expect(capturedBody).toBeDefined());
-      expect(capturedBody.method).toBe('eth_blockNumber');
-      expect(capturedBody.params).toEqual([]);
+      expect(capturedBody?.method).toBe('eth_blockNumber');
+      expect(capturedBody?.params).toEqual([]);
     });
 
     it('sends request with custom JSON params', async () => {
       const user = userEvent.setup();
-      let capturedBody: any;
+      let capturedBody: TestRequestBody | undefined;
       setupSuccessHandler((body) => {
         capturedBody = body;
       });
@@ -285,8 +294,8 @@ describe('TestRequestPanel', () => {
       await user.click(sendButton);
 
       await waitFor(() => expect(capturedBody).toBeDefined());
-      expect(capturedBody.method).toBe('eth_getBalance');
-      expect(capturedBody.params).toEqual([
+      expect(capturedBody?.method).toBe('eth_getBalance');
+      expect(capturedBody?.params).toEqual([
         '0x1234567890123456789012345678901234567890',
         'latest',
       ]);
@@ -351,7 +360,7 @@ describe('TestRequestPanel', () => {
   describe('Form submission - ERC20 methods', () => {
     it('sends eth_call with encoded balanceOf calldata', async () => {
       const user = userEvent.setup();
-      let capturedBody: any;
+      let capturedBody: TestRequestBody | undefined;
       setupSuccessHandler((body) => {
         capturedBody = body;
       });
@@ -376,14 +385,15 @@ describe('TestRequestPanel', () => {
       await user.click(sendButton);
 
       await waitFor(() => expect(capturedBody).toBeDefined());
-      expect(capturedBody.method).toBe('eth_call');
-      expect(capturedBody.params[0].to).toBe(
+      expect(capturedBody?.method).toBe('eth_call');
+      const callArg = capturedBody?.params?.[0] as { to?: string; data?: string };
+      expect(callArg.to).toBe(
         '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
       );
-      expect(capturedBody.params[0].data).toBe(
+      expect(callArg.data).toBe(
         '0x70a082310000000000000000000000001234567890123456789012345678901234567890'
       );
-      expect(capturedBody.params[1]).toBe('latest');
+      expect(capturedBody?.params?.[1]).toBe('latest');
     });
 
     it('shows validation error when contract address is empty', async () => {
@@ -429,7 +439,7 @@ describe('TestRequestPanel', () => {
 
     it('sends eth_call with encoded allowance calldata (two address params)', async () => {
       const user = userEvent.setup();
-      let capturedBody: any;
+      let capturedBody: TestRequestBody | undefined;
       setupSuccessHandler((body) => {
         capturedBody = body;
       });
@@ -458,8 +468,9 @@ describe('TestRequestPanel', () => {
       await user.click(sendButton);
 
       await waitFor(() => expect(capturedBody).toBeDefined());
-      expect(capturedBody.method).toBe('eth_call');
-      expect(capturedBody.params[0].to).toBe(
+      expect(capturedBody?.method).toBe('eth_call');
+      const callArg = capturedBody?.params?.[0] as { to?: string; data?: string };
+      expect(callArg.to).toBe(
         '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
       );
       // dd62ed3e + owner padded + spender padded
@@ -467,15 +478,15 @@ describe('TestRequestPanel', () => {
         '0xdd62ed3e' +
         '000000000000000000000000aaaabbbbccccddddeeeeffff0000111122223333' +
         '0000000000000000000000004444555566667777888899990000aaaabbbbcccc';
-      expect(capturedBody.params[0].data).toBe(expectedData);
-      expect(capturedBody.params[1]).toBe('latest');
+      expect(callArg.data).toBe(expectedData);
+      expect(capturedBody?.params?.[1]).toBe('latest');
     });
   });
 
   describe('JWT token', () => {
     it('sends jwt_token in request when provided', async () => {
       const user = userEvent.setup();
-      let capturedBody: any;
+      let capturedBody: TestRequestBody | undefined;
       setupSuccessHandler((body) => {
         capturedBody = body;
       });
@@ -497,7 +508,7 @@ describe('TestRequestPanel', () => {
       await user.click(sendButton);
 
       await waitFor(() => expect(capturedBody).toBeDefined());
-      expect(capturedBody.jwt_token).toBe(
+      expect(capturedBody?.jwt_token).toBe(
         'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZXN0In0.sig'
       );
     });

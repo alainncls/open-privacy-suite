@@ -80,50 +80,29 @@ function buildAuthState(accessToken: string, refreshToken: string, expiresAt: nu
   };
 }
 
+// Module-scope constant: the logged-out auth state. Hoisted out of the
+// component so it has a stable identity and can be safely referenced from
+// useCallback/useEffect dependency arrays without re-creating each render.
+const emptyState: AuthState = {
+  isAuthenticated: false,
+  accessToken: null,
+  refreshToken: null,
+  userDID: null,
+  expiresAt: null,
+  kyc: false,
+  zkRoles: null,
+  issuedAt: null,
+  authProvider: null,
+};
+
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const emptyState: AuthState = {
-    isAuthenticated: false,
-    accessToken: null,
-    refreshToken: null,
-    userDID: null,
-    expiresAt: null,
-    kyc: false,
-    zkRoles: null,
-    issuedAt: null,
-    authProvider: null,
-  };
   const [state, setState] = useState<AuthState>(emptyState);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Load auth state from sessionStorage on mount (per-tab isolation)
-  useEffect(() => {
-    const loadAuth = async () => {
-      const stored = sessionStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        try {
-          const auth: StoredAuth = JSON.parse(stored);
-          const now = Date.now();
-
-          // Check if token is still valid (with 1 minute buffer)
-          if (auth.expiresAt > now + 60000) {
-            setState(buildAuthState(auth.accessToken, auth.refreshToken, auth.expiresAt));
-          } else if (auth.refreshToken) {
-            // Token expired but we have refresh token - try to refresh
-            await refreshWithToken(auth.refreshToken);
-          } else {
-            sessionStorage.removeItem(STORAGE_KEY);
-          }
-        } catch {
-          sessionStorage.removeItem(STORAGE_KEY);
-        }
-      }
-      setIsLoading(false);
-    };
-
-    loadAuth();
-  }, []);
-
-  const refreshWithToken = async (refreshToken: string): Promise<boolean> => {
+  // Stable: only touches setState / sessionStorage / fetch and module-scope
+  // helpers, so it has no reactive dependencies. Memoised so it can be listed
+  // as a dependency of the effects/callbacks below without retriggering them.
+  const refreshWithToken = useCallback(async (refreshToken: string): Promise<boolean> => {
     try {
       const response = await fetch('/api/v1/refresh', {
         method: 'POST',
@@ -153,7 +132,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setState(emptyState);
       return false;
     }
-  };
+  }, []);
+
+  // Load auth state from sessionStorage on mount (per-tab isolation).
+  // refreshWithToken is memoised with an empty dep array so it is stable; the
+  // effect still only runs once on mount.
+  useEffect(() => {
+    const loadAuth = async () => {
+      const stored = sessionStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        try {
+          const auth: StoredAuth = JSON.parse(stored);
+          const now = Date.now();
+
+          // Check if token is still valid (with 1 minute buffer)
+          if (auth.expiresAt > now + 60000) {
+            setState(buildAuthState(auth.accessToken, auth.refreshToken, auth.expiresAt));
+          } else if (auth.refreshToken) {
+            // Token expired but we have refresh token - try to refresh
+            await refreshWithToken(auth.refreshToken);
+          } else {
+            sessionStorage.removeItem(STORAGE_KEY);
+          }
+        } catch {
+          sessionStorage.removeItem(STORAGE_KEY);
+        }
+      }
+      setIsLoading(false);
+    };
+
+    loadAuth();
+  }, [refreshWithToken]);
 
   const login = useCallback((accessToken: string, refreshToken: string, expiresIn: number) => {
     const expiresAt = Date.now() + expiresIn * 1000;
@@ -193,7 +202,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const refreshAccessToken = useCallback(async (): Promise<boolean> => {
     if (!state.refreshToken) return false;
     return refreshWithToken(state.refreshToken);
-  }, [state.refreshToken]);
+  }, [state.refreshToken, refreshWithToken]);
 
   // Auto-refresh token before expiry
   useEffect(() => {
@@ -229,6 +238,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 }
 
+// reason: useAuth is the consumer hook for AuthProvider and is intentionally
+// co-located with it in this context file. Splitting it out would touch every
+// auth consumer; the only cost of co-location is full reload (not HMR) when
+// editing this file.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuth() {
   const context = useContext(AuthContext);
   if (context === undefined) {
@@ -243,6 +257,9 @@ export function useAuth() {
 // Use this for purely-cosmetic affordances that depend on the current user
 // — never for code paths that must enforce auth. Hook auth-required code to
 // useAuth() so the throw still catches accidental misuse.
+// reason: optional-auth consumer hook co-located with AuthProvider, same
+// rationale as useAuth above.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuthOptional(): AuthContextType | null {
   const context = useContext(AuthContext);
   return context ?? null;

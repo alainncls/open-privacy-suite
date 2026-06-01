@@ -9,7 +9,7 @@ import {
   mockContractNoName,
   createMockContract,
 } from '@/test/mocks/rbac-fixtures';
-import { mockContract, mockOrganization } from '@/test/mocks/handlers';
+import { mockContract } from '@/test/mocks/handlers';
 
 // Mock the useOrgContext hook from RBACManager
 // Use the shared TestOrgContext from test-utils so MockOrgProvider works

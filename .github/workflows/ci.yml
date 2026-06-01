@@ -125,6 +125,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Lint (ESLint, zero warnings)
+        # Gating lint check. Matches RD-959 acceptance criteria:
+        # `eslint . --max-warnings 0` must exit 0 from frontend/. Any error or
+        # warning fails the build. Previously the workflow had no frontend lint
+        # step at all, so lint problems landed unchallenged despite a green badge.
+        run: npx eslint . --max-warnings 0
+
       - name: Run tests
         run: npm run test:run
 

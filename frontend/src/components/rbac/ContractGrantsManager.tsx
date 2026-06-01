@@ -88,8 +88,12 @@ export default function ContractGrantsManager({
 
   const contractAddress = getContractAddress(contract);
 
+  // reason: intentional reload when orgId/contractAddress change. loadData is a
+  // non-memoised helper that reads current state via closure; adding it to deps
+  // would require useCallback and risk a refetch loop.
   useEffect(() => {
     loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, contractAddress]);
 
   const loadData = async () => {

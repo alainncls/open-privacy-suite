@@ -46,8 +46,11 @@ export default function OrganizationList() {
   const [offset, setOffset] = useState(0);
   const [editing, setEditing] = useState<Organization | null>(null);
 
+  // reason: mount-only initial page load. loadPage is a non-memoised helper;
+  // this must run exactly once on mount, so the empty dep array is intentional.
   useEffect(() => {
     loadPage(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadPage = async (newOffset: number = offset) => {

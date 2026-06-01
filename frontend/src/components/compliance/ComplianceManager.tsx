@@ -35,8 +35,16 @@ interface ComplianceOrgContextType {
   organizations: Organization[];
 }
 
+// reason: ComplianceOrgContext + useComplianceOrgContext are the org-selection
+// context that ComplianceManager provides and its sub-tabs consume. They are
+// intentionally co-located with the providing component and mocked in tests via
+// vi.mock('../ComplianceManager'). Splitting would touch every sub-tab and test
+// mock; the only cost here is full reload (not HMR) when editing this file.
+// eslint-disable-next-line react-refresh/only-export-components
 export const ComplianceOrgContext = createContext<ComplianceOrgContextType | null>(null);
 
+// reason: consumer hook for ComplianceOrgContext above; same co-location rationale.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useComplianceOrgContext() {
   const context = useContext(ComplianceOrgContext);
   if (!context) {
@@ -107,13 +115,21 @@ export default function ComplianceManager() {
     }
   };
 
+  // reason: mount-only load of orgs + travel-rule status. loadOrganizations is a
+  // non-memoised helper; this must run exactly once on mount, so the empty dep
+  // array is intentional.
   useEffect(() => {
     loadOrganizations();
     rbacApi.status.get()
       .then(res => setTravelRuleEnabled(res.data?.security?.travel_rule_enabled ?? false))
       .catch(() => setTravelRuleEnabled(null));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // reason: re-derives the selected org from the URL when the org list or query
+  // string changes. selectedOrg?.id is read only as a guard against a redundant
+  // setState (avoiding a render loop); it is intentionally not a trigger, so it
+  // is omitted from the deps.
   useEffect(() => {
     const orgIdFromUrl = searchParams.get('org');
     if (orgIdFromUrl && organizations.length > 0) {
@@ -122,6 +138,7 @@ export default function ComplianceManager() {
         setSelectedOrg(org);
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, organizations]);
 
   const handleOrgChange = (orgId: string) => {

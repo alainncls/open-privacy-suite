@@ -11,7 +11,7 @@ import {
   mockUserBanned,
   createMockUser,
 } from '@/test/mocks/rbac-fixtures';
-import { mockUser, mockUser2 } from '@/test/mocks/handlers';
+import { mockUser } from '@/test/mocks/handlers';
 
 // Mock the useOrgContext hook from RBACManager
 // Use the shared TestOrgContext from test-utils so MockOrgProvider works

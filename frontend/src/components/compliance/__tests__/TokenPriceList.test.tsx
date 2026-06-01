@@ -4,7 +4,6 @@ import userEvent from '@testing-library/user-event';
 import { http, HttpResponse, delay } from 'msw';
 import { server } from '@/test/mocks/server';
 import { renderWithComplianceContext } from './test-utils';
-import { mockTokenPrices } from '@/test/mocks/handlers';
 import { useCurrency } from '../CurrencyContext';
 
 vi.mock('../ComplianceManager', async () => {
@@ -159,7 +158,6 @@ describe('TokenPriceList', () => {
       });
 
       // Click edit on first row (pencil icon)
-      const editButtons = document.querySelectorAll('[data-testid]');
       // Use the pencil button - get all ghost buttons
       const allButtons = screen.getAllByRole('button');
       // Find the first edit button (in the table rows)
