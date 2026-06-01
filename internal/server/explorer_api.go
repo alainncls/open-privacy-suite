@@ -126,11 +126,11 @@ func (s *Server) registerExplorerRoutes(router *gin.Engine) {
 
 // bindExplorerEndpoints attaches every explorer handler to the given route
 // group. Factored out of registerExplorerRoutes so the impersonation surface
-// (RD-928) can re-mount the same endpoint set under
-// /api/v1/admin/impersonate/:target_did/explorer with a different middleware
-// chain (tier-2 admin gate + viewer-DID override). Keep parametric-vs-specific
-// ordering identical to the production tree to avoid Gin route-precedence
-// surprises.
+// (RD-928 / RD-994) can re-mount the same endpoint set under
+// /api/v1/admin/impersonate/:target_did/in/:org_id/api/v1/explorer with a
+// different middleware chain (tier-2 admin gate + viewer-DID override). Keep
+// parametric-vs-specific ordering identical to the production tree to avoid
+// Gin route-precedence surprises.
 func (s *Server) bindExplorerEndpoints(rg *gin.RouterGroup) {
 	rg.GET("/viewable-addresses", s.getViewableAddresses)
 

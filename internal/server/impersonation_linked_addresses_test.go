@@ -85,7 +85,7 @@ func TestImpersonation_LinkedAddressesUseTargetDID(t *testing.T) {
 	// Impersonation call: admin browses as target. Response must reflect
 	// the TARGET's linked addresses, not the admin's.
 	impReq := httptest.NewRequest(http.MethodGet,
-		"/api/v1/admin/impersonate/"+f.userDID+"/api/v1/explorer/viewable-addresses", nil)
+		impersonatePath(f.userDID, f.orgID, "/api/v1/explorer/viewable-addresses"), nil)
 	impReq.Header.Set("X-Test-Auth-Method", "jwt_admin")
 	impReq.Header.Set("X-Test-Admin-Subject", f.adminDID)
 	impReq.Header.Set("X-Test-Admin-Org-IDs", f.orgID)
@@ -139,7 +139,7 @@ func TestImpersonation_LinkedAddresses_GetViewerDIDPrioritizesOverride(t *testin
 	// win — otherwise the admin's subject leaks into linked-address
 	// resolution.
 	impReq := httptest.NewRequest(http.MethodGet,
-		"/api/v1/admin/impersonate/"+f.userDID+"/api/v1/explorer/viewable-addresses", nil)
+		impersonatePath(f.userDID, f.orgID, "/api/v1/explorer/viewable-addresses"), nil)
 	impReq.Header.Set("X-Test-Auth-Method", "jwt_admin")
 	impReq.Header.Set("X-Test-Admin-Subject", f.adminDID)
 	impReq.Header.Set("X-Test-Admin-Org-IDs", f.orgID)

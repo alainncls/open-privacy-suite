@@ -79,6 +79,15 @@ func splitCSV(s string) []string {
 	return out
 }
 
+// impersonatePath builds the RD-994 explicit-org impersonation URL:
+//
+//	/api/v1/admin/impersonate/<targetDID>/in/<orgID>/<suffix>
+//
+// suffix must start with "/" (e.g. "/api/v1/explorer/chain-id" or "/rpc").
+func impersonatePath(targetDID, orgID, suffix string) string {
+	return "/api/v1/admin/impersonate/" + targetDID + "/in/" + orgID + suffix
+}
+
 func impersonationGET(t *testing.T, srv *impersonationTestServer, path, authMethod, adminDID string, adminOrgIDs []string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, path, nil)
@@ -105,13 +114,19 @@ func impersonationGET(t *testing.T, srv *impersonationTestServer, path, authMeth
 
 // impersonationFixture mirrors dryRunFixture so the gate tests have a
 // realistic two-org / admin / user / cross-org-user shape to drive against.
+//
+// RD-994: the admin is tier-2 of BOTH orgs (orgID and otherOrgID) so the
+// "explicit org selection" tests can drive both the in-scope and the
+// out-of-scope (403) paths off the same fixture. multiOrgUserDID is a member
+// of both orgs, used for the anchoring tests.
 type impersonationFixture struct {
 	srv             *impersonationTestServer
 	orgID           string
 	otherOrgID      string
 	adminDID        string
-	userDID         string
-	otherOrgUserDID string
+	userDID         string // member of orgID only
+	otherOrgUserDID string // member of otherOrgID only
+	multiOrgUserDID string // member of BOTH orgID and otherOrgID
 }
 
 func setupImpersonationFixture(t *testing.T) *impersonationFixture {
@@ -125,9 +140,14 @@ func setupImpersonationFixture(t *testing.T) *impersonationFixture {
 	require.NoError(t, database.CreateOrganization(ctx, &rbac.Organization{ID: orgID, Slug: "imp-a", Name: "Imp A", Settings: map[string]any{}}))
 	require.NoError(t, database.CreateOrganization(ctx, &rbac.Organization{ID: otherOrgID, Slug: "imp-b", Name: "Imp B", Settings: map[string]any{}}))
 
-	adminGroupID := drCreateGroup(t, database, orgID, "imp-a-admin", nil, true /* is_org_admin */)
+	// Admin is tier-2 (is_org_admin) of BOTH orgs. The test harness supplies
+	// admin_org_ids explicitly per-request, so this DB shape only matters for
+	// downstream CheckAccess (org-admin → full claims on the org's contracts).
+	adminGroupAID := drCreateGroup(t, database, orgID, "imp-a-admin", nil, true /* is_org_admin */)
+	adminGroupBID := drCreateGroup(t, database, otherOrgID, "imp-b-admin", nil, true /* is_org_admin */)
 	adminDID := "did:imp:admin"
-	drCreateUserInGroup(t, database, adminDID, adminGroupID)
+	adminUserID := drCreateUserInGroup(t, database, adminDID, adminGroupAID)
+	impAddUserToGroup(t, database, adminUserID, adminGroupBID)
 
 	userGroupID := drCreateGroup(t, database, orgID, "imp-a-user", nil, false)
 	userDID := "did:imp:user"
@@ -137,6 +157,13 @@ func setupImpersonationFixture(t *testing.T) *impersonationFixture {
 	otherOrgUserDID := "did:imp:cross-org-user"
 	drCreateUserInGroup(t, database, otherOrgUserDID, otherOrgGroupID)
 
+	// Multi-org user: member of a regular group in BOTH orgs.
+	multiGroupAID := drCreateGroup(t, database, orgID, "imp-a-multi", nil, false)
+	multiGroupBID := drCreateGroup(t, database, otherOrgID, "imp-b-multi", nil, false)
+	multiOrgUserDID := "did:imp:multi-org-user"
+	multiUserID := drCreateUserInGroup(t, database, multiOrgUserDID, multiGroupAID)
+	impAddUserToGroup(t, database, multiUserID, multiGroupBID)
+
 	return &impersonationFixture{
 		srv:             srv,
 		orgID:           orgID,
@@ -144,7 +171,19 @@ func setupImpersonationFixture(t *testing.T) *impersonationFixture {
 		adminDID:        adminDID,
 		userDID:         userDID,
 		otherOrgUserDID: otherOrgUserDID,
+		multiOrgUserDID: multiOrgUserDID,
 	}
+}
+
+// impAddUserToGroup adds an existing user to an additional group, giving the
+// multi-org / multi-group memberships the RD-994 tests need.
+func impAddUserToGroup(t *testing.T, database interface {
+	CreateMembership(ctx context.Context, m *rbac.UserMembership) error
+}, userID, groupID string) {
+	t.Helper()
+	require.NoError(t, database.CreateMembership(context.Background(), &rbac.UserMembership{
+		ID: uuid.New().String(), UserID: userID, GroupID: groupID, Source: rbac.MembershipSourceAdmin,
+	}))
 }
 
 // --- Gate tests ----------------------------------------------------------
@@ -152,7 +191,7 @@ func setupImpersonationFixture(t *testing.T) *impersonationFixture {
 func TestImpersonation_RejectsSuperAdminToken(t *testing.T) {
 	f := setupImpersonationFixture(t)
 	w := impersonationGET(t, f.srv,
-		"/api/v1/admin/impersonate/"+f.userDID+"/api/v1/explorer/chain-id",
+		impersonatePath(f.userDID, f.orgID, "/api/v1/explorer/chain-id"),
 		"admin_token", "", nil)
 	assert.Equal(t, http.StatusForbidden, w.Code)
 	assert.Contains(t, w.Body.String(), "super-admin tokens are not authorised")
@@ -161,7 +200,7 @@ func TestImpersonation_RejectsSuperAdminToken(t *testing.T) {
 func TestImpersonation_RejectsUnauthenticated(t *testing.T) {
 	f := setupImpersonationFixture(t)
 	w := impersonationGET(t, f.srv,
-		"/api/v1/admin/impersonate/"+f.userDID+"/api/v1/explorer/chain-id",
+		impersonatePath(f.userDID, f.orgID, "/api/v1/explorer/chain-id"),
 		"", "", nil)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
@@ -172,7 +211,7 @@ func TestImpersonation_RejectsUnauthenticated(t *testing.T) {
 func TestImpersonation_RejectsReadOnlyAdmin(t *testing.T) {
 	f := setupImpersonationFixture(t)
 	w := impersonationGET(t, f.srv,
-		"/api/v1/admin/impersonate/"+f.userDID+"/api/v1/explorer/chain-id",
+		impersonatePath(f.userDID, f.orgID, "/api/v1/explorer/chain-id"),
 		"jwt_admin", f.adminDID, []string{} /* no full-admin orgs */)
 	assert.Equal(t, http.StatusForbidden, w.Code)
 	assert.Contains(t, w.Body.String(), "tier-2 admin required")
@@ -181,19 +220,21 @@ func TestImpersonation_RejectsReadOnlyAdmin(t *testing.T) {
 func TestImpersonation_RejectsSelfImpersonation(t *testing.T) {
 	f := setupImpersonationFixture(t)
 	w := impersonationGET(t, f.srv,
-		"/api/v1/admin/impersonate/"+f.adminDID+"/api/v1/explorer/chain-id",
+		impersonatePath(f.adminDID, f.orgID, "/api/v1/explorer/chain-id"),
 		"jwt_admin", f.adminDID, []string{f.orgID})
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "cannot impersonate yourself")
 }
 
 // Cross-org target: admin is tier-2 of Org A; target is a member of Org B
-// only. Must return generic 404 (same surface as a non-existent user) so
-// the response shape can't be used as a cross-org existence oracle.
+// only. The admin names Org A (which they administer). The target is not a
+// member of Org A, so the gate returns generic 404 (same surface as a
+// non-existent user) — the response shape can't be used as a cross-org
+// existence oracle.
 func TestImpersonation_CrossOrgTargetReturns404(t *testing.T) {
 	f := setupImpersonationFixture(t)
 	w := impersonationGET(t, f.srv,
-		"/api/v1/admin/impersonate/"+f.otherOrgUserDID+"/api/v1/explorer/chain-id",
+		impersonatePath(f.otherOrgUserDID, f.orgID, "/api/v1/explorer/chain-id"),
 		"jwt_admin", f.adminDID, []string{f.orgID})
 	assert.Equal(t, http.StatusNotFound, w.Code)
 	assert.Contains(t, w.Body.String(), "user not found")
@@ -202,7 +243,7 @@ func TestImpersonation_CrossOrgTargetReturns404(t *testing.T) {
 func TestImpersonation_NonExistentTargetReturns404(t *testing.T) {
 	f := setupImpersonationFixture(t)
 	w := impersonationGET(t, f.srv,
-		"/api/v1/admin/impersonate/did:imp:does-not-exist/api/v1/explorer/chain-id",
+		impersonatePath("did:imp:does-not-exist", f.orgID, "/api/v1/explorer/chain-id"),
 		"jwt_admin", f.adminDID, []string{f.orgID})
 	assert.Equal(t, http.StatusNotFound, w.Code)
 	assert.Contains(t, w.Body.String(), "user not found")
@@ -213,7 +254,7 @@ func TestImpersonation_NonExistentTargetReturns404(t *testing.T) {
 func TestImpersonation_RejectsWriteMethod(t *testing.T) {
 	f := setupImpersonationFixture(t)
 	req := httptest.NewRequest(http.MethodPost,
-		"/api/v1/admin/impersonate/"+f.userDID+"/rpc",
+		impersonatePath(f.userDID, f.orgID, "/rpc"),
 		nil)
 	req.Header.Set("X-Test-Auth-Method", "jwt_admin")
 	req.Header.Set("X-Test-Admin-Subject", f.adminDID)
@@ -232,12 +273,89 @@ func TestImpersonation_RejectsWriteMethod(t *testing.T) {
 func TestImpersonation_AllowsSameOrgExplorerGET(t *testing.T) {
 	f := setupImpersonationFixture(t)
 	w := impersonationGET(t, f.srv,
-		"/api/v1/admin/impersonate/"+f.userDID+"/api/v1/explorer/chain-id",
+		impersonatePath(f.userDID, f.orgID, "/api/v1/explorer/chain-id"),
 		"jwt_admin", f.adminDID, []string{f.orgID})
 	assert.Equal(t, http.StatusOK, w.Code)
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 	assert.Contains(t, body, "chain_id")
+}
+
+// RD-994 — admin passes an org that is NOT in their admin_org_ids. Even
+// though the admin is genuinely tier-2 of f.orgID, naming f.otherOrgID in the
+// URL while only f.orgID is in admin_org_ids must be a 403 (authorisation
+// boundary), distinct from the 404 target-not-in-org shape.
+func TestImpersonation_OrgNotInAdminOrgIDsReturns403(t *testing.T) {
+	f := setupImpersonationFixture(t)
+	w := impersonationGET(t, f.srv,
+		impersonatePath(f.userDID, f.otherOrgID, "/api/v1/explorer/chain-id"),
+		"jwt_admin", f.adminDID, []string{f.orgID} /* only org A */)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, w.Body.String(), "not a tier-2 admin of the requested org")
+}
+
+// RD-994 — target is not a member of the explicitly-named org. Admin is
+// tier-2 of BOTH orgs and names Org B; the target (f.userDID) is only in Org
+// A. Must be 404 with the generic "user not found" — no disclosure that the
+// user exists elsewhere.
+func TestImpersonation_TargetNotMemberOfSuppliedOrgReturns404(t *testing.T) {
+	f := setupImpersonationFixture(t)
+	w := impersonationGET(t, f.srv,
+		impersonatePath(f.userDID, f.otherOrgID, "/api/v1/explorer/chain-id"),
+		"jwt_admin", f.adminDID, []string{f.orgID, f.otherOrgID} /* tier-2 of both */)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Contains(t, w.Body.String(), "user not found")
+}
+
+// RD-994 — the bare /impersonate/:target_did/... route (no /in/:org_id) is
+// forced to 400. We do NOT silently fall back to first-match org selection.
+func TestImpersonation_BareRouteWithoutOrgReturns400(t *testing.T) {
+	f := setupImpersonationFixture(t)
+	// Explorer bare route.
+	w := impersonationGET(t, f.srv,
+		"/api/v1/admin/impersonate/"+f.userDID+"/api/v1/explorer/chain-id",
+		"jwt_admin", f.adminDID, []string{f.orgID})
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "org_id is required")
+
+	// Bare /rpc route too.
+	w2 := impersonationGET(t, f.srv,
+		"/api/v1/admin/impersonate/"+f.userDID+"/rpc",
+		"jwt_admin", f.adminDID, []string{f.orgID})
+	assert.Equal(t, http.StatusBadRequest, w2.Code)
+	assert.Contains(t, w2.Body.String(), "org_id is required")
+}
+
+// RD-994 — multi-org happy paths. The admin is tier-2 of both orgs and the
+// target is a member of both. Naming either org explicitly succeeds, and the
+// pinned impersonation org in context matches the one named in the URL (the
+// anchoring that downstream CheckAccess uses). The cross-org perms-divergence
+// assertion lives in the e2e symmetry test; here we assert the gate anchors
+// to exactly the named org.
+func TestImpersonation_MultiOrgAnchorsToNamedOrg(t *testing.T) {
+	f := setupImpersonationFixture(t)
+
+	for _, org := range []string{f.orgID, f.otherOrgID} {
+		org := org
+		t.Run("org="+org, func(t *testing.T) {
+			w := impersonationGET(t, f.srv,
+				impersonatePath(f.multiOrgUserDID, org, "/api/v1/explorer/chain-id"),
+				"jwt_admin", f.adminDID, []string{f.orgID, f.otherOrgID})
+			require.Equal(t, http.StatusOK, w.Code)
+
+			// The audit row records the explicit org the admin named.
+			ctx := context.Background()
+			conn := f.srv.db.Conn()
+			require.NotNil(t, conn)
+			var loggedOrg string
+			require.NoError(t, conn.QueryRowContext(ctx, `
+				SELECT org_id FROM impersonation_log
+				WHERE actor_did = $1 AND impersonated_did = $2 AND org_id = $3
+				ORDER BY created_at DESC LIMIT 1`,
+				f.adminDID, f.multiOrgUserDID, org).Scan(&loggedOrg))
+			assert.Equal(t, org, loggedOrg, "audit org must be the explicit caller-passed org")
+		})
+	}
 }
 
 // The viewer override must be set on the context after the gate runs.
@@ -263,7 +381,7 @@ func TestImpersonation_SetsViewerOverrideContext(t *testing.T) {
 		c.Next()
 	})
 	admin := api.Group("/admin")
-	imp := admin.Group("/impersonate/:target_did")
+	imp := admin.Group("/impersonate/:target_did/in/:org_id")
 	imp.Use(f.srv.impersonationGateMiddleware())
 	imp.GET("/probe", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
@@ -275,7 +393,7 @@ func TestImpersonation_SetsViewerOverrideContext(t *testing.T) {
 	})
 
 	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/admin/impersonate/"+f.userDID+"/probe", nil)
+		impersonatePath(f.userDID, f.orgID, "/probe"), nil)
 	req.Header.Set("X-Test-Auth-Method", "jwt_admin")
 	req.Header.Set("X-Test-Admin-Subject", f.adminDID)
 	req.Header.Set("X-Test-Admin-Org-IDs", f.orgID)
@@ -288,7 +406,7 @@ func TestImpersonation_SetsViewerOverrideContext(t *testing.T) {
 	assert.Equal(t, f.userDID, body["viewer"], "viewer override must be applied")
 	assert.True(t, body["impersonating"].(bool))
 	assert.Equal(t, f.adminDID, body["impersonator"])
-	assert.Equal(t, f.orgID, body["resolved_org"])
+	assert.Equal(t, f.orgID, body["resolved_org"], "pinned org must be the explicit :org_id")
 }
 
 // Defensive header strip: client-supplied X-Admin-Token and impersonation
@@ -304,7 +422,7 @@ func TestImpersonation_StripsDefensiveHeaders(t *testing.T) {
 		c.Next()
 	})
 	admin := api.Group("/admin")
-	imp := admin.Group("/impersonate/:target_did")
+	imp := admin.Group("/impersonate/:target_did/in/:org_id")
 	imp.Use(f.srv.impersonationGateMiddleware())
 	imp.GET("/echo-headers", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
@@ -315,7 +433,7 @@ func TestImpersonation_StripsDefensiveHeaders(t *testing.T) {
 	})
 
 	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/admin/impersonate/"+f.userDID+"/echo-headers", nil)
+		impersonatePath(f.userDID, f.orgID, "/echo-headers"), nil)
 	req.Header.Set("X-Admin-Token", "should-be-stripped")
 	req.Header.Set("X-Impersonate-User-DID", "should-be-stripped")
 	req.Header.Set("X-Impersonate-Token", "should-be-stripped")
@@ -335,7 +453,7 @@ func TestImpersonation_StripsDefensiveHeaders(t *testing.T) {
 func TestImpersonation_AuditLogRowWritten(t *testing.T) {
 	f := setupImpersonationFixture(t)
 	w := impersonationGET(t, f.srv,
-		"/api/v1/admin/impersonate/"+f.userDID+"/api/v1/explorer/chain-id",
+		impersonatePath(f.userDID, f.orgID, "/api/v1/explorer/chain-id"),
 		"jwt_admin", f.adminDID, []string{f.orgID})
 	require.Equal(t, http.StatusOK, w.Code)
 
@@ -359,9 +477,10 @@ func TestImpersonation_AuditLogRowWritten(t *testing.T) {
 // Deny gets audit-logged too (with http_<status> reason).
 func TestImpersonation_AuditLogRowWrittenOnDeny(t *testing.T) {
 	f := setupImpersonationFixture(t)
-	// Cross-org target → 404 → "deny" in impersonation_log
+	// Target not in named org → 404. Admin names Org A; otherOrgUser is only
+	// in Org B. Pre-handler 404, so no audit row.
 	w := impersonationGET(t, f.srv,
-		"/api/v1/admin/impersonate/"+f.otherOrgUserDID+"/api/v1/explorer/chain-id",
+		impersonatePath(f.otherOrgUserDID, f.orgID, "/api/v1/explorer/chain-id"),
 		"jwt_admin", f.adminDID, []string{f.orgID})
 	require.Equal(t, http.StatusNotFound, w.Code)
 
