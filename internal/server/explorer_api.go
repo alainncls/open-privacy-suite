@@ -794,20 +794,15 @@ func (s *Server) getGrantActivityLogs(c *gin.Context) {
 	})
 }
 
-// getViewerIdentity extracts the viewer's DID and wallet from a gin context.
-// DID is extracted ONLY from the validated JWT (set by OptionalJWTAuthMiddleware).
-// Wallet comes from the "wallet" query parameter.
-// SECURITY: DID is never accepted from query parameters to prevent identity spoofing.
-func getViewerIdentity(c *gin.Context) (wallet, did string) {
-	wallet = c.Query("wallet")
-	if subject, ok := c.Get("subject"); ok {
-		if s, ok := subject.(string); ok && s != "" {
-			did = s
-			return
-		}
-	}
-	return
-}
+// getViewerIdentity was removed in RD-1028. It read the viewer DID only from
+// "subject" and was blind to the impersonation viewer override
+// (viewerDIDOverrideContextKey), so under View-as the single-item explorer
+// handlers resolved the wrong viewer (the admin / anonymous, not the
+// impersonated target) — wrong 404s, and a fail-open risk where the admin's
+// broader access could bleed into the impersonated view. All explorer handlers
+// now resolve the viewer via getViewerDIDFromRequest, which honours the
+// override. The ?wallet= viewer path it carried was also a viewer-impersonation
+// oracle and is gone with it.
 
 // resolveViewerDID resolves the viewer's DID from an explicit DID or wallet address.
 // Returns empty string if neither is provided or the wallet has no linked DID.
@@ -891,16 +886,18 @@ func (s *Server) viewerHasFullDisclosureGrant(ctx context.Context, viewerDID, ta
 // addressVisibleOrFullGrant returns true if the address is visible via standard
 // RBAC/ownership checks OR the viewer has a full disclosure grant on it.
 // Used by address-specific endpoints (not transaction lists) to upgrade visibility.
-func (s *Server) addressVisibleOrFullGrant(ctx context.Context, viewerWallet, viewerDID, address string) bool {
-	visibility := s.calculateAddressVisibilityWithDID(ctx, viewerWallet, viewerDID, address)
+func (s *Server) addressVisibleOrFullGrant(ctx context.Context, viewerDID, address string) bool {
+	// RD-1028: no wallet parameter. Viewer identity is the resolved DID from
+	// getViewerDIDFromRequest (which honours the impersonation override); the
+	// removed ?wallet= path was a viewer-impersonation oracle.
+	visibility := s.calculateAddressVisibilityWithDID(ctx, "", viewerDID, address)
 	if visibility.Level != VisibilityHidden && visibility.Level != VisibilityRedacted {
 		return true
 	}
 	// Fallback: check disclosure grants for the specific address the viewer
 	// navigated to. GetBatchVisibility should already handle this, but this
 	// ensures coverage for edge cases.
-	resolvedDID := s.resolveViewerDID(ctx, viewerWallet, viewerDID)
-	return s.viewerHasFullDisclosureGrant(ctx, resolvedDID, address)
+	return s.viewerHasFullDisclosureGrant(ctx, viewerDID, address)
 }
 
 // addDisclosureAddressToFilter returns a copy of the visibility filter with the
@@ -1497,8 +1494,8 @@ func (s *Server) getExplorerAddressStats(c *gin.Context) {
 	address := c.Param("address")
 
 	// Pre-authorization check: Can they see this address via RBAC or full disclosure grant?
-	viewerWallet, viewerDID := getViewerIdentity(c)
-	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerWallet, viewerDID, address) {
+	viewerDID := s.getViewerDIDFromRequest(c)
+	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerDID, address) {
 		respondNotFound(c, "address not found") // Masking forbidden as not found to avoid info leaks
 		return
 	}
@@ -1515,7 +1512,7 @@ func (s *Server) getExplorerAddressStats(c *gin.Context) {
 	// instead of using the pre-computed address_stats.tx_count, which may be
 	// stale and does not respect visibility filtering. Same class of fix as
 	// block transaction count (RD-758).
-	resolvedDID := s.resolveViewerDID(c.Request.Context(), viewerWallet, viewerDID)
+	resolvedDID := viewerDID
 	filter := s.buildVisibilityFilter(c.Request.Context(), resolvedDID)
 
 	// If the viewer can see this address via disclosure grant, ensure the
@@ -1557,8 +1554,8 @@ func (s *Server) getExplorerAddressTransactions(c *gin.Context) {
 	}
 
 	// Pre-authorization check: Can they see this address via RBAC or full disclosure grant?
-	viewerWallet, viewerDID := getViewerIdentity(c)
-	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerWallet, viewerDID, address) {
+	viewerDID := s.getViewerDIDFromRequest(c)
+	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerDID, address) {
 		respondNotFound(c, "address not found") // Masking forbidden as not found
 		return
 	}
@@ -1879,8 +1876,8 @@ func (s *Server) getExplorerAddressBalance(c *gin.Context) {
 	}
 	address := strings.ToLower(c.Param("address"))
 
-	viewerWallet, viewerDID := getViewerIdentity(c)
-	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerWallet, viewerDID, address) {
+	viewerDID := s.getViewerDIDFromRequest(c)
+	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerDID, address) {
 		respondNotFound(c, "address not found")
 		return
 	}
@@ -1919,8 +1916,8 @@ func (s *Server) getExplorerAddressCode(c *gin.Context) {
 	}
 	address := strings.ToLower(c.Param("address"))
 
-	viewerWallet, viewerDID := getViewerIdentity(c)
-	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerWallet, viewerDID, address) {
+	viewerDID := s.getViewerDIDFromRequest(c)
+	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerDID, address) {
 		respondNotFound(c, "address not found")
 		return
 	}
@@ -1960,8 +1957,8 @@ func (s *Server) getExplorerAddressTokenBalances(c *gin.Context) {
 	}
 	address := strings.ToLower(c.Param("address"))
 
-	viewerWallet, viewerDID := getViewerIdentity(c)
-	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerWallet, viewerDID, address) {
+	viewerDID := s.getViewerDIDFromRequest(c)
+	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerDID, address) {
 		respondNotFound(c, "address not found")
 		return
 	}
@@ -2017,8 +2014,8 @@ func (s *Server) getExplorerAddressTransfers(c *gin.Context) {
 	}
 	address := strings.ToLower(c.Param("address"))
 
-	viewerWallet, viewerDID := getViewerIdentity(c)
-	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerWallet, viewerDID, address) {
+	viewerDID := s.getViewerDIDFromRequest(c)
+	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerDID, address) {
 		respondNotFound(c, "address not found")
 		return
 	}
@@ -2064,8 +2061,8 @@ func (s *Server) getExplorerAddressInternal(c *gin.Context) {
 	}
 	address := strings.ToLower(c.Param("address"))
 
-	viewerWallet, viewerDID := getViewerIdentity(c)
-	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerWallet, viewerDID, address) {
+	viewerDID := s.getViewerDIDFromRequest(c)
+	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerDID, address) {
 		respondNotFound(c, "address not found")
 		return
 	}
@@ -2107,8 +2104,8 @@ func (s *Server) getExplorerAddressLogs(c *gin.Context) {
 	}
 	address := strings.ToLower(c.Param("address"))
 
-	viewerWallet, viewerDID := getViewerIdentity(c)
-	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerWallet, viewerDID, address) {
+	viewerDID := s.getViewerDIDFromRequest(c)
+	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerDID, address) {
 		respondNotFound(c, "address not found")
 		return
 	}
@@ -2148,8 +2145,8 @@ func (s *Server) getExplorerAddressContract(c *gin.Context) {
 	}
 	address := strings.ToLower(c.Param("address"))
 
-	viewerWallet, viewerDID := getViewerIdentity(c)
-	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerWallet, viewerDID, address) {
+	viewerDID := s.getViewerDIDFromRequest(c)
+	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerDID, address) {
 		respondNotFound(c, "address not found")
 		return
 	}
@@ -2183,8 +2180,8 @@ func (s *Server) getExplorerAddressIsContract(c *gin.Context) {
 	}
 	address := strings.ToLower(c.Param("address"))
 
-	viewerWallet, viewerDID := getViewerIdentity(c)
-	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerWallet, viewerDID, address) {
+	viewerDID := s.getViewerDIDFromRequest(c)
+	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerDID, address) {
 		respondNotFound(c, "address not found")
 		return
 	}
@@ -2209,7 +2206,7 @@ func (s *Server) updateExplorerAddressABI(c *gin.Context) {
 	// Require full visibility: only org members (or public contracts) may update ABI.
 	// This prevents unauthorized writes to private org contracts.
 	viewerDID := s.getViewerDIDFromRequest(c)
-	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), c.Query("wallet"), viewerDID, address)
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), "", viewerDID, address)
 	if visibility.Level != VisibilityFull {
 		respondNotFound(c, "address not found")
 		return
@@ -2396,8 +2393,8 @@ func (s *Server) getExplorerToken(c *gin.Context) {
 	// attacker whether an arbitrary address was registered to *some*
 	// org. Same class as the G16 fix for /check-address/. Now both
 	// non-Full visibilities return the same 404.
-	viewerWallet, viewerDID := getViewerIdentity(c)
-	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerWallet, viewerDID, address)
+	viewerDID := s.getViewerDIDFromRequest(c)
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), "", viewerDID, address)
 	if visibility.Level == VisibilityHidden || visibility.Level == VisibilityRedacted {
 		respondNotFound(c, "token not found")
 		return
@@ -2441,8 +2438,8 @@ func (s *Server) getExplorerTokenHolders(c *gin.Context) {
 	address := strings.ToLower(c.Param("address"))
 
 	// Visibility pre-check on the token address itself.
-	viewerWallet, viewerDID := getViewerIdentity(c)
-	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerWallet, viewerDID, address)
+	viewerDID := s.getViewerDIDFromRequest(c)
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), "", viewerDID, address)
 	if visibility.Level == VisibilityHidden || visibility.Level == VisibilityRedacted {
 		respondNotFound(c, "token not found")
 		return
@@ -2466,7 +2463,7 @@ func (s *Server) getExplorerTokenHolders(c *gin.Context) {
 	if holders == nil {
 		holders = []explorer.TokenHolder{}
 	}
-	resolvedDID := s.resolveViewerDID(c.Request.Context(), viewerWallet, viewerDID)
+	resolvedDID := viewerDID
 	redacted, err := s.explorerRedactor.RedactTokenHolders(c.Request.Context(), holders, resolvedDID)
 	if err != nil {
 		respondInternalErrorAndLog(c, "redaction failed",
@@ -2489,8 +2486,8 @@ func (s *Server) getExplorerTokenTransfers(c *gin.Context) {
 	address := strings.ToLower(c.Param("address"))
 
 	// Visibility pre-check on the token address itself.
-	viewerWallet, viewerDID := getViewerIdentity(c)
-	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerWallet, viewerDID, address)
+	viewerDID := s.getViewerDIDFromRequest(c)
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), "", viewerDID, address)
 	if visibility.Level == VisibilityHidden || visibility.Level == VisibilityRedacted {
 		respondNotFound(c, "token not found")
 		return
@@ -2514,7 +2511,7 @@ func (s *Server) getExplorerTokenTransfers(c *gin.Context) {
 	if transfers == nil {
 		transfers = []explorer.TokenTransfer{}
 	}
-	resolvedDID := s.resolveViewerDID(c.Request.Context(), viewerWallet, viewerDID)
+	resolvedDID := viewerDID
 	opts := s.buildRedactOptsForViewer(c.Request.Context(), resolvedDID)
 	redacted, err := s.explorerRedactor.RedactTransfers(c.Request.Context(), transfers, resolvedDID, opts)
 	if err != nil {

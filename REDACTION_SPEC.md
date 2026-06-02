@@ -485,6 +485,27 @@ Constructing `explorer.RedactOpts{}` by hand silently skips the transfer-partici
 `RedactLogs` evaluates its drop predicate on the **emitting contract address** (`l.Address`), not on tx participants. It already honours `opts.VisibleTxHashes` through the `visibleTo` override (upgrades Hidden / Redacted emitter to Full when the parent tx is in the allowlist) and through the param-rule fallback. There is no related-feed redactor that surfaces "the same log row" at a different address set, so the RD-1009 asymmetry shape (two redactors evaluating `bothHidden` on different address sets) cannot apply. The log model has its own gating (deny-when-no-ABI, event_rules, dynamic-payload drop, M15) — orthogonal to row-survival coherence.
 
 
+### Impersonation viewer-resolution (RD-1028)
+
+Every explorer handler MUST resolve the viewer through **`getViewerDIDFromRequest`**, which honours the impersonation override (`viewerDIDOverrideContextKey`, set by `impersonationGateMiddleware`) before falling back to the JWT `subject`. Under View-as the authenticated `subject` is the **admin**, not the impersonated target — so a handler that reads `subject` directly (or `?wallet=`) resolves the **wrong viewer**.
+
+History: a legacy `getViewerIdentity` (subject-only, override-blind) survived on 13 single-item handlers (token / address detail). Under View-as it resolved the admin or anonymous identity instead of the target, which:
+
+- **failed closed** — a target with a contract grant got a wrong 404 (the GUSD/Bob report); and
+- could **fail open** — when the admin had broader access than the target, the admin's view bled into the impersonated session.
+
+`getViewerIdentity` is removed; there is exactly one viewer resolver. The `?wallet=` viewer path it carried (a viewer-impersonation oracle) is gone with it — `addressVisibleOrFullGrant` no longer takes a wallet argument.
+
+Required scenarios — any change adding/altering an explorer handler or its viewer resolution MUST assert **both** directions (subject ≠ override):
+
+| Fixture | subject (admin) | override (target) | Expected |
+|---------|-----------------|-------------------|----------|
+| Org contract; target has a group `contract_grant` (Full); admin is a non-member | admin (Redacted) | target (Full) | Handler serves the **target's Full** view (200) — not 404 |
+| Org contract; admin has the grant (Full); target is a non-member (Redacted) | admin (Full) | target (Redacted) | Handler reflects the **target's** view (404/masked) — admin's Full must **NOT** bleed through |
+
+Pinned in `internal/server/impersonation_viewer_resolution_test.go`. The per-entity redaction matrices above structurally cannot catch this class because they set viewer == `subject` (no override), so the override-blind path looks correct. Reviewers: a new explorer handler that gates on viewer visibility MUST resolve via `getViewerDIDFromRequest` and add a row to that test.
+
+
 ### Test structure
 
 Follow the existing table-driven test pattern:
