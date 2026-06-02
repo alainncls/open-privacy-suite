@@ -244,7 +244,17 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	if verifier != nil {
 		privadoVerifier = verifier
 	} else {
-		privadoVerifier, err = auth.NewPrivadoVerifier(cfg.PrivadoRPCURL, cfg.IPFSGateway, cfg.PrivadoStateContract)
+		// Register billions:main alongside privado:main so DIDs created in the
+		// Billions app verify too — without it the iden3 library rejects them
+		// with "billions:main resolver not found" (RD-943).
+		privadoVerifier, err = auth.NewPrivadoVerifier(
+			cfg.PrivadoRPCURL, cfg.IPFSGateway, cfg.PrivadoStateContract,
+			auth.NetworkResolver{
+				Key:           "billions:main",
+				RPCURL:        cfg.BillionsRPCURL,
+				StateContract: cfg.BillionsStateContract,
+			},
+		)
 		if err != nil {
 			database.Close()
 			return nil, fmt.Errorf("failed to create Privado verifier: %w", err)
