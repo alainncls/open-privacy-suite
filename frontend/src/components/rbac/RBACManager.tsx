@@ -61,6 +61,11 @@ export function useOrgContext() {
  * meaningful) and in isolation in unit tests (where it isn't), without
  * forcing every such test to wrap in a provider.
  */
+// reason: optional consumer hook for OrgContext above; same co-location
+// rationale as useOrgContext. Added by RD-994; the matching eslint-disable was
+// missed then and only surfaced once RD-959 made `eslint --max-warnings 0`
+// CI-gating (the two landed on separate branches).
+// eslint-disable-next-line react-refresh/only-export-components
 export function useOrgContextOptional(): OrgContextType | null {
   return useContext(OrgContext);
 }
