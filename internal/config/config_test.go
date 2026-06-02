@@ -14,7 +14,7 @@ func TestLoad_Defaults(t *testing.T) {
 		"NODE_URL", "DATABASE_URL", "PRIVADO_RPC_URL",
 		"IPFS_GATEWAY", "JWT_SECRET", "JWT_REFRESH_SECRET", "VERIFIER_ID",
 		"BASE_URL", "PORT", "ENVIRONMENT", "BILLIONS_ISSUER_DID",
-		"REQUIRE_PROOF_OF_HUMANITY",
+		"REQUIRE_PROOF_OF_HUMANITY", "BILLIONS_RPC_URL", "BILLIONS_STATE_CONTRACT",
 	}
 
 	// Save and clear env vars
@@ -51,6 +51,10 @@ func TestLoad_Defaults(t *testing.T) {
 		{"Port", cfg.Port, "8080"},
 		{"Environment", cfg.Environment, "development"},
 		{"BillionsIssuerDID", cfg.BillionsIssuerDID, ""},
+		// RD-943: billions:main resolver must be wired out of the box so the
+		// Billions app can authenticate against a stock deployment.
+		{"BillionsRPCURL", cfg.BillionsRPCURL, "https://billions-rpc.eu-north-2.gateway.fm"},
+		{"BillionsStateContract", cfg.BillionsStateContract, "0x3C9acB2205Aa72A05F6D77d708b5Cf85FCa3a896"},
 	}
 
 	for _, tt := range tests {
@@ -70,18 +74,20 @@ func TestLoad_Defaults(t *testing.T) {
 func TestLoad_EnvOverride(t *testing.T) {
 	// Set environment variables
 	testEnv := map[string]string{
-		"NODE_URL":            "http://custom-node:8545",
-		"DATABASE_URL":        "postgres://user:pass@db:5432/test",
-		"PRIVADO_RPC_URL":     "https://custom-rpc.privado.id",
-		"IPFS_GATEWAY":        "https://custom-ipfs.io",
-		"ADMIN_API_TOKEN":     "admin-token",
-		"JWT_SECRET":          "super-secret-jwt",
-		"JWT_REFRESH_SECRET":  "super-secret-refresh",
-		"VERIFIER_ID":         "did:test:verifier",
-		"BASE_URL":            "https://api.example.com",
-		"PORT":                "3000",
-		"ENVIRONMENT":         "staging",
-		"BILLIONS_ISSUER_DID": "did:test:billions",
+		"NODE_URL":                "http://custom-node:8545",
+		"DATABASE_URL":            "postgres://user:pass@db:5432/test",
+		"PRIVADO_RPC_URL":         "https://custom-rpc.privado.id",
+		"IPFS_GATEWAY":            "https://custom-ipfs.io",
+		"ADMIN_API_TOKEN":         "admin-token",
+		"JWT_SECRET":              "super-secret-jwt",
+		"JWT_REFRESH_SECRET":      "super-secret-refresh",
+		"VERIFIER_ID":             "did:test:verifier",
+		"BASE_URL":                "https://api.example.com",
+		"PORT":                    "3000",
+		"ENVIRONMENT":             "staging",
+		"BILLIONS_ISSUER_DID":     "did:test:billions",
+		"BILLIONS_RPC_URL":        "https://billions.example/rpc",
+		"BILLIONS_STATE_CONTRACT": "0x00000000000000000000000000000000DeaDBeef",
 	}
 
 	// Save current env and set test values
@@ -121,6 +127,8 @@ func TestLoad_EnvOverride(t *testing.T) {
 		{"Port", cfg.Port, testEnv["PORT"]},
 		{"Environment", cfg.Environment, testEnv["ENVIRONMENT"]},
 		{"BillionsIssuerDID", cfg.BillionsIssuerDID, testEnv["BILLIONS_ISSUER_DID"]},
+		{"BillionsRPCURL", cfg.BillionsRPCURL, testEnv["BILLIONS_RPC_URL"]},
+		{"BillionsStateContract", cfg.BillionsStateContract, testEnv["BILLIONS_STATE_CONTRACT"]},
 	}
 
 	for _, tt := range tests {

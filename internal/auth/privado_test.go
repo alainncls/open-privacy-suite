@@ -17,6 +17,42 @@ func TestPrivadoVerifier_NewPrivadoVerifier(t *testing.T) {
 	assert.NotNil(t, verifier.verifier)
 }
 
+func TestNewPrivadoVerifier_RegistersBillionsNetwork(t *testing.T) {
+	// RD-943: a wallet created in the Billions app produces a DID anchored on
+	// the Billions chain (e.g. did:iden3:billions:main:...). The iden3 library
+	// looks up a "<blockchain>:<network>" resolver during FullVerify, so without
+	// a billions:main resolver every Billions sign-up is rejected with
+	// "billions:main resolver not found" while Privado succeeds. Assert both
+	// networks are wired.
+	verifier, err := NewPrivadoVerifier(
+		"https://rpc-mainnet.privado.id", "https://ipfs-proxy-cache.privado.id",
+		PrivadoMainnetStateContract,
+		NetworkResolver{Key: "billions:main", RPCURL: BillionsMainnetRPCURL, StateContract: BillionsMainnetStateContract},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, verifier)
+	assert.Equal(t, []string{"billions:main", "privado:main"}, verifier.RegisteredNetworks())
+}
+
+func TestNewPrivadoVerifier_DefaultsToPrivadoOnly(t *testing.T) {
+	// With no extra networks, only privado:main is registered.
+	verifier, err := NewPrivadoVerifier("https://rpc-mainnet.privado.id", "", "")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"privado:main"}, verifier.RegisteredNetworks())
+}
+
+func TestNewPrivadoVerifier_SkipsIncompleteNetworks(t *testing.T) {
+	// An extra entry missing any field is ignored rather than registering a
+	// half-configured resolver that would fail opaquely at verification time.
+	verifier, err := NewPrivadoVerifier(
+		"https://rpc-mainnet.privado.id", "", PrivadoMainnetStateContract,
+		NetworkResolver{Key: "billions:main", RPCURL: "", StateContract: BillionsMainnetStateContract}, // missing RPC
+		NetworkResolver{Key: "", RPCURL: "https://x", StateContract: "0xabc"},                          // missing key
+	)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"privado:main"}, verifier.RegisteredNetworks())
+}
+
 func TestPrivadoVerifier_NewPrivadoVerifier_InvalidRPC(t *testing.T) {
 	// Test with invalid RPC URL (should still create verifier, but verification will fail)
 	verifier, err := NewPrivadoVerifier("http://invalid-rpc-url:8545", "https://ipfs-proxy-cache.privado.id", "0x3C9acB2205Aa72A05F6D77d708b5Cf85FCa3a896")

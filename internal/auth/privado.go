@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 
 	auth "github.com/iden3/go-iden3-auth/v2"
 	"github.com/iden3/go-iden3-auth/v2/loaders"
@@ -15,6 +16,11 @@ import (
 // PrivadoVerifier handles verification of Privado ID JWZ proofs
 type PrivadoVerifier struct {
 	verifier *auth.Verifier
+	// networks lists the "blockchain:network" resolver keys registered on the
+	// verifier (e.g. "privado:main", "billions:main"), sorted. Exposed via
+	// RegisteredNetworks for wiring assertions; the iden3 library keeps the
+	// authoritative resolver map privately.
+	networks []string
 }
 
 // HumanityRequestConfig bundles the per-issuer values needed to build a
@@ -32,18 +38,56 @@ type HumanityRequestConfig struct {
 // contract address, used as a fallback when no address is supplied.
 const PrivadoMainnetStateContract = "0x3C9acB2205Aa72A05F6D77d708b5Cf85FCa3a896"
 
+// BillionsMainnetStateContract is the on-chain identity state contract for the
+// Billions identity chain (billions:main, chainID 45056). iden3 deploys its
+// state contract deterministically (CREATE2) at the same address across the
+// privado / ethereum / zkevm / linea mainnets, so the Billions deployment uses
+// the same address. Override via BILLIONS_STATE_CONTRACT if it ever diverges.
+const BillionsMainnetStateContract = "0x3C9acB2205Aa72A05F6D77d708b5Cf85FCa3a896"
+
+// BillionsMainnetRPCURL is the default RPC endpoint for the Billions identity
+// chain (chainID 45056), per the ethereum-lists chain registry. Override via
+// BILLIONS_RPC_URL.
+const BillionsMainnetRPCURL = "https://billions-rpc.eu-north-2.gateway.fm"
+
+// NetworkResolver registers one additional iden3 network's on-chain state
+// resolver beyond the built-in privado:main. Key is the iden3
+// "blockchain:network" identifier a wallet's DID resolves to (e.g.
+// "billions:main"); RPCURL and StateContract address that network's identity
+// state contract. Entries missing any field are ignored.
+type NetworkResolver struct {
+	Key           string
+	RPCURL        string
+	StateContract string
+}
+
 // NewPrivadoVerifier creates a new Privado ID verifier.
 // stateContract is the on-chain identity state contract address. Pass the
 // value from Config.PrivadoStateContract; an empty string falls back to the
 // Privado mainnet default (PrivadoMainnetStateContract).
-func NewPrivadoVerifier(rpcURL, ipfsGateway, stateContract string) (*PrivadoVerifier, error) {
+//
+// extra registers additional iden3 networks beyond privado:main (e.g.
+// billions:main). The wallet's DID dictates which resolver the iden3 library
+// looks up during FullVerify, so a network with no registered resolver is
+// rejected with "<blockchain>:<network> resolver not found" before any
+// credential check runs — see RD-943.
+func NewPrivadoVerifier(rpcURL, ipfsGateway, stateContract string, extra ...NetworkResolver) (*PrivadoVerifier, error) {
 	if stateContract == "" {
 		stateContract = PrivadoMainnetStateContract
 	}
 
-	resolver := state.NewETHResolver(rpcURL, stateContract)
 	resolvers := map[string]pubsignals.StateResolver{
-		"privado:main": resolver,
+		"privado:main": state.NewETHResolver(rpcURL, stateContract),
+	}
+
+	// Register additional networks (e.g. billions:main). Without the Billions
+	// resolver, every DID issued by the Billions app (anchored on the Billions
+	// chain) fails verification while Privado-issued DIDs succeed (RD-943).
+	for _, n := range extra {
+		if n.Key == "" || n.RPCURL == "" || n.StateContract == "" {
+			continue
+		}
+		resolvers[n.Key] = state.NewETHResolver(n.RPCURL, n.StateContract)
 	}
 
 	// Use embedded keys for verification (included in the library)
@@ -67,7 +111,24 @@ func NewPrivadoVerifier(rpcURL, ipfsGateway, stateContract string) (*PrivadoVeri
 
 	return &PrivadoVerifier{
 		verifier: verifier,
+		networks: sortedResolverKeys(resolvers),
 	}, nil
+}
+
+// RegisteredNetworks returns the sorted "blockchain:network" resolver keys the
+// verifier accepts (e.g. ["billions:main", "privado:main"]). Used to assert
+// network wiring without reaching into the iden3 library's private map.
+func (p *PrivadoVerifier) RegisteredNetworks() []string {
+	return p.networks
+}
+
+func sortedResolverKeys(m map[string]pubsignals.StateResolver) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // CreateAuthorizationRequest creates a Privado ID authorization request

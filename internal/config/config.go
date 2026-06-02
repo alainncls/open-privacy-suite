@@ -236,6 +236,16 @@ type Config struct {
 	BillionsIssuerDID      string // Billions issuer DID for ProofOfHumanity verification
 	RequireProofOfHumanity bool   // Opt-in enforcement of Path B (credential check). Default: false in every environment.
 
+	// iden3 network resolvers. The verifier resolves each wallet's DID to its
+	// on-chain identity state via a per-network resolver keyed
+	// "blockchain:network". PrivadoRPCURL + PrivadoStateContract back the
+	// privado:main resolver; the two below back billions:main so wallets created
+	// in the Billions app (DIDs anchored on the Billions chain, chainID 45056)
+	// can authenticate. Unlike Path B below, these are always consulted — basic
+	// DID-ownership auth needs the resolver regardless of ProofOfHumanity. RD-943.
+	BillionsRPCURL        string // env BILLIONS_RPC_URL — RPC for the Billions identity chain
+	BillionsStateContract string // env BILLIONS_STATE_CONTRACT — Billions on-chain identity state contract
+
 	// Path B (ProofOfHumanity / Billions) configuration. Only consulted when RequireProofOfHumanity=true.
 	PrivadoStateContract        string         // env PRIVADO_STATE_CONTRACT — on-chain identity state contract
 	PrivadoCircuitID            string         // env PRIVADO_CIRCUIT_ID — iden3 circuit (e.g. credentialAtomicQueryMTPV2)
@@ -508,6 +518,12 @@ func Load() *Config {
 		}
 	}
 
+	// iden3 network resolver config for the Billions identity chain. Defaults
+	// let a stock deployment verify Billions-app DIDs out of the box (RD-943);
+	// override either value if Billions moves its RPC or state contract.
+	billionsRPCURL := getEnv("BILLIONS_RPC_URL", auth.BillionsMainnetRPCURL)
+	billionsStateContract := getEnv("BILLIONS_STATE_CONTRACT", auth.BillionsMainnetStateContract)
+
 	// Path B (ProofOfHumanity) configuration with current hardcoded values as defaults.
 	privadoStateContract := getEnv("PRIVADO_STATE_CONTRACT", auth.PrivadoMainnetStateContract)
 	privadoCircuitID := getEnv("PRIVADO_CIRCUIT_ID", "credentialAtomicQueryMTPV2")
@@ -560,6 +576,8 @@ func Load() *Config {
 		Environment:                  env,
 		BillionsIssuerDID:            getEnv("BILLIONS_ISSUER_DID", ""), // Billions issuer DID for PoH
 		RequireProofOfHumanity:       requirePoHBool,
+		BillionsRPCURL:               billionsRPCURL,
+		BillionsStateContract:        billionsStateContract,
 		PrivadoStateContract:         privadoStateContract,
 		PrivadoCircuitID:             privadoCircuitID,
 		BillionsCredentialSchemaURL:  billionsSchemaURL,

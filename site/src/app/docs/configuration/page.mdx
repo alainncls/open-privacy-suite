@@ -51,7 +51,9 @@ The proxy operates in **UTC**. The backend container image sets `TZ=UTC`, and th
 ## Authentication
 
 <EnvTable vars={[
-  { name: "PRIVADO_RPC_URL", default: "https://rpc-mainnet.privado.id", description: "Privado network RPC endpoint" },
+  { name: "PRIVADO_RPC_URL", default: "https://rpc-mainnet.privado.id", description: "Privado network RPC endpoint (backs the privado:main state resolver)" },
+  { name: "BILLIONS_RPC_URL", default: "https://billions-rpc.eu-north-2.gateway.fm", description: "RPC endpoint for the Billions identity chain (chainID 45056). Lets users sign in with the Billions app, not just Privado ID." },
+  { name: "BILLIONS_STATE_CONTRACT", default: "0x3C9acB2205Aa72A05F6D77d708b5Cf85FCa3a896", description: "Billions on-chain identity state contract. Defaults to the shared iden3 cross-chain address; override only if Billions moves it." },
   { name: "IPFS_GATEWAY", default: "https://ipfs-proxy-cache.privado.id", description: "IPFS gateway for schemas" },
   { name: "JWT_SECRET", default: "(auto in dev)", description: "Access token signing secret" },
   { name: "JWT_REFRESH_SECRET", default: "(auto in dev)", description: "Refresh token signing secret" },
