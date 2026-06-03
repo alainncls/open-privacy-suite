@@ -67,7 +67,17 @@ export function ViewAsInExplorerButton({
   // tree (tests) — the button still renders and the server gate catches
   // any actual self-impersonation attempts.
   if (userDID && userDID.toLowerCase() === targetDID.toLowerCase()) {
-    return null;
+    // RD-996: don't collapse the slot on the viewer's own row. Returning null
+    // shrank the action cell's flex container, nudging the Ban pill toward the
+    // right edge and breaking column alignment against rows that DO render the
+    // glasses button. The 'inline' variant lives on a detail page (not a
+    // table), so a collapsed slot there is harmless — only the 'icon' variant
+    // needs the spacer. Reserve the same footprint the ghost/size-sm button
+    // occupies: h-9 (button height) by w-12 (px-4 both sides + the w-4 icon).
+    if (variant === 'inline') {
+      return null;
+    }
+    return <span aria-hidden="true" className="inline-block h-9 w-12" />;
   }
 
   const explorerUrl = resolveExplorerUrl();
