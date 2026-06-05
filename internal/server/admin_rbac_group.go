@@ -30,6 +30,28 @@ const (
 	errDeleteOrgAdminGroupSuperOnly = "only super admin can delete org admin groups"
 )
 
+// Org-admin group invariants (RD-968). The "org admin" role maps to three
+// independent fields (is_org_admin, is_org_readonly_admin, group_access.claims +
+// allowed_methods); these messages back the server-side checks that stop callers
+// from persisting a combination that contradicts itself. The DB also carries a
+// CHECK constraint for the mutual-exclusion rule (migration 060) as a backstop.
+const (
+	// A group is either a full org admin OR a read-only org admin OR neither —
+	// never both. is_org_admin already grants everything is_org_readonly_admin
+	// would; the contradiction only invites a later "consolidate to read-only"
+	// edit that silently strips RPC admin from every member (RD-968 Gap 2).
+	errAdminRolesMutuallyExclusive = "a group cannot be both a full org admin and a read-only org admin"
+
+	// Claims are dead data on org-admin groups: the resolver grants all claims on
+	// all org contracts regardless of group_access.claims (RD-968 Gap 1). We reject
+	// rather than silently ignore so stored config never contradicts effective access.
+	errOrgAdminClaimsNotApplicable = "claims do not apply to org-admin groups — members receive all claims on every contract automatically; leave claims empty"
+
+	// An org-admin group with no allowed methods grants all claims but zero callable
+	// methods — silently useless (RD-968 Gap 3). Require an explicit method allowlist.
+	errOrgAdminMethodsRequired = "org-admin groups must have at least one allowed method"
+)
+
 // Group handlers
 
 func (s *Server) listGroups(c *gin.Context) {
@@ -94,6 +116,14 @@ func (s *Server) createGroup(c *gin.Context) {
 	// (RD-917 §2 — see PR description).
 	if c.GetString("auth_method") == "jwt_admin" && input.IsOrgAdmin {
 		c.JSON(http.StatusForbidden, gin.H{"error": errCreateOrgAdminGroupSuperOnly})
+		return
+	}
+
+	// Invariant (RD-968 Gap 2): a group is a full org admin XOR a read-only org
+	// admin, never both. Enforced for every caller (super admin included) and
+	// backed by a DB CHECK constraint (migration 060).
+	if input.IsOrgAdmin && input.IsOrgReadonlyAdmin {
+		c.JSON(http.StatusBadRequest, gin.H{"error": errAdminRolesMutuallyExclusive})
 		return
 	}
 
@@ -273,6 +303,15 @@ func (s *Server) updateGroup(c *gin.Context) {
 		group.IsOrgReadonlyAdmin = *input.IsOrgReadonlyAdmin
 	}
 
+	// Invariant (RD-968 Gap 2): reject the *resulting* state if it would make the
+	// group both a full org admin and a read-only org admin. Checked on the merged
+	// group (not just input) so toggling RO on a group that is already is_org_admin
+	// is caught. Backed by a DB CHECK constraint (migration 060).
+	if group.IsOrgAdmin && group.IsOrgReadonlyAdmin {
+		c.JSON(http.StatusBadRequest, gin.H{"error": errAdminRolesMutuallyExclusive})
+		return
+	}
+
 	if err := s.db.UpdateGroup(c.Request.Context(), group); err != nil {
 		if isUniqueViolation(err) {
 			c.JSON(http.StatusConflict, gin.H{"error": uniqueConflictMessage(err)})
@@ -432,9 +471,28 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 	// Expand claim hierarchy (admin → deploy + upgrade).
 	input.Claims = rbac.ExpandClaims(input.Claims)
 
-	// Validate that allowed_methods match the claims
-	// e.g., debug_traceTransaction requires "deploy" claim
-	if err := rbac.ValidateMethodsMatchClaims(input.AllowedMethods, input.Claims); err != nil {
+	// Org-admin group invariants (RD-968 Gaps 1 & 3). On an is_org_admin group the
+	// resolver grants ALL claims on ALL org contracts regardless of this row's
+	// claims (computeOrgAdminPermissions), so:
+	//   - reject any non-empty claims — they are dead data and would make the stored
+	//     config contradict effective access (we reject rather than silently drop);
+	//   - require a non-empty method allowlist — claims-on-all-contracts with zero
+	//     callable methods is silently useless;
+	//   - skip ValidateMethodsMatchClaims — effective claims are all-of-them, so the
+	//     stored-claims-vs-methods check (which expects e.g. debug_* to be paired with
+	//     the deploy claim) would wrongly reject legitimate org-admin method sets.
+	// The method allowlist is still the source of truth for method gating even for
+	// org admins (see docs/rbac) — that is why we require it rather than granting "*".
+	if group.IsOrgAdmin {
+		if len(input.Claims) > 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errOrgAdminClaimsNotApplicable})
+			return
+		}
+		if len(input.AllowedMethods) == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errOrgAdminMethodsRequired})
+			return
+		}
+	} else if err := rbac.ValidateMethodsMatchClaims(input.AllowedMethods, input.Claims); err != nil {
 		// Validator message lists the offending method/claim. Safe to
 		// surface — no internal identifiers, just operator-supplied
 		// input — but route through the helper for slog consistency.

@@ -248,6 +248,39 @@ describe('GroupForm', () => {
     });
   });
 
+  describe('Org-admin group (RD-968)', () => {
+    it('hides the read-only toggle and shows a Full Org Admin banner when editing an org-admin group', () => {
+      renderGroupForm({ group: { ...mockGroup, is_org_admin: true } });
+
+      expect(screen.getByText('Full Org Admin')).toBeInTheDocument();
+      // The read-only toggle is mutually exclusive with full org admin, so it's gone.
+      expect(screen.queryByText('Read-only Org Admin')).not.toBeInTheDocument();
+    });
+
+    it('does not send is_org_readonly_admin=true when editing an org-admin group', async () => {
+      const user = userEvent.setup();
+      const onSave = vi.fn();
+      let capturedBody: Record<string, unknown> | null = null;
+
+      server.use(
+        http.put('/api/v1/admin/orgs/:orgId/groups/:groupId', async ({ request }) => {
+          capturedBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json(mockGroup);
+        })
+      );
+
+      renderGroupForm({ group: { ...mockGroup, is_org_admin: true }, onSave });
+
+      await user.click(screen.getByText('Update Group'));
+
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalled();
+      });
+
+      expect(capturedBody).toMatchObject({ is_org_readonly_admin: false });
+    });
+  });
+
   describe('Error Handling', () => {
     it('shows error message on save failure', async () => {
       const user = userEvent.setup();
