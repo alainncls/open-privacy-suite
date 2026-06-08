@@ -534,3 +534,157 @@ func TestEthCallTracing_AllowsSharedInfrastructureSubcall(t *testing.T) {
 	err := proc.validateEthCallWithTracing(ctx, ethCallReq(did, addrA), addrA)
 	require.Nil(t, err, "trace touching shared-infrastructure address must be allowed")
 }
+
+// =============================================================================
+// RD-1053 — intra-org contract-grant scoping (end-to-end through the processor)
+// =============================================================================
+
+// callerSameOrgWithGroup is callerSameOrg but also returns the caller's group
+// and the contract ID of the entry contract, so a test can attach contract
+// grants — required to exercise the RD-1053 grant set, which is resolved from
+// real EffectivePermissions (contract_grants) rather than passed in.
+func callerSameOrgWithGroup(t *testing.T, ctx context.Context, ts *testServerRBAC, entryAddr string) (did, orgID, groupID, entryContractID string) {
+	t.Helper()
+	orgID = uuid.New().String()
+	require.NoError(t, ts.db.CreateOrganization(ctx, &rbac.Organization{
+		ID:   orgID,
+		Slug: "owner-" + orgID[:8],
+		Name: "Owner Org",
+	}))
+	entryContractID = uuid.New().String()
+	require.NoError(t, ts.db.CreateContract(ctx, &rbac.Contract{
+		ID:      entryContractID,
+		OrgID:   orgID,
+		Address: strings.ToLower(entryAddr),
+		Name:    "entry",
+	}))
+	groupID = uuid.New().String()
+	userID := uuid.New().String()
+	did = "did:privado:caller-" + uuid.New().String()
+	insertGroupRawSQL(t, ctx, ts.db, groupID, orgID,
+		"caller-grp-"+groupID[:8], "Caller Grp", "caller-grp-"+groupID[:8])
+	// No admin claim here: a plain member, so ContractAccess is exactly the
+	// set of contracts the group has explicit grants for. That makes the
+	// granted-vs-ungranted distinction meaningful for the test.
+	require.NoError(t, ts.db.CreateGroupAccess(ctx, &rbac.GroupAccess{
+		ID:             uuid.New().String(),
+		GroupID:        groupID,
+		Claims:         []rbac.Claim{},
+		AllowedMethods: []string{},
+	}))
+	require.NoError(t, ts.db.CreateUser(ctx, &rbac.User{ID: userID, ExternalID: did}))
+	require.NoError(t, ts.db.CreateMembership(ctx, &rbac.UserMembership{
+		ID: uuid.New().String(), UserID: userID, GroupID: groupID,
+		Source: rbac.MembershipSourceAdmin,
+	}))
+	return did, orgID, groupID, entryContractID
+}
+
+// addSameOrgContract registers a contract to an existing org and returns its
+// contract ID (so the caller can optionally grant it).
+func addSameOrgContract(t *testing.T, ctx context.Context, ts *testServerRBAC, orgID, addr, name string) (contractID string) {
+	t.Helper()
+	contractID = uuid.New().String()
+	require.NoError(t, ts.db.CreateContract(ctx, &rbac.Contract{
+		ID:      contractID,
+		OrgID:   orgID,
+		Address: strings.ToLower(addr),
+		Name:    name,
+	}))
+	return contractID
+}
+
+// The gap RD-1053 closes: addrB is registered to the SAME org as the caller,
+// but the caller's group has no grant for it. Reached as the direct `to` it
+// would be denied by the grant-aware entry-point CheckAccess; reached through
+// an internal CALL it slips past because the tracer historically gated on org
+// ownership alone. With the knob OFF (default) it is still allowed — org
+// ownership is the boundary — which this test pins as the unchanged baseline.
+func TestEthCallTracing_IntraOrgScoping_Off_AllowsUngrantedSameOrg(t *testing.T) {
+	addrA := fixedAddr(0xaa)
+	addrB := fixedAddr(0xbb)
+	scripted := newScriptedTracer(t, traceFrame{
+		Type: "CALL", From: fixedAddr(0xee), To: addrA,
+		Calls: []traceFrame{{Type: "CALL", From: addrA, To: addrB}},
+	})
+	proc, ts := setupProcessorWithMockTracer(t, scripted)
+	// knob defaults OFF; assert that explicitly via the snapshot.
+	require.False(t, proc.IntraOrgGrantTracingSnapshot().Enabled)
+
+	ctx := context.Background()
+	did, orgID, _, _ := callerSameOrgWithGroup(t, ctx, ts, addrA)
+	addSameOrgContract(t, ctx, ts, orgID, addrB, "B-ungranted")
+
+	err := proc.validateEthCallWithTracing(ctx, ethCallReq(did, addrA), addrA)
+	require.Nil(t, err, "knob OFF: same-org internal frame allowed on org ownership alone (baseline)")
+}
+
+// Same setup, knob ON: the ungranted same-org internal frame is now denied.
+func TestEthCallTracing_IntraOrgScoping_On_DeniesUngrantedSameOrg(t *testing.T) {
+	addrA := fixedAddr(0xaa)
+	addrB := fixedAddr(0xbb)
+	scripted := newScriptedTracer(t, traceFrame{
+		Type: "CALL", From: fixedAddr(0xee), To: addrA,
+		Calls: []traceFrame{{Type: "CALL", From: addrA, To: addrB}},
+	})
+	proc, ts := setupProcessorWithMockTracer(t, scripted)
+	proc.SetIntraOrgGrantTracing(true)
+
+	ctx := context.Background()
+	did, orgID, _, _ := callerSameOrgWithGroup(t, ctx, ts, addrA)
+	addSameOrgContract(t, ctx, ts, orgID, addrB, "B-ungranted")
+
+	err := proc.validateEthCallWithTracing(ctx, ethCallReq(did, addrA), addrA)
+	require.NotNil(t, err, "knob ON: same-org internal frame with no grant must deny")
+	assert.Equal(t, http.StatusForbidden, err.StatusCode)
+	assert.Equal(t, ethCallDenyCrossOrg, err.Message, "deny body stays opaque (no detail leak)")
+	assert.NotContains(t, err.Message, strings.TrimPrefix(addrB, "0x"))
+}
+
+// Knob ON, but the caller's group HAS a grant for addrB → allowed. Proves the
+// grant set is resolved from real EffectivePermissions, and that the entry
+// target addrA (no grant, injected as the already-authorized top-level `to`)
+// does not false-deny.
+func TestEthCallTracing_IntraOrgScoping_On_AllowsGrantedSameOrg(t *testing.T) {
+	addrA := fixedAddr(0xaa)
+	addrB := fixedAddr(0xbb)
+	scripted := newScriptedTracer(t, traceFrame{
+		Type: "CALL", From: fixedAddr(0xee), To: addrA,
+		Calls: []traceFrame{{Type: "CALL", From: addrA, To: addrB}},
+	})
+	proc, ts := setupProcessorWithMockTracer(t, scripted)
+	proc.SetIntraOrgGrantTracing(true)
+
+	ctx := context.Background()
+	did, orgID, groupID, _ := callerSameOrgWithGroup(t, ctx, ts, addrA)
+	bContractID := addSameOrgContract(t, ctx, ts, orgID, addrB, "B-granted")
+	require.NoError(t, ts.db.CreateContractGrant(ctx, &rbac.ContractGrant{
+		ID:         uuid.New().String(),
+		ContractID: bContractID,
+		GroupID:    groupID,
+	}))
+
+	err := proc.validateEthCallWithTracing(ctx, ethCallReq(did, addrA), addrA)
+	require.Nil(t, err, "knob ON: granted same-org internal frame must be allowed")
+}
+
+// Knob ON must not weaken cross-org isolation: a foreign-org internal frame is
+// still denied, classified as cross-org (not intra-org).
+func TestEthCallTracing_IntraOrgScoping_On_StillDeniesCrossOrg(t *testing.T) {
+	addrA := fixedAddr(0xaa)
+	addrB := fixedAddr(0xbb)
+	scripted := newScriptedTracer(t, traceFrame{
+		Type: "CALL", From: fixedAddr(0xee), To: addrA,
+		Calls: []traceFrame{{Type: "CALL", From: addrA, To: addrB}},
+	})
+	proc, ts := setupProcessorWithMockTracer(t, scripted)
+	proc.SetIntraOrgGrantTracing(true)
+
+	ctx := context.Background()
+	did, _, _, _ := callerSameOrgWithGroup(t, ctx, ts, addrA)
+	registerForeignOrgContract(t, ctx, ts, addrB) // different org
+
+	err := proc.validateEthCallWithTracing(ctx, ethCallReq(did, addrA), addrA)
+	require.NotNil(t, err, "knob ON must still deny cross-org frames")
+	assert.Equal(t, ethCallDenyCrossOrg, err.Message)
+}

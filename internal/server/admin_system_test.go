@@ -63,6 +63,8 @@ func setupSystemAdminTestServer(t *testing.T) *testServerRBAC {
 	})
 	system.GET("/eth-call-tracing", ts.Server.handleGetEthCallTracing)
 	system.POST("/eth-call-tracing", ts.Server.handlePostEthCallTracing)
+	system.GET("/intra-org-grant-tracing", ts.Server.handleGetIntraOrgGrantTracing)
+	system.POST("/intra-org-grant-tracing", ts.Server.handlePostIntraOrgGrantTracing)
 
 	return ts
 }
@@ -203,6 +205,94 @@ func TestAdminSystem_EthCallTracing_AuditLogWritten(t *testing.T) {
 		assert.Equal(t, "audit trail check", reasonField)
 	} else {
 		t.Errorf("audit row's new_value must include the operator-provided reason; got %v", newVal)
+	}
+}
+
+// RD-1053: intra-org grant scoping toggle. Same endpoint shape and
+// super-admin/audit posture as eth_call tracing, but defaults OFF — org
+// ownership is the structural isolation boundary and operators opt in.
+
+func TestAdminSystem_IntraOrgGrantTracing_GetInitialIsEnvOff(t *testing.T) {
+	ts := setupSystemAdminTestServer(t)
+	// The processor seeds OFF; setup never calls SetIntraOrgGrantTracing, so
+	// the GET must report the default-off state (mirrors the real boot before
+	// server.go installs the env value).
+	w, resp := doSystemRequest(t, ts, http.MethodGet, "/api/v1/admin/system/intra-org-grant-tracing", "admin_token", nil)
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, false, resp["enabled"])
+	assert.Equal(t, false, resp["env_default"])
+	assert.Equal(t, "env", resp["source"])
+}
+
+func TestAdminSystem_IntraOrgGrantTracing_PostRequiresSuperAdmin(t *testing.T) {
+	ts := setupSystemAdminTestServer(t)
+	w, resp := doSystemRequest(t, ts, http.MethodPost, "/api/v1/admin/system/intra-org-grant-tracing", "jwt_admin", map[string]any{
+		"enabled": true,
+		"reason":  "test",
+	})
+	require.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, resp["error"], "super-admin")
+}
+
+func TestAdminSystem_IntraOrgGrantTracing_PostRequiresReason(t *testing.T) {
+	ts := setupSystemAdminTestServer(t)
+	w, _ := doSystemRequest(t, ts, http.MethodPost, "/api/v1/admin/system/intra-org-grant-tracing", "admin_token", map[string]any{
+		"enabled": true,
+	})
+	require.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestAdminSystem_IntraOrgGrantTracing_ToggleFlipsState(t *testing.T) {
+	ts := setupSystemAdminTestServer(t)
+	require.False(t, ts.Server.jsonrpcProcessor.IntraOrgGrantTracingSnapshot().Enabled)
+
+	// Enable (the meaningful direction for this knob — it tightens access).
+	w, resp := doSystemRequest(t, ts, http.MethodPost, "/api/v1/admin/system/intra-org-grant-tracing", "admin_token", map[string]any{
+		"enabled": true,
+		"reason":  "enable strict intra-org scoping",
+	})
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, true, resp["enabled"])
+	assert.Equal(t, false, resp["env_default"], "env default must be preserved across runtime overrides")
+	assert.Equal(t, "runtime_override", resp["source"])
+
+	snap := ts.Server.jsonrpcProcessor.IntraOrgGrantTracingSnapshot()
+	assert.True(t, snap.Enabled)
+	assert.Equal(t, "runtime_override", snap.Source)
+
+	// Restart re-arms the env default (OFF).
+	ts.Server.jsonrpcProcessor.SetIntraOrgGrantTracing(false)
+	snap = ts.Server.jsonrpcProcessor.IntraOrgGrantTracingSnapshot()
+	assert.False(t, snap.Enabled, "restart must re-arm env default")
+	assert.Equal(t, "env", snap.Source)
+	assert.Zero(t, snap.ChangedAt)
+}
+
+func TestAdminSystem_IntraOrgGrantTracing_AuditLogWritten(t *testing.T) {
+	ts := setupSystemAdminTestServer(t)
+	ctx := context.Background()
+
+	pre, err := ts.db.ListAuditLogs(ctx, "system_setting", nil, 100, 0)
+	require.NoError(t, err)
+	preCount := len(pre)
+
+	_, _ = doSystemRequest(t, ts, http.MethodPost, "/api/v1/admin/system/intra-org-grant-tracing", "admin_token", map[string]any{
+		"enabled": true,
+		"reason":  "audit trail check",
+	})
+
+	post, err := ts.db.ListAuditLogs(ctx, "system_setting", nil, 100, 0)
+	require.NoError(t, err)
+	require.Equal(t, preCount+1, len(post), "every toggle must write exactly one audit row")
+	entry := post[0]
+	assert.Equal(t, "update", entry.Action)
+	assert.Equal(t, "system_setting", entry.ResourceType)
+	assert.Equal(t, "intra_org_grant_tracing", entry.ResourceName)
+	assert.Equal(t, "system:admin_token", entry.ActorExternalID)
+	if reasonField, ok := entry.NewValue["reason"]; ok {
+		assert.Equal(t, "audit trail check", reasonField)
+	} else {
+		t.Errorf("audit row's new_value must include the operator-provided reason; got %v", entry.NewValue)
 	}
 }
 

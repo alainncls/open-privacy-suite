@@ -13,6 +13,7 @@ type MockTraceStore struct {
 	*MockStore
 	sharedInfrastructure map[string]*SharedInfrastructure // address -> row (nil = not tagged)
 	ownedAddresses       map[string]map[string]bool       // orgID -> address -> owned
+	preregistered        map[string]map[string]bool       // orgID -> address -> pre-registered
 }
 
 func NewMockTraceStore() *MockTraceStore {
@@ -20,7 +21,30 @@ func NewMockTraceStore() *MockTraceStore {
 		MockStore:            NewMockStore(),
 		sharedInfrastructure: make(map[string]*SharedInfrastructure),
 		ownedAddresses:       make(map[string]map[string]bool),
+		preregistered:        make(map[string]map[string]bool),
 	}
+}
+
+// IsAddressPreregistered overrides the embedded MockStore stub (which always
+// returns false) so RD-1053 pre-registration fallback tests can seed state.
+func (m *MockTraceStore) IsAddressPreregistered(ctx context.Context, orgID, address string) (bool, error) {
+	addr := strings.ToLower(address)
+	if orgAddrs, ok := m.preregistered[orgID]; ok {
+		return orgAddrs[addr], nil
+	}
+	return false, nil
+}
+
+// AddPreregisteredAddress marks an address as a pending deployment for the
+// org. Pre-registered addresses are also owned by the org (the real
+// IsAddressOwnedByOrg UNIONs preregistered_addresses), so this seeds both.
+func (m *MockTraceStore) AddPreregisteredAddress(orgID, address string) {
+	addr := strings.ToLower(address)
+	if m.preregistered[orgID] == nil {
+		m.preregistered[orgID] = make(map[string]bool)
+	}
+	m.preregistered[orgID][addr] = true
+	m.AddOwnedAddress(orgID, addr)
 }
 
 func (m *MockTraceStore) IsSharedInfrastructure(ctx context.Context, address string) (bool, error) {
@@ -796,4 +820,180 @@ func TestValidateTrace_TableDriven(t *testing.T) {
 			}
 		})
 	}
+}
+
+// RD-1053: intra-org contract-grant scoping. By default a frame into any
+// contract owned by one of the caller's orgs is allowed (org is the isolation
+// boundary). With WithIntraOrgGrantScoping the same-org "allow" is narrowed to
+// contracts the caller actually has a grant for, mirroring the entry-point
+// CheckAccess. Cross-org (2d) and unregistered (2e) denials are unaffected.
+func TestValidateTrace_IntraOrgGrantScoping(t *testing.T) {
+	const (
+		granted      = "0xa111000000000000000000000000000000000000" // org1, in caller's grant set
+		ungranted    = "0xb222000000000000000000000000000000000000" // org1, NOT in caller's grant set
+		foreign      = "0xc333000000000000000000000000000000000000" // org2 (cross-org)
+		unregistered = "0xd444000000000000000000000000000000000000" // owned by no org
+	)
+
+	newStore := func() *MockTraceStore {
+		s := NewMockTraceStore()
+		s.AddOwnedAddress("org1", granted)
+		s.AddOwnedAddress("org1", ungranted)
+		s.AddOwnedAddress("org2", foreign)
+		return s
+	}
+	userOrgs := map[string]bool{"org1": true}
+	grantSet := map[string]bool{granted: true}
+	traceTo := func(addr string) *tracer.TraceResult {
+		return &tracer.TraceResult{CallTargets: []tracer.CallTarget{{Type: "CALL", To: addr}}}
+	}
+
+	t.Run("scoping OFF: same-org ungranted frame is allowed (pre-RD-1053 behaviour)", func(t *testing.T) {
+		v := NewTraceValidator(newStore())
+		res, err := v.ValidateTrace(context.Background(), userOrgs, traceTo(ungranted), false)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !res.Allowed {
+			t.Fatalf("without scoping, org-owned frame must be allowed; got deny kind=%q", res.DenialKind)
+		}
+	})
+
+	t.Run("scoping ON: same-org ungranted frame is denied", func(t *testing.T) {
+		v := NewTraceValidator(newStore())
+		res, err := v.ValidateTrace(context.Background(), userOrgs, traceTo(ungranted), false,
+			WithIntraOrgGrantScoping(grantSet))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if res.Allowed {
+			t.Fatalf("with scoping, same-org ungranted frame must be denied")
+		}
+		if res.DenialKind != DenialKindIntraOrgUngranted {
+			t.Errorf("DenialKind = %q, want %q", res.DenialKind, DenialKindIntraOrgUngranted)
+		}
+		if res.DeniedTarget != ungranted {
+			t.Errorf("DeniedTarget = %q, want %q", res.DeniedTarget, ungranted)
+		}
+	})
+
+	t.Run("scoping ON: same-org granted frame is allowed", func(t *testing.T) {
+		v := NewTraceValidator(newStore())
+		res, err := v.ValidateTrace(context.Background(), userOrgs, traceTo(granted), false,
+			WithIntraOrgGrantScoping(grantSet))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !res.Allowed {
+			t.Fatalf("granted same-org frame must be allowed; got deny kind=%q", res.DenialKind)
+		}
+	})
+
+	t.Run("scoping ON: cross-org frame still denied as foreign_org (not intra-org)", func(t *testing.T) {
+		v := NewTraceValidator(newStore())
+		res, err := v.ValidateTrace(context.Background(), userOrgs, traceTo(foreign), false,
+			WithIntraOrgGrantScoping(grantSet))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if res.Allowed {
+			t.Fatalf("cross-org frame must be denied")
+		}
+		if res.DenialKind != DenialKindForeignOrg {
+			t.Errorf("DenialKind = %q, want %q (scoping must not reclassify cross-org)", res.DenialKind, DenialKindForeignOrg)
+		}
+	})
+
+	t.Run("scoping ON: unregistered frame still denied as unregistered", func(t *testing.T) {
+		v := NewTraceValidator(newStore())
+		res, err := v.ValidateTrace(context.Background(), userOrgs, traceTo(unregistered), false,
+			WithIntraOrgGrantScoping(grantSet))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if res.Allowed {
+			t.Fatalf("unregistered frame must be denied")
+		}
+		if res.DenialKind != DenialKindUnregistered {
+			t.Errorf("DenialKind = %q, want %q", res.DenialKind, DenialKindUnregistered)
+		}
+	})
+
+	t.Run("scoping ON: precompile and shared-infra frames remain allowed", func(t *testing.T) {
+		s := newStore()
+		const shared = "0xeeee000000000000000000000000000000000000"
+		s.AddSharedInfrastructure(shared)
+		v := NewTraceValidator(s)
+		trace := &tracer.TraceResult{CallTargets: []tracer.CallTarget{
+			{Type: "STATICCALL", To: "0x0000000000000000000000000000000000000001"}, // precompile
+			{Type: "CALL", To: shared}, // globally shared
+		}}
+		res, err := v.ValidateTrace(context.Background(), userOrgs, trace, false,
+			WithIntraOrgGrantScoping(grantSet))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !res.Allowed {
+			t.Fatalf("precompile/shared-infra frames must bypass grant scoping; got deny kind=%q target=%q", res.DenialKind, res.DeniedTarget)
+		}
+	})
+}
+
+// RD-1053 pre-registration fallback: a same-org PRE-REGISTERED (precomputed,
+// not-yet-mined CREATE/CREATE2/CREATE3) address has no grant row yet, but a
+// deploy-claim caller must still be able to touch it under strict scoping —
+// otherwise a multi-contract deploy that references a precomputed sibling
+// before it's mined would false-deny. A non-deployer is still denied (the
+// address has no code; fail-closed). Mirrors the entry-point CheckAccess.
+func TestValidateTrace_IntraOrgScoping_PreregisteredSibling(t *testing.T) {
+	const prereg = "0xf00d000000000000000000000000000000000000" // org1, pre-registered, no grant
+	userOrgs := map[string]bool{"org1": true}
+	noGrants := map[string]bool{}
+	traceTo := func(addr string) *tracer.TraceResult {
+		return &tracer.TraceResult{CallTargets: []tracer.CallTarget{{Type: "CALL", To: addr}}}
+	}
+
+	t.Run("deploy-claim caller: pre-registered same-org frame allowed despite no grant", func(t *testing.T) {
+		s := NewMockTraceStore()
+		s.AddPreregisteredAddress("org1", prereg)
+		v := NewTraceValidator(s)
+		res, err := v.ValidateTrace(context.Background(), userOrgs, traceTo(prereg), true,
+			WithIntraOrgGrantScoping(noGrants))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !res.Allowed {
+			t.Fatalf("deploy-claim caller must reach an in-flight pre-registered sibling; got deny kind=%q", res.DenialKind)
+		}
+	})
+
+	t.Run("non-deployer: pre-registered same-org frame still denied", func(t *testing.T) {
+		s := NewMockTraceStore()
+		s.AddPreregisteredAddress("org1", prereg)
+		v := NewTraceValidator(s)
+		res, err := v.ValidateTrace(context.Background(), userOrgs, traceTo(prereg), false,
+			WithIntraOrgGrantScoping(noGrants))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if res.Allowed {
+			t.Fatalf("non-deployer must not reach an ungranted address via the pre-reg fallback")
+		}
+		if res.DenialKind != DenialKindIntraOrgUngranted {
+			t.Errorf("DenialKind = %q, want %q", res.DenialKind, DenialKindIntraOrgUngranted)
+		}
+	})
+
+	t.Run("scoping OFF: pre-registered frame allowed regardless of claim", func(t *testing.T) {
+		s := NewMockTraceStore()
+		s.AddPreregisteredAddress("org1", prereg)
+		v := NewTraceValidator(s)
+		res, err := v.ValidateTrace(context.Background(), userOrgs, traceTo(prereg), false)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !res.Allowed {
+			t.Fatalf("with scoping off, org-owned (incl. pre-registered) frame must be allowed")
+		}
+	})
 }
