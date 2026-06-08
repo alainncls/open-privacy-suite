@@ -69,30 +69,30 @@ const (
 // Server represents the API server
 // Server represents the API server
 type Server struct {
-	db                 *db.DB
-	rbacAccessCtrl     *rbac.AccessController
-	proxy              *proxy.Proxy
-	privadoVerifier    PrivadoVerifier
-	jwtService         *auth.JWTService
-	sessionStore       SessionManager
-	oauthSessionStore  OAuthSessionManager
-	challengeStore     ChallengeManager
-	rateLimiter        RateLimiterInterface
-	authRateLimiter    *AuthRateLimiter
-	disclosureService  *disclosure.DefaultService
-	complianceChecker  *compliance.Checker
-	priceService       *pricing.Service
-	config             *config.Config
-	ensResolver        *ens.Resolver
-	jsonrpcProcessor   *JSONRPCProcessor
-	zkRoleExtractor    *auth.ZKRoleExtractor
-	runtimeTracer      *tracer.RuntimeTracer
-	azureAuthenticator *auth.AzureADAuthenticator
-	azureStateStore    AzureStateManager
-	metrics            *metrics.Metrics
-	explorerStore      explorer.ExplorerBackend
-	explorerMu         sync.RWMutex // protects explorerStore + explorerRedactor during background reconnect
-	explorerRedactor   *explorer.RedactionEngine
+	db                   *db.DB
+	rbacAccessCtrl       *rbac.AccessController
+	proxy                *proxy.Proxy
+	privadoVerifier      PrivadoVerifier
+	jwtService           *auth.JWTService
+	sessionStore         SessionManager
+	oauthSessionStore    OAuthSessionManager
+	challengeStore       ChallengeManager
+	rateLimiter          RateLimiterInterface
+	authRateLimiter      *AuthRateLimiter
+	disclosureService    *disclosure.DefaultService
+	complianceChecker    *compliance.Checker
+	priceService         *pricing.Service
+	config               *config.Config
+	ensResolver          *ens.Resolver
+	jsonrpcProcessor     *JSONRPCProcessor
+	zkRoleExtractor      *auth.ZKRoleExtractor
+	runtimeTracer        *tracer.RuntimeTracer
+	azureAuthenticator   *auth.AzureADAuthenticator
+	azureStateStore      AzureStateManager
+	metrics              *metrics.Metrics
+	explorerStore        explorer.ExplorerBackend
+	explorerMu           sync.RWMutex // protects explorerStore + explorerRedactor during background reconnect
+	explorerRedactor     *explorer.RedactionEngine
 	siemForwarder        *audit.SIEMForwarder
 	retentionCleaner     *audit.RetentionCleaner
 	auditIntegrityWorker *audit.IntegrityWorker
@@ -456,6 +456,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	s.jsonrpcProcessor.SetTxVisibilityStore(database)
 	s.jsonrpcProcessor.SetDefaultRPCAPIKeyHeader(cfg.RPCAPIKeyHeader)
 	s.jsonrpcProcessor.SetEthCallTracing(cfg.RuntimeTracingEthCallEnabled, cfg.EthCallTraceTimeout)
+	s.jsonrpcProcessor.SetIntraOrgGrantTracing(cfg.RuntimeTracingIntraOrgGrantsEnabled)
 
 	// Initialize compliance checker for travel rule enforcement
 	if cfg.EnableTravelRule {
@@ -814,6 +815,12 @@ func (s *Server) setupRouter() *gin.Engine {
 		{
 			system.GET("/eth-call-tracing", s.handleGetEthCallTracing)
 			system.POST("/eth-call-tracing", s.handlePostEthCallTracing)
+
+			// RD-1053: intra-org contract-grant scoping on internal trace
+			// frames. Same super-admin-write / any-admin-read posture as
+			// eth-call-tracing above.
+			system.GET("/intra-org-grant-tracing", s.handleGetIntraOrgGrantTracing)
+			system.POST("/intra-org-grant-tracing", s.handlePostIntraOrgGrantTracing)
 
 			// RD-1023: build identity of the running binary. Read-only,
 			// admin-gated; intentionally not on /health or web3_clientVersion.

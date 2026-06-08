@@ -49,9 +49,9 @@ type JSONRPCProcessor struct {
 	txVisibilityStore rbac.TxVisibilityProvider
 
 	// Circuit breaker + concurrency limiter (replaces rate limiter for authenticated users)
-	circuitBreaker        *CircuitBreaker
-	concurrencyLimiter    *ConcurrencyLimiter
-	defaultRPCAPIKey      string
+	circuitBreaker         *CircuitBreaker
+	concurrencyLimiter     *ConcurrencyLimiter
+	defaultRPCAPIKey       string
 	defaultRPCAPIKeyHeader string // operator-wide header name from RPC_API_KEY_HEADER; empty => proxy.DefaultAPIKeyHeader
 
 	// RD-915: eth_call cross-org tracing.
@@ -62,19 +62,26 @@ type JSONRPCProcessor struct {
 	// from the admin endpoint are in-memory only — a restart re-arms
 	// the env value, which is the durable change-management control
 	// (RD-915 KD-5, ISO 27001 A.8.32).
-	ethCallTracing      atomic.Pointer[ethCallTracingState]
+	ethCallTracing      atomic.Pointer[runtimeToggleState]
 	ethCallTraceTimeout time.Duration // ETH_CALL_TRACE_TIMEOUT — distinct from send-side TraceTimeout.
+
+	// RD-1053: intra-org contract-grant scoping on internal trace frames.
+	// Same atomic-snapshot pattern and super-admin runtime-override shape as
+	// ethCallTracing above; defaults OFF. Governs read (eth_call /
+	// debug_traceCall) and send (eth_sendTransaction / raw / deploy).
+	intraOrgGrantTracing atomic.Pointer[runtimeToggleState]
 
 	// Prometheus metrics
 	metrics *metrics.Metrics
 }
 
-// ethCallTracingState captures the current value of the eth_call tracing
-// knob and the metadata needed to render a GET response from the admin
-// endpoint. EnvDefault records the value the env var asked for at startup
-// so operators can tell "currently overridden vs back to default" without
-// inspecting the env. Source is "env" until the first runtime override.
-type ethCallTracingState struct {
+// runtimeToggleState captures the current value of a fleet-wide on/off
+// security knob (eth_call tracing, intra-org grant scoping) plus the
+// metadata needed to render a GET response from the admin endpoint.
+// EnvDefault records the value the env var asked for at startup so operators
+// can tell "currently overridden vs back to default" without inspecting the
+// env. Source is "env" until the first runtime override.
+type runtimeToggleState struct {
 	Enabled    bool
 	EnvDefault bool
 	Source     string    // "env" | "runtime_override"
@@ -181,9 +188,16 @@ func NewJSONRPCProcessor(
 	// Wire-level safe-by-default — the server constructor calls
 	// SetEthCallTracing(...) right after to install the env-derived
 	// value. Until then, tracing is on.
-	p.ethCallTracing.Store(&ethCallTracingState{
+	p.ethCallTracing.Store(&runtimeToggleState{
 		Enabled:    true,
 		EnvDefault: true,
+		Source:     "env",
+	})
+	// Intra-org grant scoping is OFF until env install (RD-1053). Org
+	// ownership is the default isolation boundary; operators opt in.
+	p.intraOrgGrantTracing.Store(&runtimeToggleState{
+		Enabled:    false,
+		EnvDefault: false,
 		Source:     "env",
 	})
 	return p
@@ -197,7 +211,7 @@ func NewJSONRPCProcessor(
 // send-side TraceTimeout. This wipes any prior runtime override — boot
 // always re-arms from env (RD-915 KD-5, ISO 27001 A.8.32).
 func (p *JSONRPCProcessor) SetEthCallTracing(enabled bool, timeout time.Duration) {
-	p.ethCallTracing.Store(&ethCallTracingState{
+	p.ethCallTracing.Store(&runtimeToggleState{
 		Enabled:    enabled,
 		EnvDefault: enabled,
 		Source:     "env",
@@ -211,13 +225,13 @@ func (p *JSONRPCProcessor) SetEthCallTracing(enabled bool, timeout time.Duration
 // super-admin endpoint. The change is NOT persisted: a restart re-arms
 // the env value. `reason` and `who` are required for the audit trail.
 // Returns the new snapshot so the handler can echo it in its response.
-func (p *JSONRPCProcessor) SetEthCallTracingRuntimeOverride(enabled bool, who, reason string) *ethCallTracingState {
+func (p *JSONRPCProcessor) SetEthCallTracingRuntimeOverride(enabled bool, who, reason string) *runtimeToggleState {
 	prev := p.ethCallTracing.Load()
 	envDefault := true
 	if prev != nil {
 		envDefault = prev.EnvDefault
 	}
-	next := &ethCallTracingState{
+	next := &runtimeToggleState{
 		Enabled:    enabled,
 		EnvDefault: envDefault,
 		Source:     "runtime_override",
@@ -231,12 +245,112 @@ func (p *JSONRPCProcessor) SetEthCallTracingRuntimeOverride(enabled bool, who, r
 
 // EthCallTracingSnapshot returns the current state for the admin GET
 // handler. Never returns nil — the constructor seeds a default.
-func (p *JSONRPCProcessor) EthCallTracingSnapshot() ethCallTracingState {
+func (p *JSONRPCProcessor) EthCallTracingSnapshot() runtimeToggleState {
 	s := p.ethCallTracing.Load()
 	if s == nil {
-		return ethCallTracingState{Enabled: true, EnvDefault: true, Source: "env"}
+		return runtimeToggleState{Enabled: true, EnvDefault: true, Source: "env"}
 	}
 	return *s
+}
+
+// SetIntraOrgGrantTracing installs the env-derived configuration for the
+// RD-1053 intra-org contract-grant scoping knob. Defaults OFF; the env var
+// flips it on for operators who want grants to gate contract-to-contract
+// composition within an org. This wipes any prior runtime override — boot
+// always re-arms from env (mirrors SetEthCallTracing; ISO 27001 A.8.32).
+func (p *JSONRPCProcessor) SetIntraOrgGrantTracing(enabled bool) {
+	p.intraOrgGrantTracing.Store(&runtimeToggleState{
+		Enabled:    enabled,
+		EnvDefault: enabled,
+		Source:     "env",
+	})
+}
+
+// SetIntraOrgGrantTracingRuntimeOverride records an in-memory toggle of the
+// intra-org grant scoping knob from the super-admin endpoint. Not persisted:
+// a restart re-arms the env value. Returns the new snapshot.
+func (p *JSONRPCProcessor) SetIntraOrgGrantTracingRuntimeOverride(enabled bool, who, reason string) *runtimeToggleState {
+	prev := p.intraOrgGrantTracing.Load()
+	envDefault := false
+	if prev != nil {
+		envDefault = prev.EnvDefault
+	}
+	next := &runtimeToggleState{
+		Enabled:    enabled,
+		EnvDefault: envDefault,
+		Source:     "runtime_override",
+		ChangedAt:  time.Now().UTC(),
+		ChangedBy:  who,
+		Reason:     reason,
+	}
+	p.intraOrgGrantTracing.Store(next)
+	return next
+}
+
+// IntraOrgGrantTracingSnapshot returns the current state for the admin GET
+// handler. Never returns nil — the constructor seeds a default (OFF).
+func (p *JSONRPCProcessor) IntraOrgGrantTracingSnapshot() runtimeToggleState {
+	s := p.intraOrgGrantTracing.Load()
+	if s == nil {
+		return runtimeToggleState{Enabled: false, EnvDefault: false, Source: "env"}
+	}
+	return *s
+}
+
+// intraOrgGrantTracingEnabled is the lock-free hot-path read of the RD-1053
+// knob. Returns false (org-ownership-only frames) until env install.
+func (p *JSONRPCProcessor) intraOrgGrantTracingEnabled() bool {
+	s := p.intraOrgGrantTracing.Load()
+	return s != nil && s.Enabled
+}
+
+// intraOrgGrantTraceOptions returns the ValidateTrace options that enable
+// RD-1053 intra-org grant scoping, or nil when the knob is off. When off we
+// skip resolving the granted-contract set entirely, so the default path adds
+// zero overhead. targetAddr (the already-authorized top-level `to`, empty for
+// deploys) is always added to the granted set so the trace never re-denies a
+// frame the grant-aware entry-point CheckAccess already allowed.
+//
+// Resolution errors are returned to the caller, which MUST fail closed
+// (deny) — a knob that is on but whose grant set could not be resolved must
+// never silently fall back to org-ownership-only.
+func (p *JSONRPCProcessor) intraOrgGrantTraceOptions(ctx context.Context, userID, targetAddr string, userOrgIDs map[string]bool) ([]rbac.TraceOption, error) {
+	if !p.intraOrgGrantTracingEnabled() {
+		return nil, nil
+	}
+	granted, err := p.resolveGrantedContracts(ctx, userID, userOrgIDs)
+	if err != nil {
+		return nil, err
+	}
+	if targetAddr != "" {
+		granted[strings.ToLower(targetAddr)] = true
+	}
+	return []rbac.TraceOption{rbac.WithIntraOrgGrantScoping(granted)}, nil
+}
+
+// resolveGrantedContracts returns the set of lowercased contract addresses
+// the user has contract-level access to, unioned across all their orgs. This
+// mirrors the entry-point CheckAccess contract-access decision: the resolved
+// EffectivePermissions.ContractAccess map already folds in explicit
+// contract_grants (by group), org-admin materialization, and deployer
+// auto-grant rows (RD-735). Resolution is from the resolver cache — the
+// target's own org is a guaranteed cache hit (CheckAccess just resolved it
+// this request); additional orgs the user belongs to may be cold.
+func (p *JSONRPCProcessor) resolveGrantedContracts(ctx context.Context, userID string, userOrgIDs map[string]bool) (map[string]bool, error) {
+	granted := make(map[string]bool)
+	for orgID := range userOrgIDs {
+		perms, err := p.rbacAccessCtrl.GetEffectivePermissionsByIDs(ctx, userID, orgID)
+		if err != nil {
+			return nil, err
+		}
+		if perms == nil {
+			continue
+		}
+		for addr := range perms.ContractAccess {
+			granted[strings.ToLower(addr)] = true
+		}
+	}
+	return granted, nil
 }
 
 // SetComplianceChecker sets the compliance checker for travel rule enforcement.
@@ -668,7 +782,9 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	if plainCreatePreRegAddr != "" {
 		var rpcResp struct {
 			Result string `json:"result"`
-			Error  *struct{ Message string `json:"message"` } `json:"error"`
+			Error  *struct {
+				Message string `json:"message"`
+			} `json:"error"`
 		}
 		nodeAccepted := statusCode == http.StatusOK &&
 			err == nil &&
@@ -692,8 +808,10 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	// Handle runtime CREATE/CREATE2 tracking/cleanup.
 	if len(runtimeCreateAddrs) > 0 {
 		var rpcResp2 struct {
-			Result string                         `json:"result"`
-			Error  *struct{ Message string `json:"message"` } `json:"error"`
+			Result string `json:"result"`
+			Error  *struct {
+				Message string `json:"message"`
+			} `json:"error"`
 		}
 		nodeAccepted := statusCode == http.StatusOK &&
 			err == nil &&
@@ -883,7 +1001,7 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		if err != nil {
 			return responseBody // pass through on error
 		}
-		
+
 		originalFull := false // JSON-RPC defaults false
 		if len(req.Params) >= 2 {
 			if isFull, ok := req.Params[1].(bool); ok {
@@ -891,7 +1009,7 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 			}
 		}
 		return FilterBlockTransactions(responseBody, addrs, originalFull)
-		
+
 	case strings.EqualFold(m, "eth_getBlockTransactionCountByHash"),
 		strings.EqualFold(m, "eth_getBlockTransactionCountByNumber"):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
@@ -952,7 +1070,7 @@ func rewriteToGetBlock(originalBody []byte, newMethod string, params []any) []by
 		return nil
 	}
 	env.Method = newMethod
-	
+
 	newParams := make([]any, 0, 2)
 	if len(params) > 0 {
 		newParams = append(newParams, params[0])
@@ -994,7 +1112,7 @@ func rewriteToGetBlock(originalBody []byte, newMethod string, params []any) []by
 // feature is disabled or not applicable.
 func (p *JSONRPCProcessor) validateDeployWithTracing(
 	ctx context.Context, req *ProcessRequest,
-	from, data, value string,
+	userID, from, data, value string,
 	userOrgIDs map[string]bool, userHasDeploy bool,
 ) ([]rbac.CreateTarget, *ProcessError) {
 	// Skip if tracing is not configured. Operators who run a node
@@ -1025,11 +1143,25 @@ func (p *JSONRPCProcessor) validateDeployWithTracing(
 		}
 	}
 
+	// RD-1053: intra-org grant scoping for constructor frames. No top-level
+	// `to` for a deploy, so targetAddr is "". When the knob is on, a
+	// constructor that CALLs a same-org contract the deployer's groups have
+	// no grant for is denied (the strict posture the operator opted into).
+	traceOpts, optErr := p.intraOrgGrantTraceOptions(ctx, userID, "", userOrgIDs)
+	if optErr != nil {
+		slog.Warn("deploy trace: intra-org grant resolution failed",
+			slog.String("user", req.UserID), slog.Any("err", optErr))
+		return nil, &ProcessError{
+			StatusCode: http.StatusForbidden,
+			Message:    sendTraceValidatorError,
+		}
+	}
+
 	// Validate the trace. The top-level frame is a CREATE (debug_traceCall
 	// with empty `to` reports it as a deploy); ValidateTrace already
 	// handles the deploy-claim gate + CREATE collision check + every
 	// nested CALL/STATICCALL/DELEGATECALL frame against userOrgIDs.
-	validationResult, err := p.traceValidator.ValidateTrace(ctx, userOrgIDs, traceResult, userHasDeploy)
+	validationResult, err := p.traceValidator.ValidateTrace(ctx, userOrgIDs, traceResult, userHasDeploy, traceOpts...)
 	if err != nil {
 		slog.Warn("deploy trace: validator error",
 			slog.String("user", req.UserID), slog.Any("err", err))
@@ -1108,7 +1240,7 @@ func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *Process
 	// validates every executed frame against userOrgIDs.
 	if to == "" {
 		userHasDeploy := p.userHasDeployClaim(ctx, memberships)
-		return p.validateDeployWithTracing(ctx, req, from, data, value, userOrgIDs, userHasDeploy)
+		return p.validateDeployWithTracing(ctx, req, user.ID, from, data, value, userOrgIDs, userHasDeploy)
 	}
 
 	// L6 (security audit follow-up to RD-915): rebind / verify
@@ -1191,8 +1323,20 @@ func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *Process
 	// Determine if user has deploy claim from any of their memberships
 	userHasDeploy := p.userHasDeployClaim(ctx, memberships)
 
+	// RD-1053: intra-org grant scoping (same knob as the read side). Fail
+	// closed if the grant set can't be resolved.
+	traceOpts, optErr := p.intraOrgGrantTraceOptions(ctx, user.ID, to, userOrgIDs)
+	if optErr != nil {
+		slog.Warn("send trace: intra-org grant resolution failed",
+			slog.String("user", req.UserID), slog.Any("err", optErr))
+		return nil, &ProcessError{
+			StatusCode: http.StatusForbidden,
+			Message:    sendTraceValidatorError,
+		}
+	}
+
 	// Validate the trace against org isolation rules
-	validationResult, err := p.traceValidator.ValidateTrace(ctx, userOrgIDs, traceResult, userHasDeploy)
+	validationResult, err := p.traceValidator.ValidateTrace(ctx, userOrgIDs, traceResult, userHasDeploy, traceOpts...)
 	if err != nil {
 		slog.Warn("send trace: validator error",
 			slog.String("user", req.UserID), slog.Any("err", err))
@@ -1237,10 +1381,10 @@ const (
 // into the deny string; that's the same disclosure surface RD-916 + RD-915
 // close on the read side.
 const (
-	sendTraceDenyCrossOrg     = "transaction denied: cross-org access not permitted"
-	sendTraceDenyDeployClaim  = "transaction denied: runtime contract creation requires the deploy claim"
-	sendTraceDenyTracerError  = "transaction denied: tracing temporarily unavailable"
-	sendTraceValidatorError   = "transaction denied: trace validation unavailable"
+	sendTraceDenyCrossOrg    = "transaction denied: cross-org access not permitted"
+	sendTraceDenyDeployClaim = "transaction denied: runtime contract creation requires the deploy claim"
+	sendTraceDenyTracerError = "transaction denied: tracing temporarily unavailable"
+	sendTraceValidatorError  = "transaction denied: trace validation unavailable"
 )
 
 // sendTraceDenyMessage maps a TraceValidationResult to the appropriate
@@ -1431,7 +1575,17 @@ func (p *JSONRPCProcessor) validateEthCallWithTracing(ctx context.Context, req *
 	// affects CREATE-frame handling, which eth_call cannot produce.
 	userHasDeploy := p.userHasDeployClaim(ctx, memberships)
 
-	validationResult, err := p.traceValidator.ValidateTrace(ctx, userOrgIDs, traceResult, userHasDeploy)
+	// RD-1053: opt into intra-org grant scoping when the knob is on. Fail
+	// closed if the grant set can't be resolved — a knob that is on must
+	// never degrade to org-ownership-only.
+	traceOpts, optErr := p.intraOrgGrantTraceOptions(ctx, user.ID, to, userOrgIDs)
+	if optErr != nil {
+		slog.Warn("eth_call trace: intra-org grant resolution failed",
+			slog.String("user", req.UserID), slog.Any("err", optErr))
+		return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyTracerError}
+	}
+
+	validationResult, err := p.traceValidator.ValidateTrace(ctx, userOrgIDs, traceResult, userHasDeploy, traceOpts...)
 	if err != nil {
 		slog.Warn("eth_call trace: validator error",
 			slog.String("user", req.UserID), slog.Any("err", err))
@@ -1729,7 +1883,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 			}
 		}
 		userHasDeploy := p.userHasDeployClaim(ctx, memberships)
-		deployTargets, traceErr := p.validateDeployWithTracing(ctx, req, from, data, value, userOrgIDs, userHasDeploy)
+		deployTargets, traceErr := p.validateDeployWithTracing(ctx, req, user.ID, from, data, value, userOrgIDs, userHasDeploy)
 		if traceErr != nil {
 			p.recordRPCOutcome(req.Method, "send_trace_denied", start)
 			p.logAccess(ctx, req, http.StatusForbidden)
@@ -1860,7 +2014,9 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	if rawTxPlainCreateAddr != "" {
 		var rpcResp struct {
 			Result string `json:"result"`
-			Error  *struct{ Message string `json:"message"` } `json:"error"`
+			Error  *struct {
+				Message string `json:"message"`
+			} `json:"error"`
 		}
 		nodeAccepted := statusCode == http.StatusOK &&
 			err == nil &&
@@ -1884,8 +2040,10 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	// Handle runtime CREATE/CREATE2 tracking/cleanup.
 	if len(runtimeCreateAddrs) > 0 {
 		var rpcResp2 struct {
-			Result string                         `json:"result"`
-			Error  *struct{ Message string `json:"message"` } `json:"error"`
+			Result string `json:"result"`
+			Error  *struct {
+				Message string `json:"message"`
+			} `json:"error"`
 		}
 		nodeAccepted := statusCode == http.StatusOK &&
 			err == nil &&
@@ -1980,6 +2138,11 @@ func (p *JSONRPCProcessor) processDebugTrace(ctx context.Context, req *ProcessRe
 	// 2. Perform the internal trace
 	var traceResult *tracer.TraceResult
 	var traceErr error
+	// debugCallTarget is the top-level `to` for debug_traceCall (a
+	// user-initiated simulation, the trace twin of eth_call). Empty for
+	// debug_traceTransaction, which replays a historical mined tx the caller
+	// did not necessarily originate — see the RD-1053 scoping note below.
+	var debugCallTarget string
 
 	if req.Method == "debug_traceTransaction" {
 		if len(req.Params) == 0 {
@@ -1992,6 +2155,7 @@ func (p *JSONRPCProcessor) processDebugTrace(ctx context.Context, req *ProcessRe
 		traceResult, traceErr = p.runtimeTracer.TraceMinedTransaction(ctx, txHash)
 	} else if req.Method == "debug_traceCall" {
 		from, to, data, value := extractTxParams(req.Params)
+		debugCallTarget = to
 		traceResult, traceErr = p.runtimeTracer.TraceTransaction(ctx, from, to, data, value)
 	}
 
@@ -2004,8 +2168,27 @@ func (p *JSONRPCProcessor) processDebugTrace(ctx context.Context, req *ProcessRe
 		return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusForbidden, Message: "trace returned no result"}}
 	}
 
+	// RD-1053: extend intra-org grant scoping to debug_traceCall — it runs
+	// the EVM exactly like eth_call, so leaving it on org-ownership-only
+	// would be a bypass for deploy/admin-claim users when the knob is on.
+	// debug_traceTransaction is deliberately NOT scoped this way: it replays
+	// a historical mined tx (not caller-initiated), and binding incident
+	// debugging to the caller's own grants would defeat the purpose of the
+	// claim-gated debug surface. Cross-org isolation still applies to both.
+	var debugTraceOpts []rbac.TraceOption
+	if req.Method == "debug_traceCall" {
+		opts, optErr := p.intraOrgGrantTraceOptions(ctx, user.ID, debugCallTarget, userOrgIDs)
+		if optErr != nil {
+			slog.Warn("debug_traceCall: intra-org grant resolution failed",
+				slog.String("user", req.UserID), slog.Any("err", optErr))
+			p.logAccess(ctx, req, http.StatusForbidden)
+			return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusForbidden, Message: "trace validation error"}}
+		}
+		debugTraceOpts = opts
+	}
+
 	// 3. Validate the trace tree strictly
-	validationResult, err := p.traceValidator.ValidateTrace(ctx, userOrgIDs, traceResult, true)
+	validationResult, err := p.traceValidator.ValidateTrace(ctx, userOrgIDs, traceResult, true, debugTraceOpts...)
 	if err != nil {
 		p.logAccess(ctx, req, http.StatusInternalServerError)
 		return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusInternalServerError, Message: "trace validation error"}}
@@ -2059,7 +2242,7 @@ func (p *JSONRPCProcessor) processDebugTrace(ctx context.Context, req *ProcessRe
 
 	p.recordRPCOutcome(req.Method, "success", start)
 	p.logAccess(ctx, req, statusCode)
-	
+
 	// Return the raw response exactly as it came from the node
 	return &ProcessResult{
 		StatusCode:   statusCode,
@@ -2119,8 +2302,19 @@ func (p *JSONRPCProcessor) validateRawTxWithTracing(ctx context.Context, req *Pr
 	// Determine if user has deploy claim from any of their memberships
 	userHasDeploy := p.userHasDeployClaim(ctx, memberships)
 
+	// RD-1053: intra-org grant scoping (same knob as the other send paths).
+	traceOpts, optErr := p.intraOrgGrantTraceOptions(ctx, user.ID, to, userOrgIDs)
+	if optErr != nil {
+		slog.Warn("raw send trace: intra-org grant resolution failed",
+			slog.String("user", req.UserID), slog.Any("err", optErr))
+		return nil, &ProcessError{
+			StatusCode: http.StatusForbidden,
+			Message:    sendTraceValidatorError,
+		}
+	}
+
 	// Validate the trace against org isolation rules
-	validationResult, err := p.traceValidator.ValidateTrace(ctx, userOrgIDs, traceResult, userHasDeploy)
+	validationResult, err := p.traceValidator.ValidateTrace(ctx, userOrgIDs, traceResult, userHasDeploy, traceOpts...)
 	if err != nil {
 		slog.Warn("raw send trace: validator error",
 			slog.String("user", req.UserID), slog.Any("err", err))

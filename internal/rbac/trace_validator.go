@@ -18,6 +18,14 @@ type TraceValidatorStore interface {
 	IsAddressOwnedByOrg(ctx context.Context, address string, orgID string) (bool, error)
 	GetContractOwnerOrgID(ctx context.Context, address string) (string, error)
 
+	// IsAddressPreregistered reports whether the address is a pending
+	// (precomputed, not-yet-mined) deployment for the org — a CREATE /
+	// CREATE2 / CREATE3 address registered before the tx is forwarded
+	// (migration 018 / runtime-CREATE2 flow). RD-1053 consults this on the
+	// intra-org deny path so strict mode doesn't block an in-flight
+	// deployment whose grant row doesn't exist yet (mirrors CheckAccess).
+	IsAddressPreregistered(ctx context.Context, orgID, address string) (bool, error)
+
 	// Shared infrastructure methods
 	IsSharedInfrastructure(ctx context.Context, address string) (bool, error)
 	CreateSharedInfrastructure(ctx context.Context, infra *SharedInfrastructure) error
@@ -80,14 +88,52 @@ type TraceValidationResult struct {
 type DenialKind string
 
 const (
-	DenialKindNone                 DenialKind = ""
-	DenialKindForeignOrg           DenialKind = "foreign_org"             // target is owned by an org the caller is not in
-	DenialKindUnregistered         DenialKind = "unregistered"            // target is not in the Contract registry at all
-	DenialKindDeployClaim          DenialKind = "deploy_claim_missing"    // trace contains CREATE/CREATE2 but caller lacks deploy
-	DenialKindCreateForeign        DenialKind = "create_foreign_org"      // CREATE/CREATE2 collides with an address registered to another org
-	DenialKindDelegateSharedInfra  DenialKind = "delegatecall_shared_infra" // M6: DELEGATECALL into shared infrastructure
-	DenialKindCodehashMismatch     DenialKind = "shared_infra_codehash_mismatch" // M5: shared_infrastructure bytecode rotated since attestation
+	DenialKindNone                DenialKind = ""
+	DenialKindForeignOrg          DenialKind = "foreign_org"                    // target is owned by an org the caller is not in
+	DenialKindUnregistered        DenialKind = "unregistered"                   // target is not in the Contract registry at all
+	DenialKindDeployClaim         DenialKind = "deploy_claim_missing"           // trace contains CREATE/CREATE2 but caller lacks deploy
+	DenialKindCreateForeign       DenialKind = "create_foreign_org"             // CREATE/CREATE2 collides with an address registered to another org
+	DenialKindDelegateSharedInfra DenialKind = "delegatecall_shared_infra"      // M6: DELEGATECALL into shared infrastructure
+	DenialKindCodehashMismatch    DenialKind = "shared_infra_codehash_mismatch" // M5: shared_infrastructure bytecode rotated since attestation
+	DenialKindIntraOrgUngranted   DenialKind = "intra_org_ungranted"            // RD-1053: same-org target the caller has no contract grant for (intra-org scoping on)
 )
+
+// TraceOption configures optional behaviour of ValidateTrace. It exists so
+// the many call sites that only need cross-org isolation keep the original
+// signature, while the read/send paths can opt into intra-org grant scoping
+// (RD-1053) without threading extra positional args everywhere.
+type TraceOption func(*traceOptions)
+
+type traceOptions struct {
+	intraOrgGrantScoping bool
+	grantedContracts     map[string]bool
+}
+
+// WithIntraOrgGrantScoping enables the RD-1053 intra-org pass: an internal
+// frame into a contract owned by one of the caller's orgs is allowed only if
+// that contract's lowercased address is present in grantedContracts — the
+// union of the caller's resolved contract grants across their orgs, plus the
+// already-authorized top-level target. Cross-org and unregistered denials
+// (Rules 2d/2e) are unaffected; this only narrows the same-org "allow".
+// When this option is not supplied, ValidateTrace gates internal frames on
+// org ownership alone (pre-RD-1053 behaviour).
+//
+// grantedContracts mirrors the entry-point CheckAccess contract-access
+// decision (explicit grants + org-admin materialization + deployer
+// auto-grant rows). In-flight deployments (precomputed CREATE/CREATE2/CREATE3
+// addresses that are pre-registered but not yet mined, hence grant-less) are
+// handled separately: a deploy-claim caller is allowed through via the
+// IsAddressPreregistered fallback in ValidateTrace, mirroring how the
+// entry-point treats pre-registered addresses. The only residual narrowing is
+// the transient post-mine-but-pre-grant window (the entry-point's
+// deployer-by-address fallback), which RD-735's deploy-time grant creation
+// makes effectively empty.
+func WithIntraOrgGrantScoping(grantedContracts map[string]bool) TraceOption {
+	return func(o *traceOptions) {
+		o.intraOrgGrantScoping = true
+		o.grantedContracts = grantedContracts
+	}
+}
 
 // CreateTarget represents a contract address created during trace execution.
 type CreateTarget struct {
@@ -111,9 +157,9 @@ type CreateTarget struct {
 // Format: lowercase 0x-prefixed 32-byte hex string. Nil/empty disables
 // the check for backward compatibility.
 type SharedInfrastructure struct {
-	Address     string    `json:"address"`     // lowercase 0x-prefixed address
-	Name        string    `json:"name"`        // Human-readable name (e.g., "Uniswap V3 Router")
-	Description string    `json:"description"` // Description of the contract
+	Address     string    `json:"address"`            // lowercase 0x-prefixed address
+	Name        string    `json:"name"`               // Human-readable name (e.g., "Uniswap V3 Router")
+	Description string    `json:"description"`        // Description of the contract
 	Codehash    *string   `json:"codehash,omitempty"` // M5: optional codehash pin
 	CreatedAt   time.Time `json:"created_at"`
 }
@@ -130,20 +176,27 @@ func NewTraceValidator(store TraceValidatorStore) *TraceValidator {
 // for the user's organizations.
 //
 // The validation follows this order:
-// 1. If trace has CREATE or CREATE2 and user lacks deploy claim, deny
-// 2. If user has deploy claim, validate created addresses aren't owned by another org
-// 3. For each CallTarget:
-//    a. Filter precompiles (0x01-0x09): always allow
-//    b. Check if target is shared infrastructure: always allow
-//    c. Check if target is owned by any of user's orgs: allow if member
-//    d. If not owned by user's org, check if owned by another org: DENY
-//    e. If public (not owned by any org): allow
+//  1. If trace has CREATE or CREATE2 and user lacks deploy claim, deny
+//  2. If user has deploy claim, validate created addresses aren't owned by another org
+//  3. For each CallTarget:
+//     a. Filter precompiles (0x01-0x09): always allow
+//     b. Check if target is shared infrastructure: always allow
+//     c. Check if target is owned by any of user's orgs: allow if member —
+//     but when WithIntraOrgGrantScoping is set (RD-1053), additionally
+//     require a contract grant for that same-org target, else DENY
+//     d. If not owned by user's org, check if owned by another org: DENY
+//     e. If unregistered (not owned by any org): DENY (private by default)
 func (v *TraceValidator) ValidateTrace(
 	ctx context.Context,
 	userOrgIDs map[string]bool,
 	trace *tracer.TraceResult,
 	userHasDeploy bool,
+	opts ...TraceOption,
 ) (*TraceValidationResult, error) {
+	var o traceOptions
+	for _, fn := range opts {
+		fn(&o)
+	}
 	if trace == nil {
 		return &TraceValidationResult{
 			Allowed: true,
@@ -291,6 +344,44 @@ func (v *TraceValidator) ValidateTrace(
 			}
 		}
 		if isOwnedByUserOrg {
+			// Rule 2c' (RD-1053): intra-org contract-grant scoping. By
+			// default org ownership is sufficient — the org is the
+			// isolation boundary. When the operator opts in, a same-org
+			// frame must ALSO be a contract the caller has a grant for,
+			// mirroring the grant-aware entry-point CheckAccess. This
+			// closes the transitive-reach gap where a user reaches a
+			// same-org-but-ungranted contract through an internal call
+			// rather than as the direct `to`. Cross-org isolation (2d/2e)
+			// is independent of this and always enforced.
+			if o.intraOrgGrantScoping && !o.grantedContracts[addr] {
+				// Pre-registration fallback: an in-flight deployment
+				// (precomputed CREATE/CREATE2/CREATE3 address) is owned by
+				// the org but has no grant row until it is mined and
+				// reconciled (RD-735). The grant-aware entry-point
+				// CheckAccess already treats pre-registered addresses as
+				// reachable for deploy-claim holders; mirror that here so
+				// strict mode doesn't block a multi-contract deploy that
+				// touches a not-yet-mined sibling. Only consulted on the
+				// rare deny path, and only for deploy-claim callers (the
+				// address has no code yet, so a non-deployer reaching it is
+				// both exotic and safe to deny — fail-closed).
+				if userHasDeploy {
+					prereg, err := v.isPreregisteredForAnyOrg(ctx, addr, userOrgIDs)
+					if err != nil {
+						return nil, fmt.Errorf("failed to check preregistration: %w", err)
+					}
+					if prereg {
+						continue
+					}
+				}
+				slog.Debug("trace denied: same-org target not granted to caller (intra-org scoping)", "address", addr)
+				return &TraceValidationResult{
+					Allowed:      false,
+					Reason:       ErrContractAccessDenied,
+					DenialKind:   DenialKindIntraOrgUngranted,
+					DeniedTarget: addr,
+				}, nil
+			}
 			continue
 		}
 
@@ -325,6 +416,23 @@ func (v *TraceValidator) ValidateTrace(
 		Allowed:       true,
 		CreateTargets: createTargets,
 	}, nil
+}
+
+// isPreregisteredForAnyOrg reports whether addr is a pending (precomputed,
+// not-yet-mined) deployment for any of the caller's orgs. Used by the RD-1053
+// intra-org grant pass to let an in-flight CREATE/CREATE2/CREATE3 sibling
+// through before its grant row exists.
+func (v *TraceValidator) isPreregisteredForAnyOrg(ctx context.Context, addr string, userOrgIDs map[string]bool) (bool, error) {
+	for orgID := range userOrgIDs {
+		prereg, err := v.store.IsAddressPreregistered(ctx, orgID, addr)
+		if err != nil {
+			return false, err
+		}
+		if prereg {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // normalizeTraceAddr normalizes an address to lowercase with 0x prefix.

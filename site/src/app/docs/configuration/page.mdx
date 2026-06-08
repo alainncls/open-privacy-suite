@@ -119,6 +119,24 @@ This is correct: a method the proxy has no alias mapping for has no defined `to`
 
 </Callout>
 
+**Intra-org contract-grant scoping (RD-1053):**
+
+By default, runtime tracing enforces the **organization** as the isolation boundary: an internal call frame into any contract owned by one of the caller's orgs is allowed, even if the caller's groups have no grant for that specific contract. (A direct call to such a contract is still denied at the entry point — this only concerns contracts reached indirectly through another contract's internal calls.)
+
+Set `RUNTIME_TRACING_INTRA_ORG_GRANTS_ENABLED=true` to tighten this: when on, an internal frame into a same-org contract is allowed only if the caller actually has a contract grant for it (the same rule applied to the directly-called contract). Turn this on when contract-to-contract composition within an org should respect per-contract grants, not just org membership.
+
+- **Default OFF.** Org ownership remains the boundary unless you opt in.
+- **Cross-org isolation is unaffected** by this flag — calls into another org's contracts (and into unregistered addresses) are always denied regardless.
+- Governs both reads (`eth_call`, `debug_traceCall`) and writes (`eth_sendTransaction`, `eth_sendRawTransaction`, and contract-deploy constructor calls).
+- **In-flight deploys are not blocked.** Multi-contract or factory deploys (CREATE2/CREATE3) that reference a precomputed sibling address before it is mined still work — pre-registered deployment addresses are allowed for deploy-claim callers, the same as the direct-call access check.
+- Has no effect when runtime tracing is globally unavailable.
+
+<EnvTable vars={[
+  { name: "RUNTIME_TRACING_INTRA_ORG_GRANTS_ENABLED", default: "false", description: "When true, runtime tracing also requires a contract grant for same-org contracts reached through internal call frames, matching the entry-point access check. When false (default), internal frames into same-org contracts are allowed on org ownership alone. Cross-org isolation is enforced either way." },
+]} />
+
+**Runtime toggle endpoint:** flip this knob without a redeploy via `POST /api/v1/admin/system/intra-org-grant-tracing` with body `{"enabled": true, "reason": "..."}`. Same posture as the eth_call toggle above: super-admin token only, in-memory (a restart re-arms the env value), audit-logged with the required `reason`, and a `GET` readable by any admin. Note the directions are not symmetric — turning this **off** widens access within an org, so the audit row matters most on a disable.
+
 ---
 
 ## Extra RPC Namespaces

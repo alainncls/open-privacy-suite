@@ -65,14 +65,15 @@ func (s *Server) handleGetVersion(c *gin.Context) {
 // no exploit value: tracing is the protective layer, enabling it does
 // not weaken anything else.
 
-// systemEthCallTracingToggleRequest is the request body for POST.
-type systemEthCallTracingToggleRequest struct {
+// systemToggleRequest is the request body for the system on/off toggle POSTs
+// (eth_call tracing, intra-org grant scoping). Shared shape.
+type systemToggleRequest struct {
 	Enabled *bool  `json:"enabled" binding:"required"` // pointer so we distinguish "false" from "omitted"
 	Reason  string `json:"reason"`
 }
 
-// systemEthCallTracingResponse is the GET / POST response shape.
-type systemEthCallTracingResponse struct {
+// systemToggleResponse is the GET / POST response shape for a system toggle.
+type systemToggleResponse struct {
 	Enabled    bool   `json:"enabled"`
 	EnvDefault bool   `json:"env_default"`
 	Source     string `json:"source"` // "env" | "runtime_override"
@@ -81,8 +82,8 @@ type systemEthCallTracingResponse struct {
 	Reason     string `json:"reason,omitempty"`
 }
 
-func snapshotToResponse(s ethCallTracingState) systemEthCallTracingResponse {
-	resp := systemEthCallTracingResponse{
+func snapshotToResponse(s runtimeToggleState) systemToggleResponse {
+	resp := systemToggleResponse{
 		Enabled:    s.Enabled,
 		EnvDefault: s.EnvDefault,
 		Source:     s.Source,
@@ -127,7 +128,7 @@ func (s *Server) handlePostEthCallTracing(c *gin.Context) {
 		return
 	}
 
-	var req systemEthCallTracingToggleRequest
+	var req systemToggleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		respondBadRequestAndLog(c, "invalid request body",
 			"admin_system: invalid eth-call-tracing toggle body", "err", err)
@@ -192,6 +193,107 @@ func (s *Server) handlePostEthCallTracing(c *gin.Context) {
 		})
 	}
 	slog.Warn("system setting: eth_call tracing toggled",
+		slog.Bool("enabled", next.Enabled),
+		slog.Bool("was_enabled", prev.Enabled),
+		slog.String("actor", actor),
+		slog.String("client_ip", c.ClientIP()),
+		slog.String("reason", reason))
+
+	c.JSON(http.StatusOK, snapshotToResponse(*next))
+}
+
+// handleGetIntraOrgGrantTracing returns the current state of the RD-1053
+// intra-org contract-grant scoping knob. Same read-access posture as the
+// eth_call tracing GET (any admin the middleware admits).
+func (s *Server) handleGetIntraOrgGrantTracing(c *gin.Context) {
+	if s.jsonrpcProcessor == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "processor not initialised"})
+		return
+	}
+	snap := s.jsonrpcProcessor.IntraOrgGrantTracingSnapshot()
+	c.JSON(http.StatusOK, snapshotToResponse(snap))
+}
+
+// handlePostIntraOrgGrantTracing toggles the in-memory RD-1053 intra-org
+// grant scoping knob. Super-admin (admin_token) only, audit-logged, not
+// persisted — the next restart re-installs the env value. Same risk model as
+// handlePostEthCallTracing: this flips a security control, so the bar is the
+// strongest in the system and every change leaves an audit trail. Note the
+// directions are NOT symmetric in blast radius — turning this knob OFF
+// *widens* read/send access within an org (back to org-ownership-only
+// frames), so the audit row matters most on a disable.
+func (s *Server) handlePostIntraOrgGrantTracing(c *gin.Context) {
+	if s.jsonrpcProcessor == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "processor not initialised"})
+		return
+	}
+	if c.GetString("auth_method") != "admin_token" {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "system settings require super-admin authentication",
+		})
+		return
+	}
+
+	var req systemToggleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondBadRequestAndLog(c, "invalid request body",
+			"admin_system: invalid intra-org-grant-tracing toggle body", "err", err)
+		return
+	}
+	if req.Enabled == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "enabled field is required"})
+		return
+	}
+	reason := strings.TrimSpace(req.Reason)
+	if reason == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "reason is required — this toggle is audited and reviewers need to know why",
+		})
+		return
+	}
+	if len(reason) > 500 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "reason too long (max 500 chars)"})
+		return
+	}
+
+	actor := "system:admin_token"
+	prev := s.jsonrpcProcessor.IntraOrgGrantTracingSnapshot()
+	next := s.jsonrpcProcessor.SetIntraOrgGrantTracingRuntimeOverride(*req.Enabled, actor, reason)
+
+	if store := s.rbacAccessCtrl.Store(); store != nil {
+		if auditErr := store.CreateAuditLog(c.Request.Context(), &rbac.AuditLogEntry{
+			ActorExternalID: actor,
+			Action:          rbac.AuditActionUpdate,
+			ResourceType:    "system_setting",
+			ResourceName:    "intra_org_grant_tracing",
+			OldValue: map[string]any{
+				"enabled": prev.Enabled,
+				"source":  prev.Source,
+			},
+			NewValue: map[string]any{
+				"enabled": next.Enabled,
+				"source":  next.Source,
+				"reason":  reason,
+			},
+			IPAddress: c.ClientIP(),
+		}); auditErr != nil {
+			slog.Error("system setting toggle: audit log write failed",
+				slog.String("setting", "intra_org_grant_tracing"),
+				slog.Any("err", auditErr))
+		}
+	}
+	if s.siemForwarder != nil {
+		s.siemForwarder.Send(audit.SIEMEvent{
+			EventType:     "system_setting_change",
+			Action:        "toggle_intra_org_grant_tracing",
+			ActorID:       actor,
+			Outcome:       boolStr(next.Enabled, "enabled", "disabled"),
+			SourceIP:      c.ClientIP(),
+			CorrelationID: c.GetHeader("X-Correlation-ID"),
+			Details:       "intra-org grant scoping toggled via super-admin endpoint; reason=" + reason,
+		})
+	}
+	slog.Warn("system setting: intra-org grant tracing toggled",
 		slog.Bool("enabled", next.Enabled),
 		slog.Bool("was_enabled", prev.Enabled),
 		slog.String("actor", actor),

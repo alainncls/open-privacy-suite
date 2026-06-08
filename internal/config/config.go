@@ -279,6 +279,17 @@ type Config struct {
 	// concurrency-limiter quota for read-heavy callers (RD-915 KD on
 	// per-call timeout). Default 5s.
 	EthCallTraceTimeout time.Duration
+	// RuntimeTracingIntraOrgGrantsEnabled controls whether runtime tracing
+	// additionally enforces intra-org contract-grant scoping on internal
+	// CALL/STATICCALL/DELEGATECALL frames (RD-1053). When true, a frame into
+	// a contract owned by one of the user's orgs is allowed only if the
+	// caller has a contract-level grant for it (mirrors the entry-point
+	// CheckAccess); when false (default), internal frames are gated by org
+	// ownership alone. Cross-org isolation is enforced regardless of this
+	// flag. Has no effect when runtime tracing is globally off. Governs the
+	// read side (eth_call / debug_traceCall) and the send side
+	// (eth_sendTransaction / eth_sendRawTransaction / deploy).
+	RuntimeTracingIntraOrgGrantsEnabled bool
 
 	// Travel rule compliance configuration
 	EnableTravelRule   bool          // If true, enable travel rule enforcement (default: false)
@@ -439,6 +450,11 @@ func Load() *Config {
 	}
 	traceTiered := getEnv("TRACE_TIERED_VALIDATION", "true") != "false"
 	ethCallTracingEnabled := getEnv("RUNTIME_TRACING_ETH_CALL_ENABLED", "true") != "false"
+	// RD-1053: intra-org contract-grant scoping on internal trace frames.
+	// Defaults OFF — org ownership stays the structural isolation boundary;
+	// operators opt in when they want grants to gate composition within an
+	// org too. Cross-org isolation is unaffected either way.
+	intraOrgGrantsTracingEnabled := getEnv("RUNTIME_TRACING_INTRA_ORG_GRANTS_ENABLED", "false") == "true"
 	ethCallTraceTimeout := 5 * time.Second
 	if t := getEnv("ETH_CALL_TRACE_TIMEOUT", ""); t != "" {
 		if d, err := time.ParseDuration(t); err == nil {
@@ -564,75 +580,76 @@ func Load() *Config {
 	}
 
 	return &Config{
-		NodeURL:                      getEnv("NODE_URL", "http://localhost:8545"),
-		DatabaseURL:                  getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/privacy_proxy?sslmode=disable"),
-		PrivadoRPCURL:                getEnv("PRIVADO_RPC_URL", "https://rpc-mainnet.privado.id"),
-		IPFSGateway:                  getEnv("IPFS_GATEWAY", "https://ipfs-proxy-cache.privado.id"), // IPFS gateway for schema resolution
-		JWTSecret:                    getEnv("JWT_SECRET", ""),                                      // If empty, will be auto-generated (dev only)
-		JWTRefreshSecret:             getEnv("JWT_REFRESH_SECRET", ""),                              // If empty, will be auto-generated (dev only)
-		VerifierID:                   getEnv("VERIFIER_ID", ""),                                     // Required in production
-		BaseURL:                      getEnv("BASE_URL", "http://localhost:8080"),                   // Base URL for callback
-		Port:                         getEnv("PORT", "8080"),                                        // Server port
-		Environment:                  env,
-		BillionsIssuerDID:            getEnv("BILLIONS_ISSUER_DID", ""), // Billions issuer DID for PoH
-		RequireProofOfHumanity:       requirePoHBool,
-		BillionsRPCURL:               billionsRPCURL,
-		BillionsStateContract:        billionsStateContract,
-		PrivadoStateContract:         privadoStateContract,
-		PrivadoCircuitID:             privadoCircuitID,
-		BillionsCredentialSchemaURL:  billionsSchemaURL,
-		BillionsCredentialType:       billionsCredType,
-		BillionsCredentialQueryFile:  billionsQueryFile,
-		BillionsCredentialQuery:      billionsQuery,
-		AdminAPIToken:                getEnv("ADMIN_API_TOKEN", ""),
-		ENSResolverURL:               getEnv("ENS_RESOLVER_URL", "https://eth.llamarpc.com"), // Public mainnet RPC
-		CORSAllowedOrigins:           corsOrigins,
-		MockSignatures:               mockSigs,
-		AllowMockLogin:               allowMockLogin,
-		OAuthFirstPartyClients:       parseFirstPartyClients(getEnv("OAUTH_FIRST_PARTY_CLIENTS", "")),
-		DemoAutoAuthDelay:            demoDelay,
-		ExtraRPCNamespacesFile:       extraRPCNamespacesFile,
-		ExtraRPCNamespaces:           extraRPCNamespaces,
-		TraceCacheTTL:                traceCacheTTL,
-		TraceTimeout:                 traceTimeout,
-		TraceTieredValidation:        traceTiered,
-		RuntimeTracingEthCallEnabled: ethCallTracingEnabled,
-		EthCallTraceTimeout:          ethCallTraceTimeout,
-		EnableTravelRule:             enableTravelRule,
-		TravelRecordExpiry:           travelRecordExpiry,
-		PriceFetchInterval:           priceFetchInterval,
-		PriceStalenessThreshold:      priceStalenessThreshold,
-		DisableCoinGecko:             disableCoinGecko,
-		AuditLogParams:               auditLogParams,
-		OrgAdminViewUserTxs:          orgAdminViewUserTxs,
-		RetentionAccessLogs:          retentionAccessLogs,
-		RetentionComplianceLogs:      retentionComplianceLogs,
-		RetentionRBACAuditLogs:       retentionRBACAuditLogs,
-		RetentionTravelRecords:       retentionTravelRecords,
-		RetentionCleanupInterval:     retentionCleanupInterval,
-		MaxAccessLogRows:             maxAccessLogRows,
-		SIEMWebhookURL:               siemWebhookURL,
-		SIEMAuthHeader:               siemAuthHeader,
-		SIEMBatchSize:                siemBatchSize,
-		SIEMFlushInterval:            siemFlushInterval,
-		SIEMFallbackLogPath:          getEnv("SIEM_FALLBACK_LOG_PATH", ""),
-		AuditIntegrityVerifyInterval: auditIntegrityInterval,
-		AuditTamperWebhookURL:        auditTamperWebhookURL,
-		ExplorerDatabaseURL:          getEnv("EXPLORER_DATABASE_URL", ""),
-		IndexerURL:                   getEnv("INDEXER_URL", ""),
-		TunnelURLFile:                getEnv("TUNNEL_URL_FILE", ""),
-		HideDevAdminOrg:              getEnv("HIDE_DEV_ADMIN_ORG", "false") == "true",
-		TrustedProxies:               getSliceEnv("TRUSTED_PROXIES", ","),
-		TrustedInternalCIDRs:         getSliceEnv("TRUSTED_INTERNAL_CIDRS", ","),
-		FrontendURL:                  getEnv("FRONTEND_URL", ""),
-		RPCAPIKey:                    getEnv("RPC_API_KEY", ""),
-		RPCAPIKeyHeader:              rpcAPIKeyHeader,
-		RPCAPIKeyEncryptionKey:       rpcAPIKeyEncKey,
-		MaxConcurrentRequests:        maxConcurrentRequests,
-		AzureADClientID:              getEnv("AZURE_AD_CLIENT_ID", ""),
-		AzureADClientSecret:          getEnv("AZURE_AD_CLIENT_SECRET", ""),
-		AzureADTenantID:              getEnv("AZURE_AD_TENANT_ID", "common"),
-		RedisURL:                     getEnv("REDIS_URL", ""),
+		NodeURL:                             getEnv("NODE_URL", "http://localhost:8545"),
+		DatabaseURL:                         getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/privacy_proxy?sslmode=disable"),
+		PrivadoRPCURL:                       getEnv("PRIVADO_RPC_URL", "https://rpc-mainnet.privado.id"),
+		IPFSGateway:                         getEnv("IPFS_GATEWAY", "https://ipfs-proxy-cache.privado.id"), // IPFS gateway for schema resolution
+		JWTSecret:                           getEnv("JWT_SECRET", ""),                                      // If empty, will be auto-generated (dev only)
+		JWTRefreshSecret:                    getEnv("JWT_REFRESH_SECRET", ""),                              // If empty, will be auto-generated (dev only)
+		VerifierID:                          getEnv("VERIFIER_ID", ""),                                     // Required in production
+		BaseURL:                             getEnv("BASE_URL", "http://localhost:8080"),                   // Base URL for callback
+		Port:                                getEnv("PORT", "8080"),                                        // Server port
+		Environment:                         env,
+		BillionsIssuerDID:                   getEnv("BILLIONS_ISSUER_DID", ""), // Billions issuer DID for PoH
+		RequireProofOfHumanity:              requirePoHBool,
+		BillionsRPCURL:                      billionsRPCURL,
+		BillionsStateContract:               billionsStateContract,
+		PrivadoStateContract:                privadoStateContract,
+		PrivadoCircuitID:                    privadoCircuitID,
+		BillionsCredentialSchemaURL:         billionsSchemaURL,
+		BillionsCredentialType:              billionsCredType,
+		BillionsCredentialQueryFile:         billionsQueryFile,
+		BillionsCredentialQuery:             billionsQuery,
+		AdminAPIToken:                       getEnv("ADMIN_API_TOKEN", ""),
+		ENSResolverURL:                      getEnv("ENS_RESOLVER_URL", "https://eth.llamarpc.com"), // Public mainnet RPC
+		CORSAllowedOrigins:                  corsOrigins,
+		MockSignatures:                      mockSigs,
+		AllowMockLogin:                      allowMockLogin,
+		OAuthFirstPartyClients:              parseFirstPartyClients(getEnv("OAUTH_FIRST_PARTY_CLIENTS", "")),
+		DemoAutoAuthDelay:                   demoDelay,
+		ExtraRPCNamespacesFile:              extraRPCNamespacesFile,
+		ExtraRPCNamespaces:                  extraRPCNamespaces,
+		TraceCacheTTL:                       traceCacheTTL,
+		TraceTimeout:                        traceTimeout,
+		TraceTieredValidation:               traceTiered,
+		RuntimeTracingEthCallEnabled:        ethCallTracingEnabled,
+		EthCallTraceTimeout:                 ethCallTraceTimeout,
+		RuntimeTracingIntraOrgGrantsEnabled: intraOrgGrantsTracingEnabled,
+		EnableTravelRule:                    enableTravelRule,
+		TravelRecordExpiry:                  travelRecordExpiry,
+		PriceFetchInterval:                  priceFetchInterval,
+		PriceStalenessThreshold:             priceStalenessThreshold,
+		DisableCoinGecko:                    disableCoinGecko,
+		AuditLogParams:                      auditLogParams,
+		OrgAdminViewUserTxs:                 orgAdminViewUserTxs,
+		RetentionAccessLogs:                 retentionAccessLogs,
+		RetentionComplianceLogs:             retentionComplianceLogs,
+		RetentionRBACAuditLogs:              retentionRBACAuditLogs,
+		RetentionTravelRecords:              retentionTravelRecords,
+		RetentionCleanupInterval:            retentionCleanupInterval,
+		MaxAccessLogRows:                    maxAccessLogRows,
+		SIEMWebhookURL:                      siemWebhookURL,
+		SIEMAuthHeader:                      siemAuthHeader,
+		SIEMBatchSize:                       siemBatchSize,
+		SIEMFlushInterval:                   siemFlushInterval,
+		SIEMFallbackLogPath:                 getEnv("SIEM_FALLBACK_LOG_PATH", ""),
+		AuditIntegrityVerifyInterval:        auditIntegrityInterval,
+		AuditTamperWebhookURL:               auditTamperWebhookURL,
+		ExplorerDatabaseURL:                 getEnv("EXPLORER_DATABASE_URL", ""),
+		IndexerURL:                          getEnv("INDEXER_URL", ""),
+		TunnelURLFile:                       getEnv("TUNNEL_URL_FILE", ""),
+		HideDevAdminOrg:                     getEnv("HIDE_DEV_ADMIN_ORG", "false") == "true",
+		TrustedProxies:                      getSliceEnv("TRUSTED_PROXIES", ","),
+		TrustedInternalCIDRs:                getSliceEnv("TRUSTED_INTERNAL_CIDRS", ","),
+		FrontendURL:                         getEnv("FRONTEND_URL", ""),
+		RPCAPIKey:                           getEnv("RPC_API_KEY", ""),
+		RPCAPIKeyHeader:                     rpcAPIKeyHeader,
+		RPCAPIKeyEncryptionKey:              rpcAPIKeyEncKey,
+		MaxConcurrentRequests:               maxConcurrentRequests,
+		AzureADClientID:                     getEnv("AZURE_AD_CLIENT_ID", ""),
+		AzureADClientSecret:                 getEnv("AZURE_AD_CLIENT_SECRET", ""),
+		AzureADTenantID:                     getEnv("AZURE_AD_TENANT_ID", "common"),
+		RedisURL:                            getEnv("REDIS_URL", ""),
 	}
 }
 
