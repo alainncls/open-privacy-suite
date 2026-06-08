@@ -385,7 +385,7 @@ Authenticated users can also call this same set of org-free metadata methods on 
 
 The **pre-registration surveillance problem** makes this worse: if Alice's address is pollable today because she has not joined any organization, her entire balance history is already mapped by the time she joins one. Retroactively revoking access cannot undo the data already collected.
 
-Unauthenticated requests that target methods outside the claim-free list receive HTTP 401 (not 403), signaling that the client should authenticate rather than that the user lacks permission. Rate limiting for anonymous or high-volume traffic should be enforced upstream (reverse proxy / WAF); the proxy itself enforces method-level limits on expensive trace methods (`debug_trace*`).
+Unauthenticated requests that target methods outside the claim-free list receive HTTP 401 (not 403), signaling that the client should authenticate rather than that the user lacks permission. Per-request rate limiting is enforced at the upstream RPC proxy, configured per group via the group's RPC API key tier. The proxy additionally protects the node and itself: a per-API-key circuit breaker sheds load when the upstream returns rate-limit (HTTP 429) responses, and a per-user concurrency cap (`MAX_CONCURRENT_REQUESTS`) bounds simultaneous in-flight requests. Authentication endpoints have their own rate limiter.
 
 ---
 
