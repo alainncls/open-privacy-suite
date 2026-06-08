@@ -64,7 +64,7 @@ This calls `scripts/privacy-dev-up.sh`, which:
 
 1. Resolves the sibling-repo paths (`BLOCK_EXPLORER_PATH`, `CHAIN_INDEXER_PATH`) and verifies they exist.
 2. Generates `.env.privacy.dev` on first run (random secrets — POSTGRES passwords, JWT secrets, `ADMIN_API_TOKEN`). Delete the file to rotate (run `down -v` first to drop encrypted volumes).
-3. Auto-creates `rpc-namespaces.json` from the example so the `EXTRA_RPC_NAMESPACES_FILE` mount doesn't fail (RD-919).
+3. Auto-creates `rpc-namespaces.json` from the example so the `EXTRA_RPC_NAMESPACES_FILE` mount doesn't fail.
 4. Brings the stack up via `docker-compose.privacy.dev.yml`, then waits for the `proxy-backend` healthcheck.
 
 ### Required layout (sibling clones)

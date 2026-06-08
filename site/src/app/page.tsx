@@ -84,7 +84,7 @@ export default function HomePage() {
               <CardDescription>
                 Multi-tenant, group-centric permissions with method-level,
                 contract-level, and function selector restrictions. Admin,
-                deploy, upgrade, read, and write claims.
+                deploy and upgrade claims.
               </CardDescription>
             </CardHeader>
           </Card>

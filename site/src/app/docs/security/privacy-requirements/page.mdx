@@ -169,7 +169,7 @@ The matrix above describes how individual *fields* render once a row is on
 its way to the client. This section pins the orthogonal axis: which rows
 **survive at all** vs which rows are dropped before they ever reach
 field-level redaction. Confusing the two has been the root cause of every
-cross-surface coherence bug to date (RD-1009 and follow-ups), so they are
+cross-surface coherence bug to date, so they are
 kept as separate tables.
 
 Outcomes:
@@ -250,27 +250,23 @@ going forward:
   and the identical `OrgAdminViewUserTxs` flag.
 
 A handler that constructs `explorer.RedactOpts{}` by hand will silently
-skip the transfer-participant union (RD-1009), the `visibleTo` shares,
+skip the transfer-participant union, the `visibleTo` shares,
 and the admin-flag wiring — every cross-surface coherence invariant
 breaks. PR review must reject hand-rolled opts.
 
 ### Coherence invariants
 
-The following invariants are pinned by integration tests
-(`internal/server/build_visibility_filter_rd1009_test.go`,
-`internal/server/explorer_coherence_e2e_test.go`,
-`internal/explorer/redactor_cross_redactor_rd1009_test.go`,
-`internal/explorer/redactor_internal_txs_rd1009_test.go`). Failing
+The following invariants are pinned by integration tests. Failing
 any one of them is a privacy or UX regression:
 
-1. **`/transactions` ⊇ `/transfers`** (RD-1009 commit 1).
+1. **`/transactions` ⊇ `/transfers`**.
    If a token-transfer row with `tx_hash=X` surfaces to the viewer
    in `/transactions/:hash/transfers` or any list-level transfer
    feed, then `/transactions` (list) also contains a row for `X`.
-   Pre-RD-1009 the two drop predicates evaluated `bothHidden` on
+   Previously the two drop predicates evaluated `bothHidden` on
    different address sets — `/transactions` on tx `from`/`to`,
    `/transfers` on transfer `from`/`to` — and disagreed.
-2. **List ↔ by-hash agree on row survival** (RD-1009 commit 2).
+2. **List ↔ by-hash agree on row survival**.
    If `/transactions` (list) contains a row for `X`, then
    `GET /transactions/:hash=X` returns 200 (not 404). And vice
    versa: if the list drops `X`, by-hash returns 404. The single
@@ -289,8 +285,8 @@ any one of them is a privacy or UX regression:
    field-rendering matrix governs every field substitution. The
    row-survival axis decides *whether* the row reaches the client;
    the field-rendering axis decides *what shape* it takes when it
-   does. Mixing the two axes in one drop predicate is the bug
-   class RD-1009 named.
+   does. Mixing the two axes in one drop predicate is a known
+   bug class.
 5. **Disclosure-grant rows survive regardless of counterparty privacy.**
    When the viewer holds an active disclosure grant on either tx party
    (any level: `full`, `pseudonymous`, `redacted`), the row survives
@@ -304,8 +300,7 @@ any one of them is a privacy or UX regression:
    as `[PRIVATE]` with `value` preserved (proof-of-activity audit
    lens). Participants and `visibleTo` recipients bypass the grant
    lens — they already know the counterparty via their own wallet.
-   Pinned by `internal/explorer/redactor_disclosure_grant_matrix_test.go`
-   and `internal/server/explorer_grant_byhash_test.go`.
+   Pinned by an integration test.
 
 ---
 

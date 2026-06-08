@@ -195,7 +195,7 @@ If a collision is judged to be a key-compromise event rather than intentional sh
   { name: "BILLIONS_CREDENTIAL_TYPE", default: "ProofOfHumanity", description: "Credential type name declared by the schema" },
   { name: "BILLIONS_CREDENTIAL_QUERY_FILE", default: "(none)", description: "Path to a JSON file containing the credentialSubject predicate (e.g. {\"credentialSubject\":{\"isHuman\":{\"$eq\":1}}}). Required when PoH enabled." },
   { name: "PRIVADO_RPC_URL", default: "https://rpc-mainnet.privado.id", description: "Privado network RPC endpoint (backs the privado:main state resolver)" },
-  { name: "BILLIONS_RPC_URL", default: "https://billions-rpc.eu-north-2.gateway.fm", description: "RPC endpoint for the Billions identity chain (chainID 45056). Backs the billions:main state resolver so DIDs created in the Billions app can authenticate." },
+  { name: "BILLIONS_RPC_URL", default: "https://billions-rpc.example.com", description: "RPC endpoint for the Billions identity chain (chainID 45056). Backs the billions:main state resolver so DIDs created in the Billions app can authenticate." },
   { name: "BILLIONS_STATE_CONTRACT", default: "0x3C9acB2205Aa72A05F6D77d708b5Cf85FCa3a896", description: "On-chain identity state contract for the Billions chain. Defaults to the shared iden3 cross-chain address; override only if Billions moves it." },
   { name: "IPFS_GATEWAY", default: "https://ipfs-proxy-cache.privado.id", description: "IPFS gateway for credential schemas" },
   { name: "JWT_SECRET", default: "(auto-generated in dev)", description: "Access token signing secret" },
@@ -350,7 +350,7 @@ To grant admin access to a user:
 
 The frontend checks admin status via `GET /api/v1/me/admin-status` (returns `{ "is_admin": true/false }`). Non-admin users see an "Access Denied" page; unauthenticated users are redirected to login.
 
-See [docs/admin-auth-bootstrap.md](https://github.com/gateway-fm/privacy-proxy/blob/main/docs/admin-auth-bootstrap.md) for a step-by-step bootstrap guide.
+Bootstrap the first admin with the `X-Admin-Token` (M2M) endpoint above, then grant the `admin` claim to subsequent admins through the RBAC steps just described.
 
 ---
 
