@@ -119,7 +119,7 @@ This is correct: a method the proxy has no alias mapping for has no defined `to`
 
 </Callout>
 
-**Intra-org contract-grant scoping (RD-1053):**
+**Intra-org contract-grant scoping:**
 
 By default, runtime tracing enforces the **organization** as the isolation boundary: an internal call frame into any contract owned by one of the caller's orgs is allowed, even if the caller's groups have no grant for that specific contract. (A direct call to such a contract is still denied at the entry point — this only concerns contracts reached indirectly through another contract's internal calls.)
 
