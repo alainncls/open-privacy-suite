@@ -34,6 +34,11 @@ export default function GroupForm({
   const [error, setError] = useState<string | null>(null);
 
   const isEditing = !!group;
+  // A full org-admin group already grants every admin permission, so the
+  // read-only admin role is mutually exclusive with it (RD-968 Gap 2; enforced
+  // server-side with a 400 + DB CHECK constraint). When editing such a group we
+  // hide the toggle and never send is_org_readonly_admin=true.
+  const isOrgAdminGroup = !!group?.is_org_admin;
 
   // Names are unique within an org (case-insensitive). Match the server-side
   // constraint exactly; this is a UX shortcut that surfaces the conflict
@@ -69,7 +74,7 @@ export default function GroupForm({
         await rbacApi.groups.update(orgId, group.id, {
           name,
           description,
-          is_org_readonly_admin: isOrgReadonlyAdmin,
+          is_org_readonly_admin: isOrgAdminGroup ? false : isOrgReadonlyAdmin,
         });
       } else {
         await rbacApi.groups.create(orgId, {
@@ -161,32 +166,48 @@ export default function GroupForm({
         />
       </div>
 
-      {/* Read-only Admin Toggle */}
-      <div className="space-y-2">
-        <label
-          className="flex items-start gap-3 p-3 rounded-lg bg-primary-50 border border-primary-200 cursor-pointer hover:bg-primary-100 transition-colors"
-          onClick={() => {
-            setIsOrgReadonlyAdmin(!isOrgReadonlyAdmin);
-          }}
-        >
-          <div className={`w-5 h-5 rounded border flex items-center justify-center flex-shrink-0 mt-0.5 transition-colors ${
-            isOrgReadonlyAdmin
-              ? 'bg-primary border-primary'
-              : 'border-neutral-300 bg-white'
-          }`}>
-            {isOrgReadonlyAdmin && <Check className="w-3 h-3 text-white" />}
-          </div>
+      {/* Admin role. A full org-admin group cannot also be a read-only org
+          admin (RD-968 Gap 2) — when editing one, show a banner instead of the
+          toggle. Otherwise show the read-only admin toggle. */}
+      {isOrgAdminGroup ? (
+        <div className="flex items-start gap-3 p-3 rounded-lg bg-primary-50 border border-primary-200">
+          <Shield className="w-4 h-4 text-primary-700 flex-shrink-0 mt-0.5" />
           <div className="flex-1">
-            <div className="flex items-center gap-2">
-              <Shield className="w-4 h-4 text-primary-700" />
-              <span className="text-sm font-medium text-primary-700">Read-only Org Admin</span>
-            </div>
+            <span className="text-sm font-medium text-primary-700">Full Org Admin</span>
             <p className="text-xs text-neutral-500 mt-1">
-              Members get read-only access to the admin dashboard (auditor role). They cannot modify settings or resources.
+              Members have full admin access to this organization — all claims on every
+              contract, automatically. The read-only admin role does not apply and cannot
+              be combined with it.
             </p>
           </div>
-        </label>
-      </div>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <label
+            className="flex items-start gap-3 p-3 rounded-lg bg-primary-50 border border-primary-200 cursor-pointer hover:bg-primary-100 transition-colors"
+            onClick={() => {
+              setIsOrgReadonlyAdmin(!isOrgReadonlyAdmin);
+            }}
+          >
+            <div className={`w-5 h-5 rounded border flex items-center justify-center flex-shrink-0 mt-0.5 transition-colors ${
+              isOrgReadonlyAdmin
+                ? 'bg-primary border-primary'
+                : 'border-neutral-300 bg-white'
+            }`}>
+              {isOrgReadonlyAdmin && <Check className="w-3 h-3 text-white" />}
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <Shield className="w-4 h-4 text-primary-700" />
+                <span className="text-sm font-medium text-primary-700">Read-only Org Admin</span>
+              </div>
+              <p className="text-xs text-neutral-500 mt-1">
+                Members get read-only access to the admin dashboard (auditor role). They cannot modify settings or resources.
+              </p>
+            </div>
+          </label>
+        </div>
+      )}
 
       <div className="p-3 rounded-lg bg-neutral-50 border border-neutral-200">
         <p className="text-sm text-neutral-600">

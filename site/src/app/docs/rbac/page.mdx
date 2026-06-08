@@ -68,6 +68,16 @@ Groups with `is_org_admin` enabled. Scoped to their organization:
 - Sees all contracts in their org in the block explorer
 - Bypasses event rules for org contracts
 
+<Callout variant="info" title="Org-admin group configuration rules">
+
+The "org admin" role maps to several independent fields under the hood, so the proxy enforces three invariants that keep a group from being saved into a misleading or non-functional state:
+
+- **Full admin and read-only admin are mutually exclusive.** A group is a full org admin, a read-only admin, or neither — never both. The dashboard presents them as distinct choices and the API rejects a group that sets both (`400 Bad Request`), backed by a database `CHECK` constraint.
+- **The claims list does not apply to org-admin groups.** Org admins automatically receive all claims (`admin` / `deploy` / `upgrade`) on every contract in the org, so a per-group claims list would be misleading. The dashboard hides the claims editor for org-admin groups and the API rejects a non-empty claims list (`400`).
+- **An org-admin group must allow at least one method.** A group with all claims but no allowed methods can call nothing. The dashboard requires a method preset and the API rejects an empty method list (`400`). The method allowlist stays the source of truth for which RPC methods the group can call — org admins are **not** implicitly granted every method.
+
+</Callout>
+
 ### Tier 3: Contract Admin
 
 Groups with the `admin` claim on specific contracts (via contract grants):

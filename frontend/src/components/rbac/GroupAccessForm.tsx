@@ -26,6 +26,11 @@ const PRESET_ICONS: Record<string, React.ElementType> = {
 interface GroupAccessFormProps {
   orgId: string;
   groupId: string;
+  // When the group is a full org admin, claims are not configurable here — the
+  // resolver grants all claims on every org contract automatically (RD-968 Gap 1).
+  // The claims editor is replaced by an explanatory banner and claims are saved
+  // empty; the backend rejects a non-empty claims list on org-admin groups.
+  isOrgAdmin?: boolean;
   onClose: () => void;
   onSave: () => void;
 }
@@ -33,6 +38,7 @@ interface GroupAccessFormProps {
 export default function GroupAccessForm({
   orgId,
   groupId,
+  isOrgAdmin = false,
   onClose,
   onSave,
 }: GroupAccessFormProps) {
@@ -156,7 +162,9 @@ export default function GroupAccessForm({
     try {
       const input: SetGroupAccessInput = {
         allowed_methods: allowedMethods,
-        claims: ExpandClaims(selectedClaims),
+        // Org-admin groups receive all claims automatically; claims are not
+        // applicable and the backend rejects a non-empty list (RD-968 Gap 1).
+        claims: isOrgAdmin ? [] : ExpandClaims(selectedClaims),
         rpc_api_key: rpcApiKey || null,
       };
 
@@ -194,7 +202,22 @@ export default function GroupAccessForm({
         </div>
       )}
 
-      {/* Operational Claims */}
+      {/* Operational Claims. On a full org-admin group these don't apply — the
+          resolver grants all claims on every org contract automatically
+          (RD-968 Gap 1) — so show a banner instead of the editor. */}
+      {isOrgAdmin ? (
+        <div className="flex items-start gap-3 bg-primary-50 border border-primary-200 rounded-lg p-4">
+          <ShieldCheck className="w-5 h-5 text-primary-700 flex-shrink-0 mt-0.5" />
+          <div>
+            <h3 className="text-sm font-semibold text-primary-700">Operational Claims</h3>
+            <p className="text-xs text-neutral-600 mt-0.5">
+              This is a full org-admin group. Members automatically receive all claims
+              (admin, deploy, upgrade) on every contract in the organization, so the
+              claims list does not apply. Configure the allowed RPC methods below.
+            </p>
+          </div>
+        </div>
+      ) : (
       <div className="space-y-3 bg-neutral-50 border border-neutral-200 rounded-lg p-4">
         <div>
           <h3 className="text-sm font-semibold text-neutral-900">Operational Claims</h3>
@@ -252,6 +275,7 @@ export default function GroupAccessForm({
           })}
         </div>
       </div>
+      )}
 
       {/* Preset cards */}
       <div className="space-y-2">

@@ -31,6 +31,14 @@ make db-migrate
 
 **DOWN migrations** are optional (development only). If a migration needs undoing in production, create a new forward migration.
 
+### Data Migrations: Documentation & Audit Convention
+
+Migrations that rewrite **security-relevant rows** (RBAC flags/claims/methods, grants, admin roles, compliance config) are change-management artifacts and must be self-explanatory on their own. Follow this pattern (`060_org_admin_group_invariants.sql` is a worked example):
+
+- **Header comment block** stating: WHAT it changes, WHY (+ ticket), which rows are AFFECTED (include a detection query for rows left for manual fix), the AUTHORITATIVE-RECORD note, and the expand-only / role-separation status.
+- **Never write to `rbac_audit_log` (or other hash-chained audit tables) from a migration.** Those tables are forever-append, runtime, actor-attributed, and protected by a tamper-evident hash chain that is verified on a schedule (see `site/src/app/docs/security/audit-integrity`). A hand-built SQL `INSERT` with a wrong/absent `entry_hash` would trip the integrity verifier's tamper alarm. The authoritative, traceable record of a data migration is the **migration file (git) + PR review + tern `schema_version` (applied-at timestamp)** — no audit-table write, no magic.
+- **New tables** must include the `privacy_proxy_app` `GRANT` block in the same migration (append-only: `SELECT, INSERT`; operational: `SELECT, INSERT, UPDATE, DELETE`; plus the sequence grant for `BIGSERIAL`/`SERIAL`). See the new-table checklist in `058_audit_role_separation.sql`.
+
 ## Testing
 
 ```bash

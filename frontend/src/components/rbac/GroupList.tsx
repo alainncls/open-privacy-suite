@@ -394,6 +394,7 @@ export default function GroupList() {
             <GroupAccessForm
               orgId={orgId}
               groupId={editingAccess.id}
+              isOrgAdmin={editingAccess.is_org_admin}
               onClose={() => setEditingAccess(null)}
               onSave={handleAccessSave}
             />

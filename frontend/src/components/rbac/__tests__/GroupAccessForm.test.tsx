@@ -12,6 +12,7 @@ import { METHOD_SECTIONS, getPresetMethods, PERMISSION_PRESETS } from '@/types/r
 function renderGroupAccessForm(props: {
   orgId?: string;
   groupId?: string;
+  isOrgAdmin?: boolean;
   onClose?: () => void;
   onSave?: () => void;
 }) {
@@ -97,6 +98,58 @@ describe('GroupAccessForm', () => {
       expect(screen.queryByPlaceholderText('100000')).not.toBeInTheDocument();
       expect(screen.queryByText('Rate Limit (RPS)')).not.toBeInTheDocument();
       expect(screen.queryByText('Rate Limit (Daily)')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('Org-admin group (RD-968)', () => {
+    it('hides the claims editor and shows a banner for org-admin groups', async () => {
+      server.use(
+        http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () =>
+          HttpResponse.json(mockGroupAccess)
+        )
+      );
+
+      renderGroupAccessForm({ isOrgAdmin: true });
+
+      await waitFor(() => {
+        expect(screen.getByText('Quick Start')).toBeInTheDocument();
+      });
+
+      expect(
+        screen.getByText(/Members automatically receive all claims/)
+      ).toBeInTheDocument();
+      // The editable claim option labels are gone (claims don't apply here).
+      expect(screen.queryByText('Deploy')).not.toBeInTheDocument();
+    });
+
+    it('saves empty claims for an org-admin group even if the stored row had claims', async () => {
+      const user = userEvent.setup();
+      const onSave = vi.fn();
+      let capturedBody: Record<string, unknown> | null = null;
+
+      server.use(
+        http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () =>
+          HttpResponse.json({ ...mockGroupAccess, allowed_methods: ['eth_call'], claims: ['admin'] })
+        ),
+        http.put('/api/v1/admin/orgs/:orgId/groups/:groupId/access', async ({ request }) => {
+          capturedBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json(mockGroupAccess);
+        })
+      );
+
+      renderGroupAccessForm({ isOrgAdmin: true, onSave });
+
+      await waitFor(() => {
+        expect(screen.getByText('Save Access Settings')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Save Access Settings'));
+
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalled();
+      });
+
+      expect(capturedBody).toMatchObject({ claims: [] });
     });
   });
 
