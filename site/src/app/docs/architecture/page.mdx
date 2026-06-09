@@ -85,7 +85,7 @@ graph TD
 | PostgreSQL | `5432` | Policy storage, RBAC, audit logs |
 | Ethereum Node (Anvil/Erigon) | `8545` | JSON-RPC execution layer |
 
-## Privacy-mode topology (RD-855 / RD-876)
+## Privacy-mode topology
 
 In privacy mode the deployment adds a block-explorer fronted by a BFF (Backend-for-Frontend) and a chain-indexer feeding the BFF. The compose manifest splits the trust surface into two internal Docker networks plus a public one — `privacy-proxy` is the only legitimate bridge between them.
 
@@ -119,7 +119,7 @@ Key invariants:
 - **`public`** carries browser ingress only — `privacy-proxy` (port `8080`), `privacy-proxy` frontend (port `5173`), and `block-explorer-frontend` (port `3001`).
 - The BFF is built with the `privacy` Go build tag — the chain-indexer client is compiled out entirely, so even if a future env-var override sets `INDEXER_URL`, the BFF cannot reach `chain-indexer`. A static manifest test enforces by name that no other service may attach to both `indexer-zone` and `bff-zone` at once.
 
-The prod compose (`docker-compose.privacy.yml`) pulls the proxy and chain-indexer as published images rather than building from source (RD-922); the dev compose (`docker-compose.privacy.dev.yml`) builds the proxy locally and pulls the chain-indexer.
+The prod compose (`docker-compose.privacy.yml`) pulls the proxy and chain-indexer as published images rather than building from source; the dev compose (`docker-compose.privacy.dev.yml`) builds the proxy locally and pulls the chain-indexer.
 
 ## Key Directories
 

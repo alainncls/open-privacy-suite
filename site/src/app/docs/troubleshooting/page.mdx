@@ -170,7 +170,7 @@ If the refresh token is also expired, re-authenticate through the web UI.
 | `method not allowed` | 403 | JSON-RPC method not in user's allowed methods | Check group permissions in admin UI. Ensure the method is in the group's allowed methods list. |
 | `contract access denied` | 403 | User's org does not own the target contract | Verify the contract is registered to the user's org. Check contract grants. |
 | `cross-org access denied` | 403 | Transaction calls a contract owned by another org | Only interact with contracts owned by your organization. |
-| `call denied: cross-org access not permitted` | 403 | An `eth_call` resolved at runtime to an internal call into a foreign-org contract (e.g. a same-org wrapper STATICCALLing another org's contract). RD-915. | Inspect the trace; either the target contract reaches into another org or a proxy upgrade has re-targeted it. Update grants or stop calling that path. |
+| `call denied: cross-org access not permitted` | 403 | An `eth_call` resolved at runtime to an internal call into a foreign-org contract (e.g. a same-org wrapper STATICCALLing another org's contract). | Inspect the trace; either the target contract reaches into another org or a proxy upgrade has re-targeted it. Update grants or stop calling that path. |
 | `call denied: trace depth exceeded; not provable as same-org` | 403 | The `eth_call` trace exceeded the maximum recursion depth, so deeper call targets could not be validated. Failed closed. | Reduce nesting in the called contract or split into multiple calls. |
 | `call denied: tracing temporarily unavailable` | 403 | Upstream `debug_traceCall` failed (timeout, connection refused, malformed response). Failed closed. | Check upstream node health and `debug` namespace exposure. Re-try; if persistent, check the proxy logs for the underlying error. |
 | `call denied: invalid request shape` | 400 | The `to` address is malformed, or the user-supplied `from` does not match any of the caller's linked Ethereum addresses (potential spoof attempt). | Validate the request body. The proxy rebinds `from` only to JWT-linked EOAs. |
@@ -184,7 +184,7 @@ Remember that the `admin` claim has implied permissions:
 
 - `admin` implies `deploy` and `upgrade`
 
-The legacy `read` / `write` claims were removed in RD-853 — non-privileged method access is now gated solely by the per-group method allowlist (`GroupAccess.allowed_methods`). Don't try to add `read` or `write` as claims; the resolver no longer recognizes them.
+The legacy `read` / `write` claims were removed — non-privileged method access is now gated solely by the per-group method allowlist (`GroupAccess.allowed_methods`). Don't try to add `read` or `write` as claims; the resolver no longer recognizes them.
 
 ### Blocked methods
 
@@ -206,7 +206,7 @@ Calls to known Multicall contract addresses are blocked because they allow batch
 
 <Callout variant="info" title="Runtime tracing as defense-in-depth">
 
-When runtime tracing is enabled, all internal calls are validated regardless of the target address, on both the write side (`eth_sendTransaction`/`eth_sendRawTransaction`) and the read side (`eth_call`, RD-915). Even custom multicall contracts (not in the hardcoded list) are caught because every `CALL`, `DELEGATECALL`, and `STATICCALL` target is verified.
+When runtime tracing is enabled, all internal calls are validated regardless of the target address, on both the write side (`eth_sendTransaction`/`eth_sendRawTransaction`) and the read side (`eth_call`). Even custom multicall contracts (not in the hardcoded list) are caught because every `CALL`, `DELEGATECALL`, and `STATICCALL` target is verified.
 
 </Callout>
 

@@ -123,7 +123,7 @@ The Block Explorer never handles authentication directly — all credential veri
 | `PRIVACY_PROXY_URL` | Internal URL used by the Block Explorer backend for API calls (e.g. `http://privacy-proxy-proxy-backend-1:8080`). |
 | `PRIVACY_PROXY_PUBLIC_URL` | Browser-accessible URL used to construct the OAuth redirect (e.g. `http://localhost:8080`). Defaults to `PRIVACY_PROXY_URL`. |
 | `SSO_CLIENT_ID` | OAuth client identifier sent in the authorize request. Defaults to `explorer`. In production, use the per-environment opaque ID listed in the proxy's `OAUTH_FIRST_PARTY_CLIENTS` (e.g. `explorer-prod-${random}`). |
-| `SSO_CLIENT_SECRET` | Plaintext client secret sent at `/oauth/token` via HTTP Basic (RFC 6749 `client_secret_basic`). The proxy bcrypt-verifies it against the hash stored under this `SSO_CLIENT_ID` in `OAUTH_FIRST_PARTY_CLIENTS`. Required in production (RD-1006); leave empty in dev only if the proxy's allowlist is also empty. |
+| `SSO_CLIENT_SECRET` | Plaintext client secret sent at `/oauth/token` via HTTP Basic (RFC 6749 `client_secret_basic`). The proxy bcrypt-verifies it against the hash stored under this `SSO_CLIENT_ID` in `OAUTH_FIRST_PARTY_CLIENTS`. Required in production; leave empty in dev only if the proxy's allowlist is also empty. |
 | `SSO_REDIRECT_URI` | Callback URL for the Block Explorer after OAuth completes (e.g. `http://localhost:3001/api/auth/callback`). |
 
 ### Development Setup
@@ -217,13 +217,7 @@ When an event log's emitting contract has a registered and verified ABI, the red
 
 ### Limitation: Value Inference from Balance History
 
-Stripping the `value` field on mixed-party transactions **does not guarantee financial privacy**. A determined observer can infer the transferred amount by comparing the public address's balance at adjacent blocks:
-
-```
-transferred ≈ balance(block N−1) − balance(block N) − (gas_used × gas_price)
-```
-
-All of `balance`, `gas_used`, and `gas_price` are accessible through the explorer for public addresses. This attack requires deliberate cross-block correlation rather than direct reading, but it is feasible.
+Stripping the `value` field on mixed-party transactions **does not guarantee financial privacy**. The transferred amount may still be inferable from the public address's balance deltas across adjacent blocks. See [Privacy Requirements](/docs/security/privacy-requirements) for the full analysis.
 
 <Callout type="warning">
   **This is a partial mitigation, not a privacy guarantee.** The `value` field is
@@ -248,14 +242,3 @@ When a transaction is submitted with the `visibleTo` parameter (renamed from `lo
 4. Event logs from these transactions are also visible to Bob via `eth_getLogs` (the `visibleTo` fallback extends param rule checks).
 
 This is purely additive -- it never restricts existing event rule access. If Bob already has access to the logs via RBAC event rules, `visibleTo` simply provides an additional discovery path.
-
----
-
-## Feature Separation
-
-For development and maintenance, the Explorer API feature is maintained on a dedicated branch:
-
-- **Primary Branch**: `fix/production-readiness-gaps` (Core security and proxy logic)
-- **Feature Branch**: `feat/explorer-api` (Explorer-specific API and DB integrations)
-
-This ensures that the core proxy remains lightweight for deployments that do not require block explorer integration.

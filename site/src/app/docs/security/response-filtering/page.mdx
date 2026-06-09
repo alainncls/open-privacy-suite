@@ -141,7 +141,7 @@ A user with linked address `0xAlice` would see Transfer logs where `0xAlice` is 
 </Callout>
 
 <Callout variant="warning" title="Multi-party events with non-address identifiers">
-  Events that use a business identifier instead of an address for their indexed parameters (e.g., `event PaymentInitiated(string indexed paymentIdentifier)`) cannot be matched to any user's linked ETH address. A separate stakeholder whitelist mechanism would be needed to handle these cases. This is not yet implemented.
+  Events that use a business identifier instead of an address for their indexed parameters (e.g., `event PaymentInitiated(string indexed paymentIdentifier)`) cannot be matched to any user's linked ETH address. These events are filtered out for all users; a separate stakeholder whitelist mechanism would be needed to surface them selectively.
 </Callout>
 
 ---
@@ -162,7 +162,7 @@ Whether `fullTxObjects` is `true` or `false`, the `transactions` array is strict
 ### Block Transaction Counts (eth_getBlockTransactionCountByHash/Number)
 These methods return the hex-encoded integer count of transactions in a block. The proxy intercepts these calls, fetches the full block, counts only the transactions the user is a participant in, and returns that personalized count.
 
-When `fullTxObjects=true`, the `transactions` array contains full transaction objects (the same shape as `eth_getTransactionByHash` responses). The filter iterates over each transaction and removes entries where neither `from` nor `to` matches a linked address. Block-level fields (`number`, `hash`, `timestamp`, `gasLimit`, etc.) are preserved, but **`logsBloom`, `gasUsed`, and `blobGasUsed` are forcefully zeroed** on every block-shaped response, for every viewer — these aggregate fields would otherwise leak the existence of redacted logs and the total gas weight of other-org activity across the block (RD-873 closed `logsBloom`; RD-929 closed `gasUsed` + `blobGasUsed`).
+When `fullTxObjects=true`, the `transactions` array contains full transaction objects (the same shape as `eth_getTransactionByHash` responses). The filter iterates over each transaction and removes entries where neither `from` nor `to` matches a linked address. Block-level fields (`number`, `hash`, `timestamp`, `gasLimit`, etc.) are preserved, but **`logsBloom`, `gasUsed`, and `blobGasUsed` are forcefully zeroed** on every block-shaped response, for every viewer — these aggregate fields would otherwise leak the existence of redacted logs and the total gas weight of other-org activity across the block.
 
 ---
 
@@ -303,12 +303,12 @@ Cross-org isolation: a viewer who has access only in another org cannot be unloc
 
 ---
 
-<Callout variant="warning" title="Remaining gaps -- not yet implemented">
+<Callout variant="warning" title="Not covered by response filtering">
   1. **Multi-party event stakeholder whitelists** -- Events that use a business identifier (e.g., `event PaymentInitiated(string indexed paymentIdentifier)`) require a per-event-ID whitelist of stakeholders (debtor bank, settlement bank, creditor bank). Without it, events with non-address indexed parameters are filtered out for all users. Requires a new data model, admin API, and on-chain lookup to resolve stakeholders dynamically.
 
   2. **`eth_call` response field-level redaction** -- `eth_call` responses are raw ABI-encoded bytes. For full privacy (e.g., hiding the `amount` field in `getPaymentInfo` unless the caller is a payment party), the proxy would need to decode the ABI response and selectively redact fields. Requires registered contract ABIs and per-function redaction rules.
 
-  3. **Value inference for mixed public/private transactions** -- When a transaction involves one private address and one public address, the `value` field is stripped and the private side is replaced with `[PRIVATE]` in the block explorer. However, the transferred amount can still be inferred by comparing the public address's balance at adjacent blocks: `transferred ≈ balance(N−1) − balance(N) − (gas_used × gas_price)`. All inputs to this calculation are visible. Stripping the value removes the direct leakage path but is not a complete financial privacy guarantee.
+  3. **Value inference for mixed public/private transactions** -- When a transaction involves one private address and one public address, the `value` field is stripped and the private side is replaced with `[PRIVATE]` in the block explorer. However, the transferred amount may still be inferable from the public address's balance deltas across adjacent blocks. Stripping the value removes the direct leakage path but is not a complete financial privacy guarantee. See [Privacy Requirements](/docs/security/privacy-requirements) for details.
 
   4. **Log `data` field for contracts without a registered ABI** -- The explorer redaction engine scans the `data` field of event logs for non-indexed `address`-typed parameters and zeros private addresses when the emitting contract has a registered and verified ABI. For contracts without a registered ABI, the `data` field is returned unmodified and may contain private addresses embedded in ABI-encoded parameters.
 </Callout>

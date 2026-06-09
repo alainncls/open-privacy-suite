@@ -40,7 +40,7 @@ The org is never guessed. If no org is selected, the dashboard does not start a 
 | Super-admin (X-Admin-Token) | **No** | Super-admin has no data-layer reach today and View-as would be the path that gives it to them. Explicitly rejected. |
 | Tier-2 org admin (`is_org_admin = true`) | **Yes**, same-org targets only | This is the intended audience. |
 | Tier-3 admin (`admin` claim only, no `is_org_admin`) | **No** | Per-contract admin scope; cannot impersonate. |
-| Read-only admin (RD-866) | **No** | ROA's whole purpose is read-only audit of admin actions, not user-data browse. |
+| Read-only admin | **No** | ROA's whole purpose is read-only audit of admin actions, not user-data browse. |
 | Regular user | **No** | The button is not rendered; the BFF rejects the start request; the privacy-proxy rejects the URL. |
 
 The dashboard shows the **View as user** button only on user-detail pages that the admin can already access. Each click mints a short-lived opaque session token; the URL the admin's browser receives carries the token, not the target user's DID.

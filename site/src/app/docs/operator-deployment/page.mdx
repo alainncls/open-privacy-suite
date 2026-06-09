@@ -10,7 +10,7 @@ export const metadata = {
 
 This page is for **operators rolling out the Open Privacy Suite** itself. If you're a user trying to deploy your own contracts through the proxy, see [Contract Deployment](/docs/deployment) instead.
 
-The canonical reference for the privacy-mode compose layout is `deployments/privacy/README.md` in the repo — that's the file the infra team reads on GitHub when they don't have the docs site running locally. This page is the docs-site mirror: short, link-heavy, no duplication of the compose internals.
+This page documents the privacy-mode compose layout: the two manifests, their trust-zone topology, the required secrets, and image pinning.
 
 ---
 
@@ -68,7 +68,7 @@ Three Docker networks. `privacy-proxy` is the only legitimate bridge between the
 | `bff-zone` (internal) | `block-explorer-api` (BFF, privacy build), `block-explorer-postgres`, `proxy-backend`, `block-explorer-frontend` (so nginx can resolve the BFF upstream) |
 | `public` | `proxy-frontend`, `proxy-backend` (port `8080`), `block-explorer-frontend` (port `3001`) |
 
-Full architecture diagram and rationale: [Architecture → Privacy-mode topology](/docs/architecture#privacy-mode-topology-rd-855--rd-876).
+Full architecture diagram and rationale: [Architecture → Privacy-mode topology](/docs/architecture#privacy-mode-topology).
 
 ---
 
@@ -103,7 +103,7 @@ The dev script (`scripts/privacy-dev-up.sh`) auto-generates these into `.env.pri
 
 ---
 
-## Silent SSO and first-party client authentication (RD-993 + RD-1006)
+## Silent SSO and first-party client authentication
 
 The block-explorer (and any future first-party UI) skips the interactive Privado prompt when a user already has a privacy-proxy session. This is implemented as a server-to-server `client_secret` exchange at `/oauth/token`, gated by a per-client bcrypt-hashed allowlist on the proxy side.
 
@@ -130,7 +130,7 @@ The proxy logs a `WARN` at startup if it sees the literal `explorer` client_id i
 
 ### Upgrading from older releases — **breaking format change**
 
-Pre-RD-1006 releases parsed `OAUTH_FIRST_PARTY_CLIENTS` as a comma-separated list of client IDs (`explorer` or `explorer,internal-tools`). Post-RD-1006 requires `<client_id>:<bcrypt_hash>` pairs. The proxy **panics at startup with a remediation message** if it sees the old format — fail-closed by design.
+Older releases parsed `OAUTH_FIRST_PARTY_CLIENTS` as a comma-separated list of client IDs (`explorer` or `explorer,internal-tools`). Current releases require `<client_id>:<bcrypt_hash>` pairs. The proxy **panics at startup with a remediation message** if it sees the old format — fail-closed by design.
 
 Recommended rollout:
 
@@ -195,8 +195,8 @@ Every mutation on these endpoints writes an `rbac_audit_log` row (`ResourceTypeS
 
 ## Further reading
 
-- [`deployments/privacy/README.md`](https://github.com/gateway-fm/privacy-proxy/blob/main/deployments/privacy/README.md) — canonical compose reference (the file most operators end up reading on GitHub).
-- [Architecture → Privacy-mode topology](/docs/architecture#privacy-mode-topology-rd-855--rd-876) — full diagram and per-network invariants.
+- The privacy-mode compose manifests shipped with the release — canonical compose reference.
+- [Architecture → Privacy-mode topology](/docs/architecture#privacy-mode-topology) — full diagram and per-network invariants.
 - [Configuration](/docs/configuration) — env-var catalog beyond the operator-facing subset above.
 - [Security](/docs/security) — what the deployment is structurally defending against and what it deliberately doesn't.
 - [Audit Log Integrity](/docs/security/audit-integrity) — role-separation patterns (`privacy_proxy_app` vs `privacy_proxy_admin` postgres roles) that pair with this deployment.

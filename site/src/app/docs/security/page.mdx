@@ -108,7 +108,7 @@ graph TD
 - Provides comprehensive cross-org isolation
 - Defense-in-depth alongside bytecode validation
 
-**Read-side coverage.** The same trace-and-validate flow is applied to `eth_call`. Without it, a same-org wrapper contract could STATICCALL/DELEGATECALL into another organization's private contract and bubble up state through the return value, defeating cross-org isolation on the read path. Tracing on `eth_call` is uncached because proxy contracts (EIP-1967, Diamond, Beacon, transparent upgradeable) can re-target their internal calls by rewriting a storage slot. See [Configuration](/docs/configuration#runtime-tracing) for the rollback knob and the per-call timeout. `eth_estimateGas` is gated at the entry-point address but does not yet trace internal frames; treat it as a less-strict surface until that follow-up lands.
+**Read-side coverage.** The same trace-and-validate flow is applied to `eth_call`. Without it, a same-org wrapper contract could STATICCALL/DELEGATECALL into another organization's private contract and bubble up state through the return value, defeating cross-org isolation on the read path. Tracing on `eth_call` is uncached because proxy contracts (EIP-1967, Diamond, Beacon, transparent upgradeable) can re-target their internal calls by rewriting a storage slot. See [Configuration](/docs/configuration#runtime-tracing) for the rollback knob and the per-call timeout. `eth_estimateGas` is gated at the entry-point address.
 
 **Performance:** approximately 50--200 ms additional latency per transaction. Tiered validation skips tracing for calls to known org-owned addresses.
 
@@ -164,7 +164,7 @@ The admin bypass applies per-contract: having admin on contract A does not grant
 **Org admins** (members of a group with `is_org_admin = true`) automatically receive the `admin` claim on all contracts in their organization via the permission resolver. This means org admins see all logs from all org contracts without restriction.
 
 <Callout variant="info" title="Claim hierarchy">
-  The `admin` claim implies `deploy` and `upgrade` (the legacy `read`/`write` claims were removed in RD-853). Users without the admin claim do NOT get the admin log bypass — they are subject to normal event filtering.
+  The `admin` claim implies `deploy` and `upgrade` (the legacy `read`/`write` claims were removed). Users without the admin claim do NOT get the admin log bypass — they are subject to normal event filtering.
 </Callout>
 
 ### Cross-Organization Isolation
@@ -332,7 +332,7 @@ Do not increase `AccessTokenTTL` without adding a per-request revocation check
 
 ### RBAC Model
 
-- **Flat groups**: groups are siblings, not hierarchical — each group's permissions stand alone, no parent/child traversal (changed in RD-804)
+- **Flat groups**: groups are siblings, not hierarchical — each group's permissions stand alone, no parent/child traversal
 - **Multi-membership**: union of permissions across memberships
 - **Expiring memberships**: optional expiration timestamps
 - **Immutable audit log**: all changes tracked
@@ -375,7 +375,7 @@ A small set of **claim-free methods** can be called without any JWT token. These
 
 This list is seeded by migration 044 and is the exclusive source — admins editing the anonymous group_access surface is super-admin-only (`setGroupAccess` `is_system` gate).
 
-Authenticated users can also call this same set of org-free metadata methods on `/rpc` without an `org_id` in the path (RD-877). KYC and ban gates still apply.
+Authenticated users can also call this same set of org-free metadata methods on `/rpc` without an `org_id` in the path. KYC and ban gates still apply.
 
 **Everything else requires authentication**, including read-only methods on unowned addresses such as `eth_getBalance`. This is not a theoretical concern -- balance polling is a practical side-channel attack:
 
@@ -385,7 +385,7 @@ Authenticated users can also call this same set of org-free metadata methods on 
 
 The **pre-registration surveillance problem** makes this worse: if Alice's address is pollable today because she has not joined any organization, her entire balance history is already mapped by the time she joins one. Retroactively revoking access cannot undo the data already collected.
 
-Unauthenticated requests that target methods outside the claim-free list receive HTTP 401 (not 403), signaling that the client should authenticate rather than that the user lacks permission. No anonymous-tier rate limit is enforced at the RPC layer today; the only hardcoded RPC rate limits are method-level (`debug_trace*` at 1 request per 100 RPS).
+Unauthenticated requests that target methods outside the claim-free list receive HTTP 401 (not 403), signaling that the client should authenticate rather than that the user lacks permission. Per-request rate limiting is enforced at the upstream RPC proxy, configured per group via the group's RPC API key tier. The proxy additionally protects the node and itself: a per-API-key circuit breaker sheds load when the upstream returns rate-limit (HTTP 429) responses, and a per-user concurrency cap (`MAX_CONCURRENT_REQUESTS`) bounds simultaneous in-flight requests. Authentication endpoints have their own rate limiter.
 
 ---
 
@@ -520,7 +520,7 @@ Every prune (time-based or FIFO) writes the `(id, entry_hash)` of the most recen
 - Pruning never breaks chain verification — a verifier walks forward from the anchor and checks that the surviving rows hash-link as expected.
 - Each prune emits an `audit.access_logs.prune` row in `rbac_audit_log` recording the reason (`ttl` or `fifo`), deleted count, and (for TTL) the cutoff timestamp.
 
-A standalone verifier CLI is on the roadmap — see the team's `decisions.md` for current status.
+A standalone verifier CLI is planned.
 
 ---
 

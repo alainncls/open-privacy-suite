@@ -52,7 +52,7 @@ The proxy operates in **UTC**. The backend container image sets `TZ=UTC`, and th
 
 <EnvTable vars={[
   { name: "PRIVADO_RPC_URL", default: "https://rpc-mainnet.privado.id", description: "Privado network RPC endpoint (backs the privado:main state resolver)" },
-  { name: "BILLIONS_RPC_URL", default: "https://billions-rpc.eu-north-2.gateway.fm", description: "RPC endpoint for the Billions identity chain (chainID 45056). Lets users sign in with the Billions app, not just Privado ID." },
+  { name: "BILLIONS_RPC_URL", default: "https://billions-rpc.example.com", description: "RPC endpoint for the Billions identity chain (chainID 45056). Lets users sign in with the Billions app, not just Privado ID." },
   { name: "BILLIONS_STATE_CONTRACT", default: "0x3C9acB2205Aa72A05F6D77d708b5Cf85FCa3a896", description: "Billions on-chain identity state contract. Defaults to the shared iden3 cross-chain address; override only if Billions moves it." },
   { name: "IPFS_GATEWAY", default: "https://ipfs-proxy-cache.privado.id", description: "IPFS gateway for schemas" },
   { name: "JWT_SECRET", default: "(auto in dev)", description: "Access token signing secret" },
@@ -96,7 +96,7 @@ The proxy uses `debug_traceCall` to validate all addresses touched by transactio
 - Tiered validation skips tracing for calls to known org-owned addresses (sends only)
 - Caching reduces overhead for repeated patterns (sends only -- the `eth_call` path is intentionally uncached, see below)
 
-**`eth_call` cross-org isolation (RD-915):**
+**`eth_call` cross-org isolation:**
 
 `eth_call` is traced on every request, separately from the send-side path. Three differences matter:
 
@@ -119,7 +119,7 @@ This is correct: a method the proxy has no alias mapping for has no defined `to`
 
 </Callout>
 
-**Intra-org contract-grant scoping (RD-1053):**
+**Intra-org contract-grant scoping:**
 
 By default, runtime tracing enforces the **organization** as the isolation boundary: an internal call frame into any contract owned by one of the caller's orgs is allowed, even if the caller's groups have no grant for that specific contract. (A direct call to such a contract is still denied at the entry point — this only concerns contracts reached indirectly through another contract's internal calls.)
 
@@ -360,7 +360,7 @@ Full-stack privacy mode adds (`docker-compose.privacy.dev.yml`, `make full-stack
 | `block-explorer-frontend` | 3001 | Block-explorer UI |
 | `block-explorer-postgres` | — | Block-explorer database |
 
-The prod manifest (`docker-compose.privacy.yml`) pulls the proxy-backend image rather than building from source (RD-922); see [Deployment](/docs/deployment) for the prod topology and trust-zone split.
+The prod manifest (`docker-compose.privacy.yml`) pulls the proxy-backend image rather than building from source; see [Deployment](/docs/deployment) for the prod topology and trust-zone split.
 
 ### Image pinning (privacy mode)
 
@@ -398,7 +398,7 @@ DATABASE_URL=postgres://postgres:postgres@postgres:5432/privacy_proxy?sslmode=di
 
 ### Migrations
 
-Uses Tern v2 with embedded migrations in `internal/db/migrations/`.
+Uses Tern v2 with embedded migrations.
 
 ```bash
 # Run migrations
@@ -422,14 +422,14 @@ make db-new-migration name=add_feature
   { name: "MAX_ACCESS_LOG_ROWS", default: "0", description: "FIFO row cap on access_logs. When set above 0, the retention loop trims the oldest rows so at most this many remain. Complements RETENTION_ACCESS_LOGS for high-volume deployments. The audit hash chain stays verifiable across the cut via the audit_chain_anchor table." },
   { name: "RETENTION_COMPLIANCE_LOGS", default: "61320h", description: "How long compliance log entries are retained. Typically longer than access logs for regulatory audit trails. Default is roughly 7 years." },
   { name: "ORG_ADMIN_VIEW_USER_TXS", default: "false", description: "When true, org admins see user-to-user transaction rows that are otherwise dropped (both parties private) in the explorer, with the value/amount preserved so it matches the Transfer event they can already read. Counterparty addresses still render as [PRIVATE] — a volume/timing audit view, not real-address disclosure. Every request that reveals such a row is written to rbac_audit_log (actor, endpoint, row count, client IP). Default off = strict privacy (rows dropped, value zeroed)." },
-  { name: "OAUTH_FIRST_PARTY_CLIENTS", default: "(empty)", description: "Silent-SSO allowlist for trusted first-party OAuth clients (RD-993 + RD-1006). Comma-separated entries of the form <client_id>:<bcrypt_hash>. The proxy verifies the matching client_secret at /oauth/token via HTTP Basic (RFC 6749 client_secret_basic) or client_secret_post. Empty = no client gets silent SSO; every flow falls back to interactive Privado. Use per-environment opaque IDs (e.g. explorer-prod-${random}) — the literal default 'explorer' is warned-on at startup in production mode. Recipe: id=explorer-prod-$(openssl rand -hex 8); secret=$(openssl rand -hex 32); hash=$(htpasswd -bnBC 12 '' \"$secret\" | tr -d ':\\n'); echo \"${id}:${hash}\"." },
+  { name: "OAUTH_FIRST_PARTY_CLIENTS", default: "(empty)", description: "Silent-SSO allowlist for trusted first-party OAuth clients. Comma-separated entries of the form <client_id>:<bcrypt_hash>. The proxy verifies the matching client_secret at /oauth/token via HTTP Basic (RFC 6749 client_secret_basic) or client_secret_post. Empty = no client gets silent SSO; every flow falls back to interactive Privado. Use per-environment opaque IDs (e.g. explorer-prod-${random}) — the literal default 'explorer' is warned-on at startup in production mode. Recipe: id=explorer-prod-$(openssl rand -hex 8); secret=$(openssl rand -hex 32); hash=$(htpasswd -bnBC 12 '' \"$secret\" | tr -d ':\\n'); echo \"${id}:${hash}\"." },
 ]} />
 
 ---
 
 ## Audit Log Integrity
 
-Both `access_logs` and `rbac_audit_log` are protected by a SHA-256 hash chain (RD-858). Every row links to the previous row's hash so an attacker cannot silently rewrite history without invalidating every downstream hash. A scheduled in-process verifier walks the chain at a configurable interval and fires structured alerts on mismatch.
+Both `access_logs` and `rbac_audit_log` are protected by a SHA-256 hash chain. Every row links to the previous row's hash so an attacker cannot silently rewrite history without invalidating every downstream hash. A scheduled in-process verifier walks the chain at a configurable interval and fires structured alerts on mismatch.
 
 <EnvTable vars={[
   { name: "AUDIT_INTEGRITY_VERIFY_INTERVAL", default: "15m", description: "How often the in-process verifier walks every audit chain. Set to 0 to disable the scheduled worker entirely (manual verification via privacy-cli still works). Go duration format." },
@@ -460,7 +460,7 @@ For Docker environments, the server trusts `X-Forwarded-For` from:
 - `172.16.0.0/12` (Docker networks)
 - `127.0.0.1` (localhost)
 
-Adjust in `internal/server/server.go` if your deployment requires additional trusted ranges.
+Adjust the proxy's trusted-proxy configuration if your deployment requires additional trusted ranges.
 
 ---
 

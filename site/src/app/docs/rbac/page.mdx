@@ -17,7 +17,7 @@ smart contracts.
 **Key features:**
 
 - **Multi-tenant** -- multiple independent organizations with isolated permission sets
-- **Flat groups, UNION across memberships** -- each user can belong to multiple groups; effective permissions are the UNION of every membership's grants. The legacy parent/child group hierarchy was removed in RD-804 (`b85039f feat: flat groups`); the resolver no longer walks `parent_id` even though the column persists on the schema for compatibility.
+- **Flat groups, UNION across memberships** -- each user can belong to multiple groups; effective permissions are the UNION of every membership's grants. The legacy parent/child group hierarchy was removed when groups became flat; the resolver no longer walks `parent_id` even though the column persists on the schema for compatibility.
 - **Dual membership** -- users can be assigned via admin API or ZK-attested credentials
 - **Contract ownership** -- track deployed contracts and define owner capabilities
 - **Caching** -- in-memory and database-level caching for high-performance access checks
@@ -111,7 +111,7 @@ graph TD
     admin --> upgrade
 ```
 
-`ExpandClaims()` normalizes implied claims before saving on the backend. Only three claims gate behavior today; the legacy `read` and `write` claims were removed in RD-853 — non-privileged method access is now the exclusive job of the per-group method allowlist.
+`ExpandClaims()` normalizes implied claims before saving on the backend. Only three claims gate behavior today; the legacy `read` and `write` claims were removed — non-privileged method access is now the exclusive job of the per-group method allowlist.
 
 | Claim | Purpose | Required For |
 |-------|---------|--------------|
@@ -155,7 +155,7 @@ graph TD
 ### Key entities
 
 - **Organization** -- top-level tenant with a unique slug, display name, and custom settings (JSONB)
-- **Group** -- permission container scoped to an organization. **Flat** since RD-804 — the `parent_id` and `path` columns persist on the schema but the resolver no longer walks them. Users get UNION of every group they're a member of.
+- **Group** -- permission container scoped to an organization. **Flat** — the `parent_id` and `path` columns persist on the schema but the resolver no longer walks them. Users get UNION of every group they're a member of.
 - **GroupAccess** -- defines allowed methods, claims, and an optional RPC API key for a group
 - **ContractGrant** -- links a group to a contract; optionally restricts callable functions via `FunctionRule` and parameter constraints via `ParamRule`
 - **UserMembership** -- assigns a user to a group with a role
@@ -174,7 +174,7 @@ graph TD
 5. **Org admin bypass**: groups with `is_org_admin=true` (tier 2) get ALL claims on ALL contracts in the organization — this is how org admins see every org contract at both the RPC and explorer layers.
 
 <Callout variant="info" title="Access/visibility symmetry">
-RPC access and explorer visibility share the same grant model. If a user can call a contract via RPC, they see it as **Full** in the explorer; if they cannot call it, it shows as `[PRIVATE]` or is hidden. Any asymmetry is a bug — the invariant is enforced by the `TestAccessVisibilitySymmetry` integration test.
+RPC access and explorer visibility share the same grant model. If a user can call a contract via RPC, they see it as **Full** in the explorer; if they cannot call it, it shows as `[PRIVATE]` or is hidden. Any asymmetry is a bug — the invariant is enforced by an integration test.
 </Callout>
 
 </Callout>
@@ -183,7 +183,7 @@ RPC access and explorer visibility share the same grant model. If a user can cal
 
 ## Group Membership and Permission Aggregation
 
-Groups are **flat** — a group's effective permissions are exactly its own `GroupAccess` + `ContractGrant` set. There is no parent/child walk, no path-based inheritance, no INTERSECTION across a chain. RD-804 (`b85039f`) removed the resolver's hierarchy traversal; the schema columns (`parent_id`, `path`, `depth`) are kept for back-compat but the runtime ignores them.
+Groups are **flat** — a group's effective permissions are exactly its own `GroupAccess` + `ContractGrant` set. There is no parent/child walk, no path-based inheritance, no INTERSECTION across a chain. The resolver's hierarchy traversal was removed; the schema columns (`parent_id`, `path`, `depth`) are kept for back-compat but the runtime ignores them.
 
 ```mermaid
 graph TD
@@ -295,7 +295,7 @@ The admin dashboard's "Add Group Access" form is the canonical way to attach a g
 - **Function mode** — radio:
   - *All functions allowed* (default) — `functions = null` server-side; the group can call every method the contract exposes (subject to the allowlist).
   - *Specific functions only* — opens a function picker (uses the contract's ABI if registered); selected functions become `FunctionRule[]`. Each rule can pin address-typed params (`must_be: self`, `must_be: <hex>`) via the param-constraint UI.
-- **Claims checkboxes** (RD-872 follow-up) — `deploy` and `upgrade` are now exposed as explicit per-grant checkboxes. They take effect only on this contract for this group; granting `deploy` on a single contract does NOT widen the group's overall deploy claim.
+- **Claims checkboxes** — `deploy` and `upgrade` are now exposed as explicit per-grant checkboxes. They take effect only on this contract for this group; granting `deploy` on a single contract does NOT widen the group's overall deploy claim.
 - **"Next" button** — enabled once a group is selected and (if "specific functions" is chosen) at least one function is added. Advances to step 2.
 
 ### Step 2 — Events
@@ -316,7 +316,7 @@ Each grant card on a contract's permissions dialog has two pencil icons:
 
 This split lets reviewers update one axis without the wizard's "are you sure you didn't change anything else?" surface. The full two-step wizard is reachable only via "Add Group Access".
 
-<Callout variant="info" title="Default group is system-protected (RD-877)">
+<Callout variant="info" title="Default group is system-protected">
   The default group on each org is marked `is_system = true`. Its `GroupAccess` row exists at org-create time and represents the baseline permissions for new users. Mutations to the default group's name/description/admin-flag are blocked at the API layer (`409 Conflict` with a "system group" message); only the `GroupAccess` surface (allowed methods, claims, `rpc_api_key`) can be edited, and only by a super-admin or the org's tier-2 admin.
 </Callout>
 
@@ -389,10 +389,10 @@ The list groups endpoint supports optional filters:
 ### Roles and Memberships
 
 <ApiEndpoint method="POST" path="/api/orgs/:org_id/roles" description="Create role with claims" />
-<ApiEndpoint method="POST" path="/api/users/:id/memberships" description="Assign user to a group with a role (by user UUID; target user must already be in caller's full-admin scope — RD-942)" />
-<ApiEndpoint method="POST" path="/api/orgs/:org_id/memberships/by-did" description="Onboard by DID — tier-2 admin pulls a DID into their own org without a super-admin handoff (RD-945)" />
+<ApiEndpoint method="POST" path="/api/users/:id/memberships" description="Assign user to a group with a role (by user UUID; target user must already be in caller's full-admin scope)" />
+<ApiEndpoint method="POST" path="/api/orgs/:org_id/memberships/by-did" description="Onboard by DID — tier-2 admin pulls a DID into their own org without a super-admin handoff" />
 
-#### User-scope gate on `POST /users/:id/memberships` (RD-942)
+#### User-scope gate on `POST /users/:id/memberships`
 
 The by-UUID membership endpoint requires the target user to already be in the caller's full-admin scope: at least one of the user's existing memberships must live in an org the caller `is_org_admin` of. Pre-fix, the handler's response codes formed a user-enumeration oracle —
 
@@ -408,7 +408,7 @@ Post-fix the gate fires at the top of the handler and returns the opaque `errTar
 
 #### Onboarding by DID
 
-`POST /api/v1/admin/orgs/:org_id/memberships/by-did` is the canonical path for a tier-2 org admin to add a user to their own org when they only know the user's DID. Before RD-945 the only way to do this was to ask a super-admin to look up the DID's UUID and pass it back — tier-2 admins were structurally blocked even though the action was within their authority.
+`POST /api/v1/admin/orgs/:org_id/memberships/by-did` is the canonical path for a tier-2 org admin to add a user to their own org when they only know the user's DID. Previously the only way to do this was to ask a super-admin to look up the DID's UUID and pass it back — tier-2 admins were structurally blocked even though the action was within their authority.
 
 Request:
 
@@ -490,4 +490,4 @@ Mutating methods (`eth_sendTransaction`) are translated to `debug_traceCall` aga
 ### Limitations
 
 - Cross-org impersonation is structurally blocked (admin in Org A can only dry-run users with a membership in Org A).
-- A "View as user" dashboard mode (continuous browse-as) is tracked under RD-872 Phase 2 and not part of this release.
+- A "View as user" dashboard mode (continuous browse-as) is not part of this release.
