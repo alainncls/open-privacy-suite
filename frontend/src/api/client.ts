@@ -91,6 +91,18 @@ export const statusApi = {
   get: () => api.get<StatusResponse>('/status'),
 };
 
+// RD-1076: build identity of the running privacy-proxy binary. Admin-gated
+// (GET /api/v1/admin/system/version). Surfaced in the Diagnostics tab.
+export interface SystemVersion {
+  version: string;
+  commit: string;
+  build_time: string;
+}
+
+export const systemApi = {
+  getVersion: () => api.get<SystemVersion>('/system/version'),
+};
+
 export const testApi = {
   send: async (method: string, params: unknown[] = [], jwtToken?: string): Promise<TestRequestResult> => {
     try {

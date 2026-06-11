@@ -415,7 +415,7 @@ export default function ContractList() {
                     {contract.allow_visibleto_unlock && (
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <Eye className="w-4 h-4 text-amber-500 cursor-help" />
+                          <Eye className="w-4 h-4 text-amber-500 cursor-help" data-testid="visibleto-unlock-badge" />
                         </TooltipTrigger>
                         <TooltipContent>
                           <p>visibleTo bypass enabled</p>
@@ -586,6 +586,23 @@ export default function ContractList() {
               key={managingGrants.id}
               orgId={orgId}
               contract={managingGrants}
+              onContractUpdated={updated => {
+                // RD-1075: reflect the saved visibleTo-unlock flag without a full
+                // refetch — merge it into the cached list entry (drives the badge)
+                // and the open dialog's source contract.
+                setContracts(prev =>
+                  prev.map(c =>
+                    c.id === updated.id
+                      ? { ...c, allow_visibleto_unlock: updated.allow_visibleto_unlock }
+                      : c,
+                  ),
+                );
+                setManagingGrants(prev =>
+                  prev && prev.id === updated.id
+                    ? { ...prev, allow_visibleto_unlock: updated.allow_visibleto_unlock }
+                    : prev,
+                );
+              }}
             />
           )}
         </DialogContent>

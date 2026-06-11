@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { http, HttpResponse, delay } from 'msw';
 import { server } from '@/test/mocks/server';
 import { renderWithRBACContext } from './test-utils';
+import { TooltipProvider } from '@/components/ui/tooltip';
 import {
   mockContracts,
   mockContractNoName,
@@ -467,6 +468,55 @@ describe('ContractList', () => {
       await waitFor(() => {
         // Look for the dialog heading specifically
         expect(screen.getByRole('heading', { name: 'Register Contract' })).toBeInTheDocument();
+      });
+    });
+  });
+
+  describe('visibleTo unlock badge sync (RD-1075)', () => {
+    it('reflects the saved flag in the list badge after enabling via the dialog', async () => {
+      const user = userEvent.setup();
+      const contract = createMockContract({
+        name: 'VT Contract',
+        allow_visibleto_unlock: false,
+      });
+      server.use(
+        http.get('/api/v1/admin/orgs/:orgId/contracts', () =>
+          HttpResponse.json({ data: [contract], total: 1, limit: 25, offset: 0 }),
+        ),
+        http.put(
+          '/api/v1/admin/orgs/:orgId/contracts/:address/visibleto-unlock',
+          () => HttpResponse.json({ ...contract, allow_visibleto_unlock: true }),
+        ),
+      );
+
+      // Wrap in TooltipProvider: the visibleTo badge is a Radix Tooltip, and
+      // the real app provides the provider at the App root (App.tsx).
+      renderWithRBACContext(
+        <TooltipProvider>
+          <ContractList />
+        </TooltipProvider>,
+      );
+
+      // Row present, no badge yet.
+      await waitFor(() => {
+        expect(screen.getByText('VT Contract')).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId('visibleto-unlock-badge')).not.toBeInTheDocument();
+
+      // Open the permissions dialog for the row.
+      await user.click(screen.getByRole('button', { name: /manage permissions/i }));
+
+      // Enable visibleTo unlock: switch → confirmation → Enable.
+      const sw = await screen.findByRole('switch', {
+        name: /allow visibleto to unlock event visibility/i,
+      });
+      await user.click(sw);
+      await user.click(await screen.findByRole('button', { name: /^enable$/i }));
+
+      // RD-1075: the parent list now reflects the saved flag — badge appears
+      // without a full page reload (previously it stayed stale).
+      await waitFor(() => {
+        expect(screen.getByTestId('visibleto-unlock-badge')).toBeInTheDocument();
       });
     });
   });
