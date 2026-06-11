@@ -287,6 +287,14 @@ services:
       # defense in depth against a compose-merge accident.
       - PRIVACY_PROXY_URL=http://proxy-backend:8080
       - PRIVACY_PROXY_PUBLIC_URL=${PRIVACY_PROXY_PUBLIC_URL:-http://localhost:${HOST_PORT_PROXY:-8080}}
+      # W-1: REQUIRED in privacy mode — the BFF fails closed at startup if unset.
+      # NO default on purpose: the operator must supply the exact trusted browser
+      # origins (HTTPS). A localhost/wildcard default would be an insecure prod
+      # footgun. Mirror of the proxy-backend CORS_ALLOWED_ORIGINS above.
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-}
+      # A-3: auth cookies are forced Secure in privacy mode (correct for an HTTPS
+      # prod deploy). Deliberately NOT setting COOKIE_SECURE here — the dev
+      # compose sets it false ONLY because that stack is plain HTTP.
       - SSO_CLIENT_ID=${SSO_CLIENT_ID:-explorer}
       - SSO_CLIENT_SECRET=${SSO_CLIENT_SECRET:-}
       - SSO_REDIRECT_URI=${SSO_REDIRECT_URI:-http://localhost:${HOST_PORT_EXPLORER:-3001}/api/auth/callback}
