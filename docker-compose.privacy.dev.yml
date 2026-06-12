@@ -156,6 +156,13 @@ services:
       # mock-login + mock-signatures code paths so they can be turned on
       # via env vars below. The prod build target compiles them out.
       target: dev
+      # Build identity (RD-1023). privacy-dev-up.sh computes and exports
+      # these before `docker compose ... up --build`; falls back to the
+      # Dockerfile defaults (dev/none/unknown) if unset.
+      args:
+        VERSION: ${VERSION:-dev}
+        GIT_COMMIT: ${GIT_COMMIT:-none}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
     ports:
       - "${HOST_BIND:-127.0.0.1}:${HOST_PORT_PROXY:-8080}:8080"
     environment:

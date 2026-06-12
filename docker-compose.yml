@@ -56,6 +56,14 @@ services:
       context: .
       dockerfile: Dockerfile.backend
       target: dev
+      # Build identity (RD-1023). Forwarded from the environment so the
+      # binary reports a real version/commit instead of dev/none/unknown.
+      # `make run`/`dev-stack` export these; a raw `docker-compose up` falls
+      # back to the defaults declared in Dockerfile.backend.
+      args:
+        VERSION: ${VERSION:-dev}
+        GIT_COMMIT: ${GIT_COMMIT:-none}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
     ports:
       - "127.0.0.1:${HOST_PORT_PROXY:-8080}:8080"
     environment:
