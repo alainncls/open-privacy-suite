@@ -2,13 +2,14 @@ import { useState, useEffect, useCallback } from 'react';
 import { StatusCard } from './StatusCard';
 import { TestRequestPanel } from './TestRequestPanel';
 import { DeployDemoTokenPanel } from './DeployDemoTokenPanel';
-import { statusApi, StatusResponse } from '@/api/client';
+import { statusApi, StatusResponse, systemApi, SystemVersion } from '@/api/client';
 import { Loader2 } from 'lucide-react';
 
 export function Dashboard() {
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [build, setBuild] = useState<SystemVersion | null>(null);
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -27,6 +28,15 @@ export function Dashboard() {
     const interval = setInterval(fetchStatus, 5000);
     return () => clearInterval(interval);
   }, [fetchStatus]);
+
+  // RD-1076: build identity is static for the process lifetime — fetch once,
+  // no polling. Failure is non-fatal (the footer just stays hidden).
+  useEffect(() => {
+    systemApi
+      .getVersion()
+      .then(res => setBuild(res.data))
+      .catch(() => {});
+  }, []);
 
   if (loading) {
     return (
@@ -81,6 +91,21 @@ export function Dashboard() {
       <div className="animate-fade-in-up" style={{ animationDelay: '250ms' }}>
         <DeployDemoTokenPanel />
       </div>
+
+      {/* RD-1076: privacy-proxy build identity (version / commit / build time). */}
+      {build && (
+        <div
+          className="animate-fade-in-up pt-2 text-center"
+          style={{ animationDelay: '300ms' }}
+          data-testid="build-version"
+        >
+          <p className="text-xs text-neutral-400 font-mono">
+            privacy-proxy {build.version}
+            {build.commit && build.commit !== 'none' ? ` · ${build.commit.slice(0, 12)}` : ''}
+            {build.build_time && build.build_time !== 'unknown' ? ` · ${build.build_time}` : ''}
+          </p>
+        </div>
+      )}
     </div>
   );
 }

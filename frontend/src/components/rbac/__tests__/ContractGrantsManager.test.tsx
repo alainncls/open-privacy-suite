@@ -417,6 +417,48 @@ describe('ContractGrantsManager — event rules display', () => {
       ).toBeInTheDocument();
     });
 
+    it('RD-1075: enabling fires onContractUpdated with the saved contract', async () => {
+      const userEvent = (await import('@testing-library/user-event')).default;
+      const user = userEvent.setup();
+      stubApis([]);
+      const contract = { ...mockContract, allow_visibleto_unlock: false };
+      const onContractUpdated = vi.fn();
+
+      render(
+        <TooltipProvider>
+          <ContractGrantsManager
+            orgId="org-1"
+            contract={contract}
+            onContractUpdated={onContractUpdated}
+          />
+        </TooltipProvider>,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Groups with Access')).toBeInTheDocument();
+      });
+
+      const { http, HttpResponse } = await import('msw');
+      const { server } = await import('@/test/mocks/server');
+      server.use(
+        http.put(visibleToUnlockUrl, () =>
+          HttpResponse.json({ ...contract, allow_visibleto_unlock: true }),
+        ),
+      );
+
+      await user.click(
+        screen.getByRole('switch', {
+          name: /allow visibleto to unlock event visibility/i,
+        }),
+      );
+      await user.click(await screen.findByRole('button', { name: /^enable$/i }));
+
+      await waitFor(() => expect(onContractUpdated).toHaveBeenCalled());
+      expect(onContractUpdated).toHaveBeenCalledWith(
+        expect.objectContaining({ id: contract.id, allow_visibleto_unlock: true }),
+      );
+    });
+
     it('disabling does NOT prompt — applies immediately', async () => {
       const userEvent = (await import('@testing-library/user-event')).default;
       const user = userEvent.setup();

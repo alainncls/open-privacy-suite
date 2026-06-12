@@ -56,6 +56,11 @@ const COMMON_SELECTORS: Record<string, string> = {
 interface ContractGrantsManagerProps {
   orgId: string;
   contract: Contract;
+  // RD-1075: fired after a successful contract-level mutation here (currently
+  // the visibleTo-unlock toggle) so the parent can refresh its cached contract.
+  // Without it the list badge and a reopened dialog show stale state because
+  // this component only updates its own local state.
+  onContractUpdated?: (contract: Contract) => void;
 }
 
 // Extended grant type that includes the group info and group access
@@ -67,6 +72,7 @@ interface GrantWithGroup extends ContractGrant {
 export default function ContractGrantsManager({
   orgId,
   contract,
+  onContractUpdated,
 }: ContractGrantsManagerProps) {
   const { isReadonlyAdmin } = useAdmin();
   const [grants, setGrants] = useState<GrantWithGroup[]>([]);
@@ -171,8 +177,12 @@ export default function ContractGrantsManager({
     setUnlockError(null);
     setUnlockSuccess(null);
     try {
-      await rbacApi.contracts.updateAllowVisibleToUnlock(orgId, contractAddress, allow);
+      const res = await rbacApi.contracts.updateAllowVisibleToUnlock(orgId, contractAddress, allow);
       setAllowVisibleToUnlock(allow);
+      // RD-1075: propagate the saved value to the parent so the contract-list
+      // badge and a reopened dialog reflect the new state. The PUT returns the
+      // updated contract; the parent merges the flag into its cached copy.
+      onContractUpdated?.(res.data);
       setUnlockSuccess(allow ? 'visibleTo unlock enabled for this contract' : 'visibleTo unlock disabled');
     } catch (err: unknown) {
       console.error('Failed to update visibleTo unlock flag:', err);
