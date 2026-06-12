@@ -108,7 +108,19 @@ export VERSION="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null ||
 export GIT_COMMIT="${GIT_COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo none)}"
 export BUILD_TIME="${BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 
-echo "$(bold '==>') $(green 'Starting privacy stack in dev mode') ($VERSION / $GIT_COMMIT)"
+# block-explorer build identity. block-explorer stamps its own binary
+# (backend/Dockerfile.api ARGs, surfaced at /version + UI footer); its version
+# comes from block-explorer's OWN git tree — a different value than the proxy's.
+# Resolved from $BLOCK_EXPLORER_PATH so the explorer-api build args carry the
+# explorer's real tag/commit, not the proxy's.
+BE_PATH="${BLOCK_EXPLORER_PATH:-../block-explorer}"
+export BLOCK_EXPLORER_VERSION="${BLOCK_EXPLORER_VERSION:-$(git -C "$BE_PATH" describe --tags --always --dirty 2>/dev/null || echo dev)}"
+export BLOCK_EXPLORER_GIT_COMMIT="${BLOCK_EXPLORER_GIT_COMMIT:-$(git -C "$BE_PATH" rev-parse --short HEAD 2>/dev/null || echo none)}"
+export BLOCK_EXPLORER_BUILD_TIME="${BLOCK_EXPLORER_BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+
+echo "$(bold '==>') $(green 'Starting privacy stack in dev mode')"
+echo "      privacy-proxy:  $VERSION / $GIT_COMMIT"
+echo "      block-explorer: $BLOCK_EXPLORER_VERSION / $BLOCK_EXPLORER_GIT_COMMIT"
 docker compose "${COMPOSE_ARGS[@]}" up -d --build
 
 echo "$(bold '==>') Waiting for proxy-backend to become healthy…"
