@@ -273,6 +273,15 @@ services:
       # still compiled out — dev convenience is scoped to privacy-proxy
       # auth, never to data-path correctness.
       target: privacy
+      # Build identity (RD-1023). block-explorer's Dockerfile.api stamps these
+      # into the binary (surfaced at /version + UI footer). They come from
+      # block-explorer's OWN git, NOT privacy-proxy's — privacy-dev-up.sh
+      # resolves BLOCK_EXPLORER_* from $BLOCK_EXPLORER_PATH and exports them.
+      # Falls back to the Dockerfile defaults (dev/none/unknown) if unset.
+      args:
+        VERSION: ${BLOCK_EXPLORER_VERSION:-dev}
+        GIT_COMMIT: ${BLOCK_EXPLORER_GIT_COMMIT:-none}
+        BUILD_TIME: ${BLOCK_EXPLORER_BUILD_TIME:-unknown}
     environment:
       - DATABASE_URL=postgres://postgres:${BLOCK_EXPLORER_POSTGRES_PASSWORD:?BLOCK_EXPLORER_POSTGRES_PASSWORD is required in privacy mode}@block-explorer-postgres:5432/explorer?sslmode=disable
       - RPC_URL=http://proxy-backend:8080
