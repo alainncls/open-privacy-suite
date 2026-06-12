@@ -22,6 +22,9 @@ GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 VERSION_PKG := privacy-proxy/internal/version
 LDFLAGS := -X $(VERSION_PKG).Version=$(VERSION) -X $(VERSION_PKG).Commit=$(GIT_COMMIT) -X $(VERSION_PKG).BuildTime=$(BUILD_TIME)
+# Export so docker-compose `args:` (and privacy-dev-up.sh) inherit the
+# resolved build identity — otherwise compose builds report dev/none/unknown.
+export VERSION GIT_COMMIT BUILD_TIME
 
 # Build backend (dev, with mock auth)
 build: ensure-hooks

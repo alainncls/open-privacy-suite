@@ -48,6 +48,12 @@ services:
       context: .
       dockerfile: Dockerfile.backend
       target: dev
+      # Build identity (RD-1023). Forwarded from the environment; falls
+      # back to the Dockerfile defaults (dev/none/unknown) if unset.
+      args:
+        VERSION: ${VERSION:-dev}
+        GIT_COMMIT: ${GIT_COMMIT:-none}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
     # No port mapping - only playwright container needs access
     environment:
       - NODE_URL=http://anvil:8545

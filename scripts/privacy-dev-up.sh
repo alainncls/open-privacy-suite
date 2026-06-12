@@ -100,7 +100,15 @@ set -a
 source "$ENV_FILE"
 set +a
 
-echo "$(bold '==>') $(green 'Starting privacy stack in dev mode')"
+# Build identity (RD-1023). Resolve from git unless already set by the
+# caller (e.g. the Makefile exports these), so the backend reports a real
+# version/commit instead of dev/none/unknown. Forwarded to the compose
+# `args:` blocks. Falls back to safe defaults when git is unavailable.
+export VERSION="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo dev)}"
+export GIT_COMMIT="${GIT_COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo none)}"
+export BUILD_TIME="${BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+
+echo "$(bold '==>') $(green 'Starting privacy stack in dev mode') ($VERSION / $GIT_COMMIT)"
 docker compose "${COMPOSE_ARGS[@]}" up -d --build
 
 echo "$(bold '==>') Waiting for proxy-backend to become healthy…"
