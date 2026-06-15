@@ -206,14 +206,6 @@ export const rbacApi = {
       }>('/status'),
   },
 
-  // Org config endpoints
-  orgConfig: {
-    getCreate3Factory: (orgId: string) =>
-      api.get<{ factory: string; configured: boolean; message?: string }>(`/orgs/${orgId}/config/create3`),
-    setCreate3Factory: (orgId: string, factory: string) =>
-      api.put<{ factory: string; configured: boolean }>(`/orgs/${orgId}/config/create3`, { factory }),
-  },
-
   // Azure AD Tenant Allowlist
   azureTenants: {
     list: () =>
@@ -226,19 +218,6 @@ export const rbacApi = {
       api.put<import('../types/rbac').AllowedAzureTenant>(`/azure-tenants/${id}`, input),
     delete: (id: string) =>
       api.delete(`/azure-tenants/${id}`),
-  },
-
-  // Dev endpoints (only available in development mode)
-  dev: {
-    getCreate3Factory: () =>
-      api.get<{ address: string; deployed: boolean; message?: string }>('/dev/create3-factory'),
-    deployCreate3Factory: () =>
-      api.post<{ address: string; deployed: boolean }>('/dev/create3-factory'),
-    autoRegisterCreate3: (orgId: string, input: { factory: string; salt: string; name?: string }) =>
-      api.post<{ address: string; registered: boolean; message?: string }>(
-        `/dev/orgs/${orgId}/create3/auto-register`,
-        input
-      ),
   },
 };
 

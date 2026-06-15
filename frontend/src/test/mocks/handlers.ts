@@ -197,12 +197,6 @@ export const mockMembershipWithDetails2: MembershipWithDetails = {
   group: mockChildGroup,
 };
 
-// CREATE3 factory for dev mode testing
-export const mockCreate3Factory = {
-  address: '0xfactory1234567890factory1234567890factory',
-  deployed: true,
-};
-
 // =========================================================================
 // Compliance mock data
 // =========================================================================
@@ -708,34 +702,6 @@ export const handlers = [
       hits: 100,
       misses: 10,
       size: 50,
-    });
-  }),
-
-  // Org config endpoints for CREATE3 factory
-  http.get('/api/v1/admin/orgs/:orgId/config/create3', () => {
-    return HttpResponse.json({
-      factory: '0x1234567890123456789012345678901234567890',
-      configured: true,
-    });
-  }),
-
-  http.put('/api/v1/admin/orgs/:orgId/config/create3', async ({ request }) => {
-    const body = await request.json() as { factory: string };
-    return HttpResponse.json({
-      factory: body.factory,
-      configured: true,
-    });
-  }),
-
-  // Dev endpoints for CREATE3 factory
-  http.get('/api/v1/admin/dev/create3-factory', () => {
-    return HttpResponse.json(mockCreate3Factory);
-  }),
-
-  http.post('/api/v1/admin/dev/create3-factory', () => {
-    return HttpResponse.json({
-      address: '0xfactory1234567890factory1234567890factory',
-      deployed: true,
     });
   }),
 

@@ -1,6 +1,6 @@
 # Privacy Proxy MCP Server
 
-Privacy Proxy includes an [MCP](https://modelcontextprotocol.io/) (Model Context Protocol) server that exposes the full admin API as 99 tools over stdio transport. It covers RBAC, compliance, disclosure, explorer, and operational management.
+Privacy Proxy includes an [MCP](https://modelcontextprotocol.io/) (Model Context Protocol) server that exposes the full admin API as 94 tools over stdio transport. It covers RBAC, compliance, disclosure, explorer, and operational management.
 
 ## Setup
 
@@ -312,20 +312,6 @@ Check which registered contracts exist on-chain.
 
 #### `delete_grant`
 **Destructive — requires two-step confirmation.**
-
-### CREATE3 Config (2 tools)
-
-#### `get_create3_config`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `org_id` | string | Yes | Organization UUID |
-
-#### `set_create3_config`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `org_id` | string | Yes | Organization UUID |
-| `factory_address` | string | No | CREATE3 factory contract address |
-| `enabled` | boolean | No | Enable/disable CREATE3 |
 
 ### Compliance (18 tools)
 
