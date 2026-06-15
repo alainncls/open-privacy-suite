@@ -1319,9 +1319,15 @@ func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string) *e
 	visMapDetailed, _ := s.db.GetBatchVisibilityDetailed(ctx, viewerDID, allAddrs)
 
 	visibleSet := make(map[string]bool, len(visMap))
+	// fullVisible holds ONLY the addresses the viewer sees at Full. It drives
+	// the transfer-participant union below (RD-1079); the pseudonymous/redacted
+	// grant addresses are added to visibleSet for SQL address-survival but must
+	// not drive a full-reveal union.
+	fullVisible := make([]string, 0, len(visMap))
 	for addr, level := range visMap {
 		if level == explorer.VisibilityFull {
 			visibleSet[addr] = true
+			fullVisible = append(fullVisible, addr)
 		}
 	}
 	for addr, meta := range visMapDetailed {
@@ -1349,24 +1355,33 @@ func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string) *e
 	// RD-1009: union in tx hashes whose token-transfer participants the viewer
 	// can see. Without this the SQL filter drops a tx whose tx.from / tx.to are
 	// both hidden (typically an EOA wallet + a private token contract) even
-	// when one of its derived token-transfer rows has an admin-visible
-	// counterparty — so /transfers surfaces the transfer (and its parent
-	// tx_hash via TokenTransfer.TxHash) but /transactions is missing the row.
-	// Cross-redactor row asymmetry is the bug; unioning here closes it at the
-	// SQL filter so both feeds agree.
+	// when one of its derived token-transfer rows has a visible counterparty —
+	// so /transfers surfaces the transfer (and its parent tx_hash via
+	// TokenTransfer.TxHash) but /transactions is missing the row. Unioning the
+	// hash into VisibleTxHashes closes the asymmetry at the SQL filter and (via
+	// redactOptsFromFilter) keeps the redactor's bothHidden branch from dropping
+	// the row across the list / by-hash / internal / logs surfaces.
 	//
-	// Privacy-safe by construction: every tx hash added here is one that the
-	// transfer feed already exposes to this viewer via the surviving transfer
-	// row — no new address material is revealed. The redactor's per-row field
-	// stripping still applies; this only flips the row-survival decision.
+	// RD-1079: drive the union ONLY with addresses the viewer sees at FULL
+	// (`fullVisible`), NOT the pseudonymous/redacted disclosure-grant addresses
+	// that were also added to `visible` for SQL address-survival. VisibleTxHashes
+	// is a full-identity-reveal override in the redactor (it promotes both tx
+	// addresses to Full), so driving it from a *pseudonymous* grant subject would
+	// reveal that subject's counterparty's real address on every tx where the
+	// subject is a transfer participant — defeating the "graph without identity"
+	// guarantee of a pseudonymous disclosure. A Full-level viewer (admin, or a
+	// full disclosure grant) IS entitled to see counterparties, so the RD-1009
+	// coherence fix still applies to them. The cost for a pseudonymous/redacted-
+	// grant viewer: the subject's transfer still shows in /transfers
+	// (pseudonymised by the redactor's counterparty lens), but the parent tx
+	// does not surface in /transactions — a row-coherence gap that is strictly
+	// more private than the leak it replaces.
 	//
-	// Bounded scan: we cap at transferParticipantUnionLimit to keep the join
-	// O(window) rather than O(full table). The cap is generous enough to
-	// cover the most-recent N matching tx hashes that would actually be
-	// rendered by the surrounding tx feed.
-	if len(visible) > 0 {
+	// Bounded scan: capped at transferParticipantUnionLimit to keep the join
+	// O(window) rather than O(full table).
+	if len(fullVisible) > 0 {
 		transferTxs, err := s.explorerStore.FindTransferParticipantTxs(
-			ctx, visible, nil /* beforeBlock */, transferParticipantUnionLimit)
+			ctx, fullVisible, nil /* beforeBlock */, transferParticipantUnionLimit)
 		if err == nil && len(transferTxs) > 0 {
 			// Dedup against any hashes the visibleTo lookup already added.
 			existing := make(map[string]bool, len(filter.VisibleTxHashes))
