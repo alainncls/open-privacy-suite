@@ -115,6 +115,8 @@ describe('ComplianceConfig', () => {
         expect(screen.getByText('Save Configuration')).toBeInTheDocument();
       });
 
+      // Save is gated on unsaved changes — make a change first.
+      await user.click(screen.getByText(/Click to disable/));
       await user.click(screen.getByText('Save Configuration'));
 
       await waitFor(() => {
@@ -152,11 +154,35 @@ describe('ComplianceConfig', () => {
         expect(screen.getByText('Save Configuration')).toBeInTheDocument();
       });
 
+      // Save is gated on unsaved changes — make a change first.
+      await user.click(screen.getByText(/Click to disable/));
       await user.click(screen.getByText('Save Configuration'));
 
       await waitFor(() => {
         expect(screen.getByText('Invalid threshold')).toBeInTheDocument();
       });
+    });
+
+    it('disables Save until a change is made, then surfaces the unsaved-changes cue', async () => {
+      const user = userEvent.setup();
+      renderWithComplianceContext(<ComplianceConfig />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Compliance Configuration')).toBeInTheDocument();
+      });
+
+      // No changes yet → Save disabled, no dirty-state cues.
+      const saveButton = screen.getByRole('button', { name: /Save Configuration/ });
+      expect(saveButton).toBeDisabled();
+      expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument();
+      expect(screen.queryByText('You have unsaved changes')).not.toBeInTheDocument();
+
+      // Toggle enforcement → now dirty.
+      await user.click(screen.getByText(/Click to disable/));
+
+      expect(saveButton).toBeEnabled();
+      expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
+      expect(screen.getByText('You have unsaved changes')).toBeInTheDocument();
     });
 
     it('shows last updated timestamp', async () => {
