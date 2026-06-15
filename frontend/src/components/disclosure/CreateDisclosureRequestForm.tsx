@@ -157,8 +157,19 @@ export function CreateDisclosureRequestForm({
     const currentScopes = formData.scope || [];
     if (currentScopes.includes(scope)) {
       updateField('scope', currentScopes.filter((s) => s !== scope));
+      return;
+    }
+    // full_disclosure is a superset of the narrow scopes, so it is mutually
+    // exclusive with them (RD-1072): selecting it clears the narrow scopes,
+    // and selecting a narrow scope clears full_disclosure. This keeps the
+    // requested-scope record unambiguous on what is a compliance artifact.
+    if (scope === 'full_disclosure') {
+      updateField('scope', ['full_disclosure']);
     } else {
-      updateField('scope', [...currentScopes, scope]);
+      updateField('scope', [
+        ...currentScopes.filter((s) => s !== 'full_disclosure'),
+        scope,
+      ]);
     }
   };
 
@@ -563,6 +574,9 @@ export function CreateDisclosureRequestForm({
                 );
               })}
             </div>
+            <p className="text-xs text-neutral-400">
+              Full Disclosure already covers activity logs and transaction history, so it can't be combined with them.
+            </p>
             {errors.scope && (
               <p className="text-error-dark text-xs">{errors.scope}</p>
             )}
