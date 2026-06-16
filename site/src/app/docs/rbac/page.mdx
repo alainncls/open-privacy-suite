@@ -95,6 +95,15 @@ No user can grant permissions at their own level or higher:
 - Contract admins cannot access the admin API
 - Only super admins can grant org admin status
 
+Because granting org-admin status creates a peer who could ban or demote the granter, **every operation that confers, removes, or reshapes org-admin membership is restricted to super admins** — not just group creation. A tier-2 org admin attempting any of the following gets `403 Forbidden`:
+
+- Adding a member to an org-admin group (by UUID or by DID onboarding)
+- Removing a member from an org-admin group
+- Deleting an org-admin group (including via batch delete — the whole batch is rejected)
+- Editing an org-admin group's access (allowed methods, claims)
+
+Read-only admin (`is_org_readonly_admin`) groups are **not** restricted this way: a tier-2 admin may freely assign, remove, and manage read-only admins, since that role is a strict subset of their own permissions (delegation, not escalation).
+
 ---
 
 ## Claims Hierarchy
