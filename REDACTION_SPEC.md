@@ -279,6 +279,8 @@ Cross-org isolation: `GetEffectivePermissionsByIDs` resolves grants per-org, so 
 
 **Auditability note:** with the flag on, the set of users who can see a contract's events grows beyond what `groups + grants` enumeration alone shows — the active set is `(groups + grants) ∪ (every DID listed in any tx's visibleTo)`. Operators who flip the flag should plan for that surface in access-review tooling. The flag itself is a single boolean per contract; flips go through the admin API and are subject to whatever audit log the API surface uses.
 
+**Method-allowlist non-bypass (RPC layer):** the unlock relaxes *redaction*, never *method access*. Over RPC the group's `AllowedMethods` allowlist is enforced **first** (`rbac.access.go::HasMethod`), before contract-access and before any `visibleTo` / unlock / redaction logic. So an eligible, listed viewer whose group does not allow the method is denied at the allowlist gate — the unlock never adds a method to a viewer's allowlist. Which facet needs which method: tx object → `eth_getTransactionByHash` (or block-index variants); receipt + logs → `eth_getTransactionReceipt`; filtered logs → `eth_getLogs` (+ contract access). This non-bypass is intentional and test-locked by `TestCheckAccess_VisibleTo_DoesNotBypassMethodAllowlist` (RD-837). The **only** allowlist-exempt surface is the Explorer API (separate BFF/JWT auth, reads via `RedactionEngine`) — which is why "visible in the explorer" ≠ "can call `eth_getLogs`".
+
 ### 3.8 RPC Layer (`eth_getTransactionByHash`, `eth_getTransactionReceipt`, `eth_getLogs`, `eth_getBlockByNumber`, `eth_getBlockReceipts`)
 
 At the RPC layer, visibility is binary: the caller either is or is not a participant (one of their linked addresses matches `from` or `to`).
