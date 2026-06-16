@@ -283,14 +283,16 @@ Cross-org isolation: `GetEffectivePermissionsByIDs` resolves grants per-org, so 
 
 When a viewer is **not** a transaction participant (§3.7) but holds a **disclosure grant** on *one* side of a transfer/tx, the redactor renders the *other* side (the counterparty) through a per-grant-level "lens" (`counterpartyLensLevel`, `internal/explorer/redactor.go`). The lens result is the floor the counterparty renders at — the disclosed party themselves renders at their own grant level via the visibility map.
 
-| Viewer's grant level on the disclosed party | Counterparty (the other side) renders as | `addressMetadata` reason | Drives the §G24 row-survival union? |
+The disclosed party themselves always renders at their own grant level via the visibility map, carrying `addressMetadata` reason `disclosure_grant`. The table below is about the **counterparty** (the other side):
+
+| Viewer's grant level on the disclosed party | Counterparty renders as | Counterparty `addressMetadata` reason | Drives the §G24 row-survival union? |
 |---|---|---|---|
-| **Full** | real address (regulatory reveal; audit-logged via `GrantFullReveals`) | `disclosure_grant` | **Yes** — viewer is entitled to counterparties |
-| **Pseudonymous** | stable pseudonym (`Address-XXXX`), never real hex | `disclosure_grant` | **No** |
-| **Redacted** | `[PRIVATE]` | `disclosure_grant` | **No** |
+| **Full** | real address (regulatory reveal; audit-logged via `GrantFullReveals`) | `visible_to_grant` (revealed via the union override; the reveal is entitled) | **Yes** — viewer is entitled to counterparties |
+| **Pseudonymous** | stable pseudonym (`Address-XXXX`), never real hex | the counterparty's own reason (e.g. `no_access`) — **never** `visible_to_grant` | **No** |
+| **Redacted** | `[PRIVATE]` | the counterparty's own reason (e.g. `no_access`) — **never** `visible_to_grant` | **No** |
 | (none — viewer not a participant, no grant) | Hidden → row dropped | — | No |
 
-**Invariant (RD-1079):** the lens is only reached when the row is **not** force-revealed by a participant override or by `VisibleTxHashes`. Therefore the G24 transfer-participant row-survival union (which feeds `VisibleTxHashes`, a *full-reveal* override) MUST be driven only by **Full-visible** addresses (`fullVisible` in `buildVisibilityFilter`). Feeding it a pseudonymous/redacted disclosure-grant address would bypass this lens and leak the counterparty's real address (the G25/RD-1079 bug). The counterparty's `addressMetadata` reason must reflect the lens (`disclosure_grant`), **not** `visible_to_grant` — a `visible_to_grant`/"Shared" label on a counterparty the viewer never had a per-tx `visibleTo` share for is the frontend-visible symptom of this leak.
+**Invariant (RD-1079):** the lens is only reached when the row is **not** force-revealed by a participant override or by `VisibleTxHashes`. Therefore the G24 transfer-participant row-survival union (which feeds `VisibleTxHashes`, a *full-reveal* override) MUST be driven only by **Full-visible** addresses (`fullVisible` in `buildVisibilityFilter`). Feeding it a pseudonymous/redacted disclosure-grant address would bypass this lens and leak the counterparty's real address (the G25/RD-1079 bug). For a non-Full grant the counterparty must render at the lens level (pseudonym / `[PRIVATE]`) and must **never** carry the `visible_to_grant`/"Shared" label — that label on a counterparty the viewer holds no per-tx `visibleTo` share for is the frontend-visible symptom of this leak.
 
 **Under View-as (RD-1028):** this lens — like all visibility resolution — is governed by the **resolved (impersonated) viewer** from `getViewerDIDFromRequest`, which returns a single DID (the override target, else the JWT subject) and never a union. `buildVisibilityFilter`, the disclosure-grant resolution, the participant override, and `opts.ViewerIsAdmin = isViewerAdmin(resolvedDID)` are all keyed on that one DID. So an admin viewing-as a pseudonymous-grant holder sees the counterparty pseudonymised exactly as that holder would — the signed-in admin's own (broader) visibility does **not** bleed in. There is no admin+target mixing axis; the RD-1028 fail-open guard (`impersonation_viewer_resolution_test.go`) pins the contract-grant direction of the same property.
 
