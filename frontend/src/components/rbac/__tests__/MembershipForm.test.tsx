@@ -792,6 +792,48 @@ describe('MembershipForm', () => {
       expect(screen.queryByRole('option', { name: /Root Group/i })).not.toBeInTheDocument();
     });
 
+    it('excludes org-admin groups but keeps normal and read-only-admin groups (RD-1099)', async () => {
+      const user = userEvent.setup();
+
+      const normalGroup = createMockGroup({ id: 'group-normal', org_id: 'org-1', name: 'Members', path: 'members' });
+      const orgAdminGroup = createMockGroup({ id: 'group-admin', org_id: 'org-1', name: 'Org Admins', path: 'admins', is_org_admin: true });
+      const readonlyAdminGroup = createMockGroup({ id: 'group-ro', org_id: 'org-1', name: 'Read Only Admins', path: 'ro-admins', is_org_readonly_admin: true });
+
+      server.use(
+        http.get('/api/v1/admin/orgs/:orgId/groups', () => {
+          return HttpResponse.json({
+            data: [
+              { group: normalGroup, access: null },
+              { group: orgAdminGroup, access: null },
+              { group: readonlyAdminGroup, access: null },
+            ],
+            total: 3,
+            limit: 50,
+            offset: 0,
+          });
+        })
+      );
+
+      renderMembershipForm();
+
+      await selectOption(user, 'Select organization', 'Test Organization');
+
+      await waitFor(() => {
+        expect(screen.queryByText('Loading groups...')).not.toBeInTheDocument();
+      });
+
+      const comboboxes = screen.getAllByRole('combobox');
+      await user.click(comboboxes[1]);
+
+      await waitFor(() => {
+        expect(screen.getByRole('option', { name: /Members/i })).toBeInTheDocument();
+      });
+      // Read-only-admin assignment is delegation, not escalation — stays visible.
+      expect(screen.getByRole('option', { name: /Read Only Admins/i })).toBeInTheDocument();
+      // Full org-admin assignment is super-admin-only — hidden from the tier-2 dropdown.
+      expect(screen.queryByRole('option', { name: /Org Admins/i })).not.toBeInTheDocument();
+    });
+
     it('shows message when user is in all groups', async () => {
       const user = userEvent.setup();
 

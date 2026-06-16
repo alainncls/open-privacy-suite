@@ -104,6 +104,8 @@ Because granting org-admin status creates a peer who could ban or demote the gra
 
 Read-only admin (`is_org_readonly_admin`) groups are **not** restricted this way: a tier-2 admin may freely assign, remove, and manage read-only admins, since that role is a strict subset of their own permissions (delegation, not escalation).
 
+To match this, the dashboard hides org-admin groups from the user-onboarding and add-membership group pickers for tier-2 admins, so they are not offered an option the server would reject. The server-side `403` remains the enforced boundary regardless of the UI.
+
 ---
 
 ## Claims Hierarchy
