@@ -415,6 +415,14 @@ describe('ContractGrantsManager — event rules display', () => {
       expect(
         await screen.findByText(/visibleTo unlock enabled for this contract/i),
       ).toBeInTheDocument();
+
+      // RD-1069: the enabled-state caption must match the confirm dialog —
+      // it gates on contract group access and denies cross-org/anonymous,
+      // and must NOT claim "full event payloads with any DID".
+      expect(
+        screen.getByText(/already hold contract group access in this org/i),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/with any DID they list/i)).not.toBeInTheDocument();
     });
 
     it('RD-1075: enabling fires onContractUpdated with the saved contract', async () => {

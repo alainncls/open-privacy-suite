@@ -345,8 +345,9 @@ export default function ContractGrantsManager({
                 {allowVisibleToUnlock && (
                   <p className="text-xs text-amber-700 flex items-center gap-1">
                     <ShieldAlert className="w-3 h-3" />
-                    Tx senders on this contract may now share full event payloads
-                    with any DID they list.
+                    Tx senders can unlock a transaction's event payloads only to
+                    listed DIDs that already hold contract group access in this
+                    org; cross-org and anonymous viewers remain denied.
                   </p>
                 )}
                 {unlockSuccess && (

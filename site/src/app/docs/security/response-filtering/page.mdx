@@ -199,6 +199,17 @@ These controls ensure that even within a shared private network where all partic
 
 The `visibleTo` feature (renamed from `logVisibleTo`) allows a transaction sender to specify additional DIDs (decentralized identifiers) that can see the transaction and its event logs. This is useful for multi-party workflows where a third party needs to observe events they are not a direct participant of (e.g., an auditor, a settlement bank, or a compliance officer).
 
+### Two distinct mechanisms
+
+`visibleTo` drives two different things with **different gating** — keep them separate:
+
+| Mechanism | What a listed DID sees | What it requires |
+| --- | --- | --- |
+| **Transaction & receipt visibility** (always on) | The full transaction object (`eth_getTransactionByHash` and the block-index variants) and the full receipt (`eth_getTransactionReceipt`) for that one tx | Only that the viewer's DID is in the tx's `visibleTo` list. **No group access or contract grant is required.** Logs inside a returned receipt are still event-rule filtered. |
+| **Event-log unlock** (per-contract opt-in) | **All** event logs of that tx — bypassing the event-rules allowlist, `param_rules`, and field-level redaction | The `allow_visibleto_unlock` flag on the contract **and** the viewer holds an in-org contract grant (see eligibility below). Cross-org and anonymous viewers are denied. |
+
+So "I listed Bob in `visibleTo`" does **not** by itself mean "Bob sees every event payload." Bob always gets the transaction and receipt; he only gets the unredacted event logs when the contract has opted in *and* Bob is grant-eligible.
+
 ### How it works
 
 The sender includes a `visibleTo` array when submitting the transaction:
@@ -268,6 +279,16 @@ Cross-org isolation: a viewer who has access only in another org cannot be unloc
 - Contracts with the flag on let the tx sender authorise per-event visibility for any DID they list. Set this only on contracts where that's the intended workflow.
 - The set of users who can see a contract's events grows beyond what your `groups + grants` enumeration shows when the flag is on. Plan for that in access reviews.
 - Revoking a viewer's group membership cuts their unlock access immediately on the next request -- the eligibility check runs per-request.
+
+### RPC method access still required
+
+`visibleTo` and the unlock relax **redaction**, never **method access**. Every RPC retrieval surface is gated first by the viewer's group `AllowedMethods`, before any visibility or redaction logic runs:
+
+- To receive the transaction object, the group must allow `eth_getTransactionByHash` (or the block-index variants).
+- To receive the receipt and its logs, the group must allow `eth_getTransactionReceipt`.
+- To receive filtered logs, the group must allow `eth_getLogs` (plus contract access).
+
+A DID listed in `visibleTo` whose group does not allow the relevant method is denied at the allowlist check -- the feature never adds a method to a viewer's allowlist. The **only** surface exempt from the method allowlist is the **Explorer API**, which authenticates separately and reads through the redaction engine. That is why a listed viewer can see a disclosed transaction in the explorer yet still be unable to call `eth_getLogs` directly over RPC.
 
 ### Scope
 

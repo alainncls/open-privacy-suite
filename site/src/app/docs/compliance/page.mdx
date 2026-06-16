@@ -149,11 +149,22 @@ Typical use cases: OFAC SDN List compliance, addresses associated with known fra
 
 ### Token Prices
 
-Since the Open Privacy Suite operates on a private network without external oracle access, token prices must be manually configured by administrators.
+Compliance thresholds are denominated in fiat, so the suite needs a fiat price for every token it values. Prices come from two sources:
 
-- Price expressed in USD per token unit (e.g., $2,000 per ETH)
+**CoinGecko (automatic, default-on).** A background fetcher keeps system prices current. Native ETH is auto-priced from CoinGecko with no manual configuration. Individual tokens opt into automatic pricing by setting a `coingecko_id` (supported: `ethereum`, `usd-coin`, `tether`). Set `DISABLE_COINGECKO=true` to turn the fetcher off (e.g. for air-gapped deployments that have no outbound network access).
+
+**Manual prices.** Administrators can set fixed prices per token, entered per currency across the five supported fiat currencies: **USD, EUR, CHF, GBP, AED**.
+
+For a given token and the active currency, the price resolves in this order:
+
+1. Per-org price with a `coingecko_id` → latest CoinGecko system price
+2. Per-org price without a `coingecko_id` → the manually configured price
+3. No per-org entry, native ETH → the CoinGecko ETH price
+4. None of the above → transfer denied (fail-closed)
+
 - Prices can be updated at any time; changes apply immediately to new transfers
-- Missing price for any token results in transfer denial (fail-closed)
+- A CoinGecko price older than the configured staleness threshold is treated as unavailable and fails closed
+- A missing or zero price for any valued token results in transfer denial (fail-closed)
 
 ### Compliance Logs
 

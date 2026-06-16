@@ -279,9 +279,11 @@ Cross-org isolation: `GetEffectivePermissionsByIDs` resolves grants per-org, so 
 
 **Auditability note:** with the flag on, the set of users who can see a contract's events grows beyond what `groups + grants` enumeration alone shows — the active set is `(groups + grants) ∪ (every DID listed in any tx's visibleTo)`. Operators who flip the flag should plan for that surface in access-review tooling. The flag itself is a single boolean per contract; flips go through the admin API and are subject to whatever audit log the API surface uses.
 
+**Method-allowlist non-bypass (RPC layer):** the unlock relaxes *redaction*, never *method access*. Over RPC the group's `AllowedMethods` allowlist is enforced **first** (`rbac.access.go::HasMethod`), before contract-access and before any `visibleTo` / unlock / redaction logic. So an eligible, listed viewer whose group does not allow the method is denied at the allowlist gate — the unlock never adds a method to a viewer's allowlist. Which facet needs which method: tx object → `eth_getTransactionByHash` (or block-index variants); receipt + logs → `eth_getTransactionReceipt`; filtered logs → `eth_getLogs` (+ contract access). This non-bypass is intentional and test-locked by `TestCheckAccess_VisibleTo_DoesNotBypassMethodAllowlist` (RD-837). The **only** allowlist-exempt surface is the Explorer API (separate BFF/JWT auth, reads via `RedactionEngine`) — which is why "visible in the explorer" ≠ "can call `eth_getLogs`".
+
 ### 3.7.2 Disclosure-grant counterparty lens (RD-1079)
 
-When a viewer is **not** a transaction participant (§3.7) but holds a **disclosure grant** on *one* side of a transfer/tx, the redactor renders the *other* side (the counterparty) through a per-grant-level "lens" (`counterpartyLensLevel`, `internal/explorer/redactor.go`). The lens result is the floor the counterparty renders at — the disclosed party themselves renders at their own grant level via the visibility map.
+When a viewer is **not** a transaction participant (§3.7) but holds a **disclosure grant** on *one* side of a transfer/tx, the redactor renders the *other* side (the counterparty) through a per-grant-level "lens" (`counterpartyLensLevel`, `internal/explorer/redactor.go`). The lens result is the floor the counterparty renders at.
 
 The disclosed party themselves always renders at their own grant level via the visibility map, carrying `addressMetadata` reason `disclosure_grant`. The table below is about the **counterparty** (the other side):
 
