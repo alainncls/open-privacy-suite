@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"slices"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	core "github.com/iden3/go-iden3-core/v2"
+	"github.com/iden3/go-iden3-core/v2/w3c"
 
 	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/rbac"
@@ -396,9 +399,9 @@ func (s *Server) getUserLinkedAddresses(c *gin.Context) {
 
 	// Transform to match expected frontend format
 	type AddressResponse struct {
-		Address      string  `json:"address"`
-		VerifiedAt   string  `json:"verified_at"`
-		ENSName      *string `json:"ens_name,omitempty"`
+		Address       string  `json:"address"`
+		VerifiedAt    string  `json:"verified_at"`
+		ENSName       *string `json:"ens_name,omitempty"`
 		ENSResolvedAt *string `json:"ens_resolved_at,omitempty"`
 	}
 	addresses := make([]AddressResponse, 0, len(links))
@@ -607,6 +610,42 @@ func (s *Server) createUserMembership(c *gin.Context) {
 	c.JSON(http.StatusCreated, membership)
 }
 
+// validateOnboardDID checks that an admin-supplied onboarding identifier is a
+// usable DID before it is turned into a `users` row. Without this, a typo'd
+// DID, the Privado/Billions wallet *app* DID (instead of the user's *account*
+// DID), or arbitrary garbage was accepted verbatim and created a dead
+// membership row that no real login (DID = the verified ZK-proof `From`) would
+// ever match (RD-1098).
+//
+// It enforces two layers:
+//   - The string must be a syntactically valid W3C DID — rejects non-DID
+//     pastes (emails, addresses, names, truncated junk).
+//   - For iden3-family DIDs (Privado / Polygon ID), the on-chain identifier
+//     checksum must verify — rejects typo'd or truncated Privado DIDs.
+//
+// Non-iden3 DID methods are accepted on structure alone: they carry no
+// iden3 checksum we can verify, and they never reach this endpoint in
+// production (real identities are iden3 DIDs or `azuread:` subjects, the
+// latter not being DIDs and provisioned via the Azure login flow, not here).
+//
+// LIMITATION: this cannot distinguish the user's account DID from the wallet
+// app's own DID — both are valid iden3 DIDs differing only in the opaque
+// identity-state segment. That mistake is caught only by "the onboarded DID
+// must match the one the user authenticates with" (see operator docs).
+func validateOnboardDID(did string) error {
+	parsed, err := w3c.ParseDID(did)
+	if err != nil {
+		return fmt.Errorf("not a valid DID: %w", err)
+	}
+	switch core.DIDMethod(parsed.Method) {
+	case core.DIDMethodIden3, core.DIDMethodPolygonID:
+		if _, err := core.IDFromDID(*parsed); err != nil {
+			return fmt.Errorf("invalid iden3 identifier (bad checksum/network): %w", err)
+		}
+	}
+	return nil
+}
+
 // createMembershipByDID is the tier-2 onboarding path: an org admin can pull
 // a known DID into their own org without going through super-admin. The DID
 // → user_id translation that `createUserMembership` skips is done here by
@@ -653,6 +692,19 @@ func (s *Server) createMembershipByDID(c *gin.Context) {
 			c.JSON(http.StatusForbidden, gin.H{"error": errTargetForeignOrg})
 			return
 		}
+	}
+
+	// Validate the DID before any DB work. Trim first so a copy-pasted DID
+	// with stray whitespace matches the canonical form the auth path stores
+	// (`authResponse.From`). Fail-closed: a malformed/typo'd DID is rejected
+	// here rather than silently provisioned into a dead membership row. The
+	// error is opaque to the caller (DID format is not org-scoped, but raw
+	// parser internals are never echoed); the real cause is logged server-side.
+	input.DID = strings.TrimSpace(input.DID)
+	if err := validateOnboardDID(input.DID); err != nil {
+		slog.Warn("onboard-by-did: rejected invalid did", "org_id", orgID, "did", input.DID, "err", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid did"})
+		return
 	}
 
 	// Target group must live in :org_id. Look it up and verify directly —
