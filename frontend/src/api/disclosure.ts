@@ -93,6 +93,7 @@ export const disclosureApi = {
       const transformedData: DisclosureRequest[] = (response.data || []).map((item) => ({
         id: item.request.id,
         user_id: item.request.target_user_id,
+        target_did: item.target_did,
         requester_name: 'System', // Backend doesn't track requester name
         purpose: item.request.reason,
         scope: (item.request.scope?.methods || []) as DisclosureRequest['scope'],
@@ -162,6 +163,7 @@ export const disclosureApi = {
       const transformedRequests: DisclosureRequest[] = (response.data.requests || []).map((item) => ({
         id: item.request.id,
         user_id: item.request.target_user_id,
+        target_did: item.target_did,
         requester_did: item.request.requester_did,
         requester_name: 'System',
         purpose: item.request.reason,
@@ -331,6 +333,7 @@ export const disclosureApi = {
       const transformedData: DisclosureRequest[] = (response.data || []).map((item) => ({
         id: item.request.id,
         user_id: item.request.target_user_id,
+        target_did: item.target_did,
         requester_name: 'Compliance Request', // Backend doesn't track requester name
         purpose: item.request.reason,
         scope: (item.request.scope?.methods || []) as DisclosureRequest['scope'],
@@ -444,6 +447,7 @@ export const disclosureApi = {
       const transformedData: DisclosureRequest[] = (response.data || []).map((item) => ({
         id: item.request.id,
         user_id: item.request.target_user_id,
+        target_did: item.target_did,
         requester_name: item.request.requester_did || 'Compliance Request',
         requester_did: item.request.requester_did,
         purpose: item.request.reason,

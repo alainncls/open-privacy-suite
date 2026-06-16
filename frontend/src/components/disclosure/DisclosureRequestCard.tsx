@@ -193,9 +193,15 @@ export function DisclosureRequestCard({
               <span className="text-neutral-300">ID:</span>
               <span className="text-neutral-400">{request.id}</span>
             </div>
-            {request.user_id && (
+            {(request.target_did || request.user_id) && (
               <div className="flex items-center gap-2 font-mono">
                 <span className="text-neutral-300">Target User:</span>
+                <span className="text-neutral-400">{request.target_did || request.user_id}</span>
+              </div>
+            )}
+            {request.target_did && request.user_id && (
+              <div className="flex items-center gap-2 font-mono">
+                <span className="text-neutral-300">User ID:</span>
                 <span className="text-neutral-400">{request.user_id}</span>
               </div>
             )}

@@ -12,6 +12,10 @@ export type DisclosureLevel = 'full' | 'pseudonymous' | 'redacted';
 export interface DisclosureRequest {
   id: string;
   user_id: string;
+  // DID of the target user (subject of the request). Surfaced from the
+  // backend RequestWithDetails wrapper so the UI can identify the subject
+  // by DID instead of the opaque internal user UUID (user_id).
+  target_did?: string;
   requester_name: string;
   requester_org?: string;
   requester_did?: string;

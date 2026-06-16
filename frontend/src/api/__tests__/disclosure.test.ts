@@ -119,3 +119,62 @@ describe('disclosureApi.admin.createRequest — backend payload contract', () =>
     });
   });
 });
+
+/**
+ * RD-1071: the backend RequestWithDetails wrapper returns `target_did`
+ * alongside each request, but the FE transforms used to drop it and surface
+ * only the opaque internal user UUID. These tests pin that the transforms now
+ * carry `target_did` onto the DisclosureRequest while keeping `user_id` (the
+ * internal UUID) for ops/support.
+ */
+describe('disclosureApi — target_did carried onto DisclosureRequest (RD-1071)', () => {
+  const TARGET_UUID = 'a4c5e984-45d1-4188-8c90-71046d44a848';
+  const wrapper = (targetDid: string) => ({
+    request: {
+      id: 'req-1',
+      target_user_id: TARGET_UUID,
+      org_id: 'org-1',
+      scope: { methods: ['eth_call'], disclosure_level: 'pseudonymous' },
+      reason: 'AUDIT',
+      status: 'pending',
+      requested_at: '2026-01-01T00:00:00Z',
+    },
+    target_did: targetDid,
+  });
+
+  it('admin.listRequests maps target_did and keeps user_id as the UUID', async () => {
+    server.use(
+      http.get('/api/v1/admin/disclosure/requests', () =>
+        HttpResponse.json([wrapper('did:test:eve')])
+      )
+    );
+
+    const res = await disclosureApi.admin.listRequests();
+    expect(res.data[0].target_did).toBe('did:test:eve');
+    expect(res.data[0].user_id).toBe(TARGET_UUID);
+  });
+
+  it('admin.listRequestsWithFilter maps target_did onto each request', async () => {
+    server.use(
+      http.get('/api/v1/admin/disclosure/requests', () =>
+        HttpResponse.json({ requests: [wrapper('did:test:eve')], total: 1, limit: 50, offset: 0 })
+      )
+    );
+
+    const res = await disclosureApi.admin.listRequestsWithFilter({ org_id: 'org-1' });
+    expect(res.data.requests[0].target_did).toBe('did:test:eve');
+    expect(res.data.requests[0].user_id).toBe(TARGET_UUID);
+  });
+
+  it('user.getAllMyRequests maps target_did', async () => {
+    server.use(
+      http.get('/api/v1/me/disclosure/requests/all', () =>
+        HttpResponse.json([wrapper('did:test:dave')])
+      )
+    );
+
+    const res = await disclosureApi.user.getAllMyRequests('test-token');
+    expect(res.data[0].target_did).toBe('did:test:dave');
+    expect(res.data[0].user_id).toBe(TARGET_UUID);
+  });
+});
