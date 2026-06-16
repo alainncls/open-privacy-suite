@@ -90,6 +90,28 @@ export default function ComplianceConfig() {
     }
   };
 
+  // Dirty-state tracking: the form only persists on Save, so surface when the
+  // current selections differ from what's stored. When no config exists yet,
+  // treat the form as dirty so the initial config can be created.
+  const isDirty =
+    !config ||
+    enabled !== config.enabled ||
+    thresholdFiat !== String(config.threshold_fiat) ||
+    unknownPricePolicy !== (config.unknown_price_policy || 'forbidden');
+
+  // Warn before a full reload / tab close while there are unsaved changes —
+  // compliance enablement is security-relevant and silently losing a toggle
+  // gives a false sense of enforcement.
+  useEffect(() => {
+    if (!isDirty || isReadonlyAdmin) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [isDirty, isReadonlyAdmin]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -102,9 +124,14 @@ export default function ComplianceConfig() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h3 className="text-base font-medium text-neutral-700">Compliance Configuration</h3>
-        <Badge variant={enabled ? 'success' : 'secondary'}>
-          {enabled ? 'Enabled' : 'Disabled'}
-        </Badge>
+        <div className="flex items-center gap-2">
+          {isDirty && !isReadonlyAdmin && (
+            <Badge variant="warning">Unsaved changes</Badge>
+          )}
+          <Badge variant={enabled ? 'success' : 'secondary'}>
+            {enabled ? 'Enabled' : 'Disabled'}
+          </Badge>
+        </div>
       </div>
 
       {error && (
@@ -180,10 +207,17 @@ export default function ComplianceConfig() {
         </div>
 
         {!isReadonlyAdmin && (
-          <Button onClick={handleSave} disabled={saving}>
-            {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-            Save Configuration
-          </Button>
+          <div className="flex items-center gap-3">
+            <Button onClick={handleSave} disabled={saving || !isDirty}>
+              {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Save Configuration
+            </Button>
+            {isDirty && (
+              <span className="text-xs text-warning-dark">
+                You have unsaved changes
+              </span>
+            )}
+          </div>
         )}
       </div>
 
