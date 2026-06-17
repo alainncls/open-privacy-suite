@@ -305,6 +305,86 @@ func TestGetTransactionsPaginatedWithCategories(t *testing.T) {
 	assertCategories(t, "tx3", tx3.TxCategories, []string{"contract_creation"})
 }
 
+// TestCountTransactionsFiltered verifies the visibility-aware total is a
+// stable, DB-wide COUNT — and, critically, that GetTransactionsPaginatedFiltered
+// reports the SAME total on every page (not a page-local len()). This guards
+// the RD-1061 fix: the chain-indexer gRPC backend now sources its paginated
+// total from this method, so a page-local regression here would resurface the
+// "47 on page 1, 70 on page 2, phantom page 3" bug.
+func TestCountTransactionsFiltered(t *testing.T) {
+	dbURL, cleanup := setupTestContainer(t)
+	defer cleanup()
+
+	sqlDB, err := sql.Open("pgx", dbURL)
+	if err != nil {
+		t.Fatalf("open sql db: %v", err)
+	}
+	defer sqlDB.Close()
+
+	setupExplorerSchema(t, sqlDB)
+	insertTestFixtures(t, sqlDB) // tx1 (0xsender1), tx2 (0xsender2), tx3 (0xdeployer)
+
+	store, err := NewStore(dbURL)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+
+	t.Run("no filter counts all", func(t *testing.T) {
+		got, err := store.CountTransactionsFiltered(ctx, nil)
+		if err != nil {
+			t.Fatalf("CountTransactionsFiltered: %v", err)
+		}
+		if got != 3 {
+			t.Errorf("count = %d, want 3", got)
+		}
+	})
+
+	t.Run("allowlist counts only visible participants", func(t *testing.T) {
+		cases := []struct {
+			name    string
+			visible []string
+			want    int64
+		}{
+			{"one sender", []string{"0xsender1"}, 1},
+			{"two senders", []string{"0xsender1", "0xsender2"}, 2},
+			{"none visible (fail closed)", []string{}, 0},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				filter := &VisibilityFilter{AllPrivate: true, VisibleAddresses: tc.visible}
+				got, err := store.CountTransactionsFiltered(ctx, filter)
+				if err != nil {
+					t.Fatalf("CountTransactionsFiltered: %v", err)
+				}
+				if got != tc.want {
+					t.Errorf("count = %d, want %d", got, tc.want)
+				}
+			})
+		}
+	})
+
+	t.Run("paginated total is identical across pages", func(t *testing.T) {
+		// 3 visible txs, pageSize 2 => 2 pages, but total must read 3 on BOTH.
+		_, total1, err := store.GetTransactionsPaginatedFiltered(ctx, 1, 2, nil)
+		if err != nil {
+			t.Fatalf("page 1: %v", err)
+		}
+		page2, total2, err := store.GetTransactionsPaginatedFiltered(ctx, 2, 2, nil)
+		if err != nil {
+			t.Fatalf("page 2: %v", err)
+		}
+		if total1 != 3 || total2 != 3 {
+			t.Errorf("totals = (%d, %d), want (3, 3) — total must be DB-wide, not page-local", total1, total2)
+		}
+		if len(page2) != 1 {
+			t.Errorf("page 2 rows = %d, want 1 (remainder)", len(page2))
+		}
+	})
+}
+
 // This test exists specifically to catch the regression where populateCategories
 // silently queried a non-existent tx_categories table, returning nil for all categories.
 

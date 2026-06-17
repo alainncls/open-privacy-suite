@@ -31,6 +31,13 @@ or degrades it acceptably; **"Open"** items still need attention.
 - **User impact**: UI pagers that render "Showing 50 of 12,345" will say "Showing 50 of 50". Navigation to deep pages still works (offset is respected), but the "last page" hint is gone.
 - **Suggestion**: either (a) add counts to the indexer — probably `BatchGetLogCounts` / `BatchGetTransferCounts` per key, or (b) accept the shift and change the UI to a "load more" pattern. Option (b) is lighter and matches cursor pagination; option (a) is needed if exact totals matter for compliance.
 
+### 1a. Transactions paginated total — RESTORED to a DB-wide COUNT (RD-1061)
+
+- **What**: `GET /api/v1/explorer/transactions/paginated` previously returned a **page-local** `total` under the gRPC backend (`len(filtered rows after skip)`), so the value grew as the client paginated — e.g. 47 on page 1, 70 on page 2 — inflating the computed page count and producing a phantom extra page.
+- **Fix**: `GetTransactionsPaginatedFiltered` now sources `total` from the embedded SQL `*Store.CountTransactionsFiltered` — the same visibility-aware `SELECT COUNT(*) FROM transactions WHERE <visClause>` that `GetChainStatsFiltered` already uses through this backend. The page **rows** still come from the indexer over gRPC; only the **total** is sourced from SQL. The total respects the viewer's visibility allowlist + `VisibleTxHashes`, so it never leaks counts the viewer cannot see.
+- **Why this one and not §1**: the transactions table is queryable via the embedded `*Store` (`EXPLORER_DATABASE_URL`); logs/transfers/internal-tx in §1 would each need their own visibility-aware COUNT and are left page-local for now.
+- **Residual**: the SQL COUNT does not subtract post-query "G10" redaction drops, so the total can still very slightly overcount vs the rendered rows (pre-existing; documented at `explorer_api.go` `getExplorerTransactionsPaginated`). Stable across pages, which was the user-visible bug.
+
 ### 2. `GetTransactionHistory` interval quantizes to enum
 
 - **What**: Legacy takes `intervalSeconds int`; new path maps to `TimeBucket` enum (HOUR / DAY / WEEK). An intermediate interval (e.g., 15 minutes, 6 hours) rounds up to the next larger bucket.

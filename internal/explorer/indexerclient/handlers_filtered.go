@@ -105,12 +105,21 @@ func (b *Backend) GetTransactionsWithCategoriesFiltered(ctx context.Context, lim
 // ((page-1) * pageSize). Inefficient for deep pages; acceptable for the
 // first few pages — typical UI use.
 //
-// Returns a page-local total: len(filtered rows after skip). This matches
-// the stage-2a pattern where offset totals are page-local, not DB-wide.
-// See docs/rd-855-behavioral-shifts.md §1.
+// Total is the visibility-aware, DB-wide COUNT(*) from the embedded SQL
+// *Store (CountTransactionsFiltered) — the same count GetChainStatsFiltered
+// already relies on through this backend. Previously this returned
+// len(filtered rows after skip), a page-local total that grew as the client
+// paginated (e.g. 47 on page 1, 70 on page 2), inflating the computed page
+// count and producing phantom pages. The rows still come from the indexer;
+// only the total is sourced from SQL. See docs/rd-855-behavioral-shifts.md §1.
 func (b *Backend) GetTransactionsPaginatedFiltered(ctx context.Context, page, pageSize int, filter *explorer.VisibilityFilter) ([]explorer.Transaction, int64, error) {
 	if page < 1 {
 		page = 1
+	}
+	// Stable, visibility-aware total — independent of the requested page.
+	total, err := b.Store.CountTransactionsFiltered(ctx, filter)
+	if err != nil {
+		return nil, 0, err
 	}
 	fetchCount := overfetchLimit(page * pageSize)
 	txs, err := b.GetTransactions(ctx, fetchCount, nil)
@@ -120,14 +129,14 @@ func (b *Backend) GetTransactionsPaginatedFiltered(ctx context.Context, page, pa
 	filtered := filterTxs(txs, filter)
 	start := (page - 1) * pageSize
 	if start >= len(filtered) {
-		return nil, int64(len(filtered)), nil
+		return nil, total, nil
 	}
 	end := start + pageSize
 	if end > len(filtered) {
 		end = len(filtered)
 	}
 	window := filtered[start:end]
-	return window, int64(len(filtered)), nil
+	return window, total, nil
 }
 
 // GetTransactionsPaginatedWithCategoriesFiltered — same call, kept

@@ -689,17 +689,30 @@ func (s *Store) GetTransactionsFiltered(ctx context.Context, limit int, beforeBl
 	return s.scanTransactions(rows)
 }
 
-// GetTransactionsPaginatedFiltered returns paginated transactions with visibility filtering.
-func (s *Store) GetTransactionsPaginatedFiltered(ctx context.Context, page, pageSize int, filter *VisibilityFilter) ([]Transaction, int64, error) {
-	visClause, visArgs, nextArg := visibilityWhereClause(filter, 1)
-
+// CountTransactionsFiltered returns the visibility-aware total transaction
+// count — the same COUNT(*) the paginated SQL queries use. It is exposed so
+// callers that fetch the page rows from a different source (e.g. the
+// chain-indexer gRPC backend) can still surface a stable, DB-wide total
+// instead of a page-local len(). With no active filter it returns the
+// chain-wide transaction count.
+func (s *Store) CountTransactionsFiltered(ctx context.Context, filter *VisibilityFilter) (int64, error) {
+	visClause, visArgs, _ := visibilityWhereClause(filter, 1)
 	var total int64
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM transactions t WHERE 1=1%s", visClause)
-	err := s.db.QueryRowContext(ctx, countQuery, visArgs...).Scan(&total)
+	if err := s.db.QueryRowContext(ctx, countQuery, visArgs...).Scan(&total); err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+// GetTransactionsPaginatedFiltered returns paginated transactions with visibility filtering.
+func (s *Store) GetTransactionsPaginatedFiltered(ctx context.Context, page, pageSize int, filter *VisibilityFilter) ([]Transaction, int64, error) {
+	total, err := s.CountTransactionsFiltered(ctx, filter)
 	if err != nil {
 		return nil, 0, err
 	}
 
+	visClause, visArgs, nextArg := visibilityWhereClause(filter, 1)
 	offset := (page - 1) * pageSize
 	query := fmt.Sprintf(`
 		SELECT t.hash, t.block_number, b.timestamp, t.tx_index, t.from_address, t.to_address, t.value::text,
@@ -761,14 +774,12 @@ func (s *Store) GetTransactionsWithCategoriesFiltered(ctx context.Context, limit
 
 // GetTransactionsPaginatedWithCategoriesFiltered returns paginated transactions with categories and visibility filtering.
 func (s *Store) GetTransactionsPaginatedWithCategoriesFiltered(ctx context.Context, page, pageSize int, filter *VisibilityFilter) ([]Transaction, int64, error) {
-	visClause, visArgs, nextArg := visibilityWhereClause(filter, 1)
-
-	var total int64
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM transactions t WHERE 1=1%s", visClause)
-	if err := s.db.QueryRowContext(ctx, countQuery, visArgs...).Scan(&total); err != nil {
+	total, err := s.CountTransactionsFiltered(ctx, filter)
+	if err != nil {
 		return nil, 0, err
 	}
 
+	visClause, visArgs, nextArg := visibilityWhereClause(filter, 1)
 	offset := (page - 1) * pageSize
 	query := fmt.Sprintf(`
 		SELECT t.hash, t.block_number, b.timestamp, t.tx_index, t.from_address, t.to_address, t.value::text,
