@@ -332,7 +332,7 @@ Org admins can also use the [dry-run / "what would this user see"](/docs/rbac#ad
 ## Day-1 checklist
 
 ```
-[ ] ADMIN_API_TOKEN sourced from secret store, commands run from the host (localhost-only API)
+[ ] ADMIN_API_TOKEN sourced from secret store; admin API reached from an allowed private-network source IP (token + IP gate)
 [ ] Created the organization                          (POST /orgs)
 [ ] Created the first org-admin group (is_org_admin)  (POST /orgs/:org/groups)   ← super-admin only
 [ ] Set the admin group's method allowlist            (PUT  .../access, claims: [])
@@ -348,7 +348,7 @@ Org admins can also use the [dry-run / "what would this user see"](/docs/rbac#ad
 
 ## Endpoint reference
 
-All paths are prefixed `/api/v1/admin`. All require `X-Admin-Token` (super-admin) or `Authorization: Bearer <JWT>` (tier-2 org admin), and all are localhost-only.
+All paths are prefixed `/api/v1/admin`. All require `X-Admin-Token` (super-admin) or `Authorization: Bearer <JWT>` (tier-2 org admin), and all are gated to private-network source IPs (token + the IP check described in [Before you start](#before-you-start)).
 
 | Purpose | Method & path | Auth |
 |---|---|---|
