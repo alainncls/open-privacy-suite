@@ -76,7 +76,7 @@ The response includes the org's `id` (a UUID). Capture it — every subsequent c
 ORG_ID="<id from the response>"
 ```
 
-`slug` must be URL-safe (lowercase, hyphens). Creating an org also auto-creates a system **default group** (`is_system = true`) that new self-onboarding users land in; you tune its baseline permissions later via its `/access` endpoint.
+`slug` must be URL-safe (lowercase, hyphens). A new org starts with **no groups** — you create them explicitly in the steps below. Users who self-onboard by simply logging in (without first being onboarded by an admin) land in the single system-wide **default group** with its baseline permissions — not in an org-specific group — and gain this org's access only once an admin adds them to one of its groups.
 
 </Step>
 
@@ -137,7 +137,7 @@ That human can now log into the dashboard via Privado/Azure and run everything i
 </Step>
 
 <Callout variant="info" title="Where DIDs come from">
-A user's DID is established the first time they authenticate. If you don't have it yet, have the user log in once (Privado QR or Azure SSO); they're auto-provisioned into the org default group, and you can then read their DID/UUID from `GET /api/v1/admin/users`. Privado users surface two DIDs (a genesis DID and a per-verifier profile DID) — onboard the **login DID** the user authenticates with.
+A user's DID is established the first time they authenticate. If you don't have it yet, have the user log in once (Privado QR or Azure SSO); they're auto-provisioned into the system-wide default group, and you can then read their DID/UUID from `GET /api/v1/admin/users`. Privado users surface two DIDs (a genesis DID and a per-verifier profile DID) — onboard the **login DID** the user authenticates with.
 </Callout>
 
 ---
@@ -161,6 +161,10 @@ A group bundles a **method allowlist** with **claims**. Pick claims by the role 
 The `admin` claim implies `deploy` + `upgrade`. Only those three claims gate anything; all other access is the method allowlist's job. The API rejects mismatches — e.g. allowing `debug_traceTransaction` without the `deploy` claim returns `400`.
 </Callout>
 
+<Callout variant="info" title="Tx-sending groups need the EIP-1559 fee methods">
+Any group whose users **send transactions** with a wallet or CLI (MetaMask, `cast`, ethers, viem) also needs `eth_feeHistory`, `eth_maxPriorityFeePerGas`, and `eth_getBlockByNumber` in its allowlist: those clients build EIP-1559 transactions by default and call the fee-estimation methods *before* signing, so without them the send fails before it ever reaches the chain. The deployer example below includes them. (Alternatively the client can send legacy transactions — e.g. `cast send --legacy` — which price gas from `eth_gasPrice` and skip the fee methods.)
+</Callout>
+
 Create a deployer group, then set its access:
 
 ```bash
@@ -178,13 +182,14 @@ curl -sS -X PUT "$PROXY/api/v1/admin/orgs/$ORG_ID/groups/$DEPLOY_GROUP_ID/access
       "eth_call", "eth_sendTransaction", "eth_sendRawTransaction",
       "eth_estimateGas", "eth_getBalance", "eth_getCode",
       "eth_getTransactionCount", "eth_getTransactionReceipt",
-      "eth_blockNumber", "eth_chainId", "eth_gasPrice"
+      "eth_blockNumber", "eth_chainId", "eth_gasPrice",
+      "eth_feeHistory", "eth_maxPriorityFeePerGas", "eth_getBlockByNumber"
     ],
     "claims": ["deploy"]
   }'
 ```
 
-The `/access` body also accepts optional `rate_limit_rps`, `rate_limit_daily`, and a per-group upstream `rpc_api_key` (+ `rpc_api_key_header`) — see [RBAC → Per-Group RPC API Keys](/docs/rbac#per-group-rpc-api-keys).
+The `/access` body also accepts optional `rate_limit_rps`, `rate_limit_daily`, and a per-group upstream `rpc_api_key` — see [RBAC → Per-Group RPC API Keys](/docs/rbac#per-group-rpc-api-keys).
 
 ### Add users to groups
 
@@ -253,8 +258,8 @@ For the full function/event/parameter-constraint model and the two-step UI wizar
 
 ## Connecting tools to the proxy
 
-<Callout variant="warning" title="Verify these against a live stack before relying on them">
-The `cast` snippets below are written from the proxy's auth model and Foundry's documented flags, but have **not yet been run end-to-end against a deployed stack**. Treat them as a starting point and confirm locally.
+<Callout variant="info" title="Verified end-to-end against a live stack">
+These `cast` snippets have been run through the proxy against a live node. Two non-obvious requirements are baked into them: `cast call` needs `--from <one of the caller's linked addresses>` (the proxy rejects an unlinked or zero `from`), and `cast send` builds an EIP-1559 transaction whose fee estimation calls `eth_feeHistory` + `eth_maxPriorityFeePerGas` — so the sender's group must allowlist those (see above), or pass `--legacy`.
 </Callout>
 
 Two different surfaces, two different tools:
@@ -271,11 +276,20 @@ Two different surfaces, two different tools:
 JWT="${PRIVACY_PROXY_USER_JWT}"
 RPC="$PROXY/rpc"          # or /rpc/:org_id for multi-org users
 
-# Read call through the proxy as that user
+# Read call through the proxy as that user. Pass --from with one of the
+# user's own linked addresses: the proxy's eth_call path rejects any other
+# `from`, and cast otherwise defaults it to the zero address — which comes
+# back as "call denied: invalid request shape".
 cast call 0xToken... "balanceOf(address)(uint256)" 0xUser... \
+  --from 0xYourLinkedAddress... \
   --rpc-url "$RPC" --rpc-headers "Authorization: Bearer $JWT"
 
-# Send a transaction through the proxy (needs the method in the group allowlist)
+# Send a transaction through the proxy. cast builds an EIP-1559 tx by
+# default, so it first calls eth_feeHistory + eth_maxPriorityFeePerGas to
+# estimate fees — the sender's group must allowlist those (see the deployer
+# group above). Add --legacy to price gas from eth_gasPrice and skip them.
+# The tx is signed locally, so it reaches the proxy as eth_sendRawTransaction
+# (access-checked as eth_sendTransaction).
 cast send 0xToken... "transfer(address,uint256)" 0xRecipient... 1000 \
   --rpc-url "$RPC" --rpc-headers "Authorization: Bearer $JWT" \
   --private-key "$PK"
@@ -296,10 +310,12 @@ The supported Foundry **deployment** integration is the bundled `privacy-cli`, w
 curl -sS "$PROXY/api/v1/admin/users/$USER_ID/effective-permissions" \
   -H "X-Admin-Token: $ADMIN_API_TOKEN"
 
-# Simulate a specific access decision without side effects
+# Simulate a specific access decision without side effects. Mind the field
+# names: the user is identified by user_external_id (their DID, not the UUID)
+# and the contract by target_address; include org_id for multi-org users.
 curl -sS -X POST "$PROXY/api/v1/admin/access/check" \
   -H "X-Admin-Token: $ADMIN_API_TOKEN" -H "Content-Type: application/json" \
-  -d '{ "user_id": "'"$USER_ID"'", "method": "eth_call", "address": "0xToken..." }'
+  -d '{ "user_external_id": "did:iden3:privado:main:2Sf...", "org_id": "'"$ORG_ID"'", "method": "eth_call", "target_address": "0xToken..." }'
 ```
 
 Org admins can also use the [dry-run / "what would this user see"](/docs/rbac#admin-dry-run--impersonation) endpoint to validate a user's view of a real RPC call. Finally, confirm the user can authenticate end-to-end by having them log in to the dashboard or explorer — or by making a read call through the proxy with their JWT (see [Connecting tools to the proxy](#connecting-tools-to-the-proxy)).
