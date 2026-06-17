@@ -39,10 +39,10 @@ PROXY=http://127.0.0.1:8080
 
 | Caller | Header | Can do | Cannot do |
 |---|---|---|---|
-| **Super-admin** (bootstrap) | `X-Admin-Token: $ADMIN_API_TOKEN` | Everything, in any org. Create orgs, mint `is_org_admin` groups. | — |
+| **Super-admin** (bootstrap / platform) | `X-Admin-Token: $ADMIN_API_TOKEN` | Platform lifecycle: create & manage orgs, mint each org's first `is_org_admin` group, fleet-wide maintenance config. | — |
 | **Org admin** (tier-2) | `Authorization: Bearer <session-JWT>` | Manage their own org: create non-admin groups, set access, onboard users, grant contracts. | Create orgs, create other `is_org_admin` groups (escalation-blocked). |
 
-Tier-2 org admins normally use the **dashboard UI** — they obtain their JWT by logging in through Privado or Azure SSO like any user. The API examples below use `X-Admin-Token` because the bootstrap steps are super-admin-only; from "Day-to-day onboarding" onward, a tier-2 admin can do the same calls with their `Authorization: Bearer` token.
+Tier-2 org admins normally use the **dashboard UI** — they obtain their JWT by logging in through Privado or Azure SSO like any user. **Part 1 (bootstrap) is super-admin-only** and uses `X-Admin-Token`; **Part 2 onward is the org admin's job** and uses their `Authorization: Bearer` token (the examples switch to it accordingly).
 
 ### Who holds the super-admin token determines who runs the bootstrap
 
@@ -144,7 +144,13 @@ A user's DID is established the first time they authenticate. If you don't have 
 
 ## Part 2 — Day-to-day onboarding
 
-Run these as the **tier-2 org admin** from Part 1, using their session JWT (`Authorization: Bearer <their-JWT>`) — that's the intended day-to-day path (least privilege, and the audit log attributes each change to that admin). A super-admin `X-Admin-Token` *can* technically run them all too, but **reserve it** for the Part 1 bootstrap, creating/updating orgs, minting org admins, and the maintenance endpoints. The examples below keep the `X-Admin-Token` header only to stay copy-paste-consistent with Part 1 — swap in `Authorization: Bearer <JWT>` for normal day-to-day use.
+These are the **tier-2 org admin's** day-to-day operations, run with their session JWT — they manage their own org: groups, memberships, contract grants, KYC/ban. (Org creation and minting org admins are **not** here — those are the super-admin bootstrap in Part 1.)
+
+```bash
+# The org admin's session JWT, from logging in via Privado / Azure SSO.
+# Short-lived — refresh when it expires. Sent as Authorization: Bearer below.
+ADMIN_JWT="${PRIVACY_PROXY_ADMIN_JWT}"
+```
 
 ### Create the groups your users need
 
@@ -177,13 +183,13 @@ Create a deployer group, then set its access:
 ```bash
 # Create
 curl -sS -X POST "$PROXY/api/v1/admin/orgs/$ORG_ID/groups" \
-  -H "X-Admin-Token: $ADMIN_API_TOKEN" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ADMIN_JWT" -H "Content-Type: application/json" \
   -d '{ "slug": "deployers", "name": "Contract Deployers" }'
 # → capture group id as DEPLOY_GROUP_ID
 
 # Set access (methods + claims)
 curl -sS -X PUT "$PROXY/api/v1/admin/orgs/$ORG_ID/groups/$DEPLOY_GROUP_ID/access" \
-  -H "X-Admin-Token: $ADMIN_API_TOKEN" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ADMIN_JWT" -H "Content-Type: application/json" \
   -d '{
     "allowed_methods": [
       "eth_call", "eth_sendTransaction", "eth_sendRawTransaction",
@@ -204,7 +210,7 @@ The `/access` body also accepts optional `rate_limit_rps`, `rate_limit_daily`, a
 
 ```bash
 curl -sS -X POST "$PROXY/api/v1/admin/orgs/$ORG_ID/memberships/by-did" \
-  -H "X-Admin-Token: $ADMIN_API_TOKEN" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ADMIN_JWT" -H "Content-Type: application/json" \
   -d '{ "did": "did:iden3:privado:main:2Sf...", "group_id": "'"$DEPLOY_GROUP_ID"'" }'
 ```
 
@@ -214,11 +220,11 @@ This is an **ADD**, not a move — it does not touch the user's default-group me
 
 ```bash
 # Find the UUID
-curl -sS "$PROXY/api/v1/admin/users" -H "X-Admin-Token: $ADMIN_API_TOKEN"
+curl -sS "$PROXY/api/v1/admin/users" -H "Authorization: Bearer $ADMIN_JWT"
 
 # Add to a group (the target user must already be in your full-admin scope)
 curl -sS -X POST "$PROXY/api/v1/admin/users/$USER_ID/memberships" \
-  -H "X-Admin-Token: $ADMIN_API_TOKEN" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ADMIN_JWT" -H "Content-Type: application/json" \
   -d '{ "group_id": "'"$DEPLOY_GROUP_ID"'" }'
 ```
 
@@ -230,7 +236,7 @@ Permissions take effect immediately on the server, but a user holding an **alrea
 
 ```bash
 curl -sS -X PUT "$PROXY/api/v1/admin/users/$USER_ID" \
-  -H "X-Admin-Token: $ADMIN_API_TOKEN" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ADMIN_JWT" -H "Content-Type: application/json" \
   -d '{ "kyc": true, "banned": false }'
 ```
 
@@ -245,12 +251,12 @@ All contracts are **private by default**. Standard users (anything but an org ad
 ```bash
 # Register an existing on-chain contract to the org (skip for proxy-deployed ones)
 curl -sS -X POST "$PROXY/api/v1/admin/orgs/$ORG_ID/contracts" \
-  -H "X-Admin-Token: $ADMIN_API_TOKEN" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ADMIN_JWT" -H "Content-Type: application/json" \
   -d '{ "address": "0xToken...", "name": "Acme USD" }'
 
 # Grant a group access to it
 curl -sS -X POST "$PROXY/api/v1/admin/orgs/$ORG_ID/contracts/0xToken.../grants" \
-  -H "X-Admin-Token: $ADMIN_API_TOKEN" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ADMIN_JWT" -H "Content-Type: application/json" \
   -d '{ "group_id": "'"$DEPLOY_GROUP_ID"'" }'
 ```
 
@@ -315,13 +321,13 @@ The supported Foundry **deployment** integration is the bundled `privacy-cli`, w
 ```bash
 # Effective permissions for a user (what they can actually do)
 curl -sS "$PROXY/api/v1/admin/users/$USER_ID/effective-permissions" \
-  -H "X-Admin-Token: $ADMIN_API_TOKEN"
+  -H "Authorization: Bearer $ADMIN_JWT"
 
 # Simulate a specific access decision without side effects. Mind the field
 # names: the user is identified by user_external_id (their DID, not the UUID)
 # and the contract by target_address; include org_id for multi-org users.
 curl -sS -X POST "$PROXY/api/v1/admin/access/check" \
-  -H "X-Admin-Token: $ADMIN_API_TOKEN" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ADMIN_JWT" -H "Content-Type: application/json" \
   -d '{ "user_external_id": "did:iden3:privado:main:2Sf...", "org_id": "'"$ORG_ID"'", "method": "eth_call", "target_address": "0xToken..." }'
 ```
 
@@ -348,7 +354,7 @@ Org admins can also use the [dry-run / "what would this user see"](/docs/rbac#ad
 
 ## Endpoint reference
 
-All paths are prefixed `/api/v1/admin`. All require `X-Admin-Token` (super-admin) or `Authorization: Bearer <JWT>` (tier-2 org admin), and all are gated to private-network source IPs (token + the IP check described in [Before you start](#before-you-start)).
+All paths are prefixed `/api/v1/admin`. Day-to-day endpoints (Part 2+) are driven by the tier-2 org admin's `Authorization: Bearer <JWT>`; the platform/bootstrap endpoints (Part 1 — create org, mint org admins) use the super-admin `X-Admin-Token`. The per-row **Auth** column below says which is which. All are gated to private-network source IPs (the IP check described in [Before you start](#before-you-start)).
 
 | Purpose | Method & path | Auth |
 |---|---|---|
