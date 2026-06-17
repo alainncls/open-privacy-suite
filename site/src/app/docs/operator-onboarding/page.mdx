@@ -17,10 +17,10 @@ Everything here drives the **admin REST API** with `curl`. The same operations a
 
 ## Before you start
 
-<Callout variant="warning" title="The admin API is localhost-only">
-Every `/api/v1/admin/*` endpoint is gated by a network check **in addition to** token auth. Only callers from loopback (`127.0.0.1`, `::1`) and RFC1918 / CGNAT private ranges (Docker bridge `172.16.0.0/12`, `192.168.0.0/16`, Tailscale `100.64.0.0/10`) are accepted; anything else gets `403` before auth is even evaluated.
+<Callout variant="warning" title="The admin API requires a token AND a private-network source IP">
+Every `/api/v1/admin/*` endpoint requires a valid `X-Admin-Token` (or a JWT-admin bearer token) **and** that the request's **direct TCP peer** falls in an allowed range: loopback (`127.0.0.1`, `::1`), RFC1918 (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), CGNAT / Tailscale (`100.64.0.0/10`), or any CIDR you add via `TRUSTED_INTERNAL_CIDRS`. A direct connection from a public IP is `403`'d before auth.
 
-In practice this means you run the commands below **from the deployment host itself** (the prod compose binds host ports to `127.0.0.1` by default), from another container on the compose network, or through an SSH tunnel / Tailscale. There is no supported path for driving the admin API across the public internet.
+This is **not** a "same host only" rule — you can call it remotely from anywhere on the private network, a VPN, or Tailscale. And the check reads the *immediate* TCP peer, **not** `X-Forwarded-For` (by design): when the backend sits behind a reverse proxy or ingress (the usual production setup), every forwarded request arrives from the proxy's private IP, so this check always passes and **the token becomes the real boundary**. Treat the admin API as token-gated and use network policy / ingress rules to decide who can reach it — this middleware is a backstop against the backend port being *directly* exposed to the internet, not an internet firewall sitting in front of your proxy.
 </Callout>
 
 You will need:
@@ -144,7 +144,7 @@ A user's DID is established the first time they authenticate. If you don't have 
 
 ## Part 2 — Day-to-day onboarding
 
-These steps can be run by the org admin from Part 1 (`Authorization: Bearer <their-JWT>`) or by a super-admin (`X-Admin-Token`). The examples keep using `X-Admin-Token` for consistency.
+Run these as the **tier-2 org admin** from Part 1, using their session JWT (`Authorization: Bearer <their-JWT>`) — that's the intended day-to-day path (least privilege, and the audit log attributes each change to that admin). A super-admin `X-Admin-Token` *can* technically run them all too, but **reserve it** for the Part 1 bootstrap, creating/updating orgs, minting org admins, and the maintenance endpoints. The examples below keep the `X-Admin-Token` header only to stay copy-paste-consistent with Part 1 — swap in `Authorization: Bearer <JWT>` for normal day-to-day use.
 
 ### Create the groups your users need
 
