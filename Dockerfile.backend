@@ -1,8 +1,8 @@
-FROM golang:1.25-bookworm AS builder-base
+FROM golang:1.25-trixie AS builder-base
 
 # Install build dependencies for CGO (required by go-rapidsnark).
 # `apt-get upgrade` pulls patched libc/curl/etc. on every build to clear
-# Aikido findings against the bookworm baseline.
+# Aikido findings against the trixie baseline.
 RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     build-essential \
     libgmp-dev \
@@ -42,7 +42,7 @@ RUN CGO_ENABLED=1 GOOS=linux go build -tags production \
 	-o /app/bin/privacy-proxy ./cmd/server
 
 # --- Runtime base (shared) ---
-FROM debian:bookworm-slim AS runtime-base
+FROM debian:trixie-slim AS runtime-base
 
 RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     ca-certificates \
