@@ -150,19 +150,26 @@ These steps can be run by the org admin from Part 1 (`Authorization: Bearer <the
 
 A group bundles a **method allowlist** with **claims**. Pick claims by the role you want:
 
-| Role | `claims` | Typical `allowed_methods` | Notes |
+These are the **role-distinguishing** methods only — every interactive group also needs the client baseline described in the callout below.
+
+| Role | `claims` | Role `allowed_methods` (**+ client baseline**) | Notes |
 |---|---|---|---|
-| Standard user | `[]` | `eth_call`, `eth_getBalance`, `eth_getTransactionReceipt`, `eth_blockNumber`, `eth_chainId` | Read/interact only. No deploy. |
-| Trader / writer | `[]` | above **+** `eth_sendTransaction`, `eth_estimateGas`, `eth_getTransactionCount` | Sending txs needs no claim — just the method in the allowlist. |
-| Deployer | `["deploy"]` | trader methods **+** `eth_sendRawTransaction` | `deploy` gates contract creation; when a member deploys, a grant is auto-added to this group. |
+| Standard user | `[]` | `eth_call`, `eth_getBalance`, `eth_getTransactionReceipt` + **read baseline** | Read / interact only. No sending, no deploy. |
+| Trader / writer | `[]` | above **+** `eth_sendTransaction` + **send baseline** | Can send txs (no claim needed — just the methods). |
+| Deployer | `["deploy"]` | trader methods **+** `eth_sendRawTransaction` | `deploy` gates contract creation; a member's first deploy auto-adds a grant to this group. |
 | Org admin | `[]` (implied) | at least one method | Use `is_org_admin: true` at create time — **super-admin only** (see Part 1). |
 
 <Callout variant="info" title="Claims and methods must be consistent">
 The `admin` claim implies `deploy` + `upgrade`. Only those three claims gate anything; all other access is the method allowlist's job. The API rejects mismatches — e.g. allowing `debug_traceTransaction` without the `deploy` claim returns `400`.
 </Callout>
 
-<Callout variant="info" title="Tx-sending groups need the EIP-1559 fee methods">
-Any group whose users **send transactions** with a wallet or CLI (MetaMask, `cast`, ethers, viem) also needs `eth_feeHistory`, `eth_maxPriorityFeePerGas`, and `eth_getBlockByNumber` in its allowlist: those clients build EIP-1559 transactions by default and call the fee-estimation methods *before* signing, so without them the send fails before it ever reaches the chain. The deployer example below includes them. (Alternatively the client can send legacy transactions — e.g. `cast send --legacy` — which price gas from `eth_gasPrice` and skip the fee methods.)
+<Callout variant="warning" title="Interactive clients need a baseline of plumbing methods">
+The lists above are only the *business* methods. Any group whose users connect a **wallet or CLI** (MetaMask, `cast`, ethers, viem) must **also** allow the plumbing methods those tools call automatically — otherwise even a basic read or send fails before it does anything useful (the proxy returns `404 method not found` for a method that isn't allowlisted):
+
+- **Read baseline** (e.g. `cast call`): `eth_chainId`, `eth_blockNumber`, `eth_getTransactionCount` — clients fetch the nonce even for a read.
+- **Send baseline** adds: `eth_estimateGas`, `eth_getBlockByNumber`, and gas pricing — `eth_feeHistory` + `eth_maxPriorityFeePerGas` for the EIP-1559 default (MetaMask/`cast`), **or** just `eth_gasPrice` if the client sends legacy txs (`cast send --legacy`).
+
+So a working **trader** group = the trader business method **plus both baselines**; the deployer example below lists the complete set. Set any group's methods with the `PUT .../access` call shown next. (A raw-`curl` JSON-RPC integration that hand-builds requests can skip the baseline.)
 </Callout>
 
 Create a deployer group, then set its access:
