@@ -419,12 +419,17 @@ Request:
 }
 ```
 
+**Which DID? Use the account DID, not the wallet app's DID.** When a user opens their Privado ID / Billions wallet, the account screen shows **two** DIDs: the wallet app's own DID and the user's personal **account** DID. Onboard with the **account** DID — the identity the user actually signs in with. The two are easy to confuse, and the wrong choice fails quietly: the onboarded row never matches the user's real login DID, so they sign in successfully but without the access you intended. If an onboarded user reports "I'm logged in but have no access," suspect the wrong DID.
+
+The endpoint validates the DID's format and, for Privado / Polygon ID DIDs, its checksum — so a mistyped or malformed DID is rejected with `400` instead of silently creating a dead row. It **cannot** tell the account DID from the app DID (both are valid DIDs), so that distinction is the operator's to get right.
+
 Responses:
 
 | Status | When | Body |
 |---|---|---|
 | `201` | Success | `{"user_id": "...", "membership": {...}}` — `user_id` is the DID's resolved UUID (existing or freshly provisioned); `membership` is the row that was just inserted |
 | `400` | Body missing `did` or `group_id`, or malformed JSON | `{"error": "invalid request body"}` |
+| `400` | `did` is not a valid DID, or a Privado / Polygon ID DID with a bad checksum | `{"error": "invalid did"}` — opaque; the parser detail is logged server-side only |
 | `403` | Caller does not full-admin `:org_id`, OR `group_id` lives in a different org | Opaque deny — never reveals whether the group exists in another org |
 | `409` | DID is already a member of `group_id` (idempotent repeat) | `{"error": "user is already a member of this group"}` |
 | `500` | DB / RBAC controller failure, or defensive nil-user path | Generic; details in proxy logs only |
