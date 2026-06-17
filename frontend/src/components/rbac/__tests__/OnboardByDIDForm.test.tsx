@@ -61,6 +61,35 @@ describe('OnboardByDIDForm', () => {
       });
     });
 
+    it('excludes org-admin groups from the dropdown but keeps normal and read-only-admin groups (RD-1099)', async () => {
+      const user = userEvent.setup();
+      const orgAdminGroup = {
+        ...mockGroup,
+        id: 'group-admin',
+        name: 'Org Admins',
+        path: 'admins',
+        is_org_admin: true,
+      };
+      const readonlyAdminGroup = {
+        ...mockGroup,
+        id: 'group-ro-admin',
+        name: 'Read Only Admins',
+        path: 'ro-admins',
+        is_org_readonly_admin: true,
+      };
+      renderForm({ groups: [mockGroup, orgAdminGroup, readonlyAdminGroup] });
+
+      await user.click(screen.getByRole('combobox'));
+
+      await waitFor(() => {
+        expect(screen.getByRole('option', { name: /Root Group/i })).toBeInTheDocument();
+      });
+      // Read-only-admin assignment is delegation, not escalation — stays visible.
+      expect(screen.getByRole('option', { name: /Read Only Admins/i })).toBeInTheDocument();
+      // Full org-admin assignment is super-admin-only — hidden from the tier-2 dropdown.
+      expect(screen.queryByRole('option', { name: /Org Admins/i })).not.toBeInTheDocument();
+    });
+
     it('fetches groups when not supplied via props', async () => {
       let called = false;
       server.use(

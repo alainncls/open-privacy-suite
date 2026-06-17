@@ -574,6 +574,14 @@ func (s *Server) createUserMembership(c *gin.Context) {
 		}
 	}
 
+	// is_org_admin escalation gate (RD-1099): adding a member to an org-admin
+	// group mints a new org admin — a peer who could ban/demote the granter —
+	// so it is super-admin-only, mirroring the group-CRUD gates. After the
+	// foreign-org check so cross-tenant probes stay opaque.
+	if denyJWTAdminTouchOrgAdminGroup(c, group) {
+		return
+	}
+
 	membership := &rbac.UserMembership{
 		ID:      uuid.New().String(),
 		UserID:  userID,
@@ -724,6 +732,14 @@ func (s *Server) createMembershipByDID(c *gin.Context) {
 		return
 	}
 
+	// is_org_admin escalation gate (RD-1099): onboarding a DID straight into an
+	// org-admin group mints a new org admin (worse here than createUserMembership
+	// — the DID is auto-provisioned, so an arbitrary external identity could be
+	// made an admin). Super-admin-only. After the foreign-org check above.
+	if denyJWTAdminTouchOrgAdminGroup(c, group) {
+		return
+	}
+
 	// DID → user_id translation. If the DID is not yet in `users`, create the
 	// row (mirroring first-login behaviour). KYC starts false; KYC remains
 	// admin-managed. skipDefaultGroup=true so the user does not also end up
@@ -825,6 +841,14 @@ func (s *Server) deleteUserMembership(c *gin.Context) {
 			c.JSON(http.StatusForbidden, gin.H{"error": errMembershipForeignOrg})
 			return
 		}
+	}
+
+	// is_org_admin escalation gate (RD-1099): removing a member from an
+	// org-admin group demotes an org admin — the "ban or demote the granter"
+	// power the gate exists to prevent — so it is super-admin-only, symmetric
+	// with the add path. After the foreign-org check so probes stay opaque.
+	if denyJWTAdminTouchOrgAdminGroup(c, group) {
+		return
 	}
 
 	s.rbacAccessCtrl.InvalidateUser(c.Request.Context(), userID)

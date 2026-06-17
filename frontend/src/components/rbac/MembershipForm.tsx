@@ -63,7 +63,12 @@ export default function MembershipForm({
   // this effect, so listing it as a dep would refire on that reset. Intentionally
   // omitted.
   useEffect(() => {
-    const filtered = allGroups.filter(g => !existingGroupIds.has(g.id));
+    // Exclude groups the user is already in, and (RD-1099) org-admin groups:
+    // assigning org-admin membership is super-admin-only, so the backend
+    // rejects it from the dashboard's tier-2 (JWT) caller. Hiding them keeps
+    // the UI honest; the backend gate is the real boundary. Read-only-admin
+    // groups remain assignable (delegation, not escalation).
+    const filtered = allGroups.filter(g => !existingGroupIds.has(g.id) && !g.is_org_admin);
     setAvailableGroups(filtered);
     // Reset selection if current selection is no longer available
     if (selectedGroupId && !filtered.some(g => g.id === selectedGroupId)) {

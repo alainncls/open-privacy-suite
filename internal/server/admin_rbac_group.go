@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -28,7 +29,43 @@ const (
 	errCreateOrgAdminGroupSuperOnly = "only super admin can create org admin groups"
 	errSetOrgAdminStatusSuperOnly   = "only super admin can change org admin status on groups"
 	errDeleteOrgAdminGroupSuperOnly = "only super admin can delete org admin groups"
+
+	// Assigning a member to, removing a member from, or reshaping the
+	// group_access of an is_org_admin group confers or strips full org-admin —
+	// the same escalation as minting the group itself. Reserved for super admin;
+	// enforced by denyJWTAdminTouchOrgAdminGroup on the membership and
+	// set-access surfaces (RD-1099). The batch-delete path reuses
+	// errDeleteOrgAdminGroupSuperOnly since it is a deletion.
+	errModifyOrgAdminGroupSuperOnly = "only super admin can modify membership or access of org admin groups"
 )
+
+// errBatchContainsOrgAdminGroup is returned from inside the batchDeleteGroups
+// transaction when a tier-2 (jwt_admin) caller's batch includes an
+// is_org_admin group. It aborts (rolls back) the whole batch and is translated
+// to a 403 outside the tx — batch deletion must not be a back door around the
+// per-group is_org_admin gate that deleteGroup enforces (RD-1099).
+var errBatchContainsOrgAdminGroup = errors.New("batch contains org admin group")
+
+// denyJWTAdminTouchOrgAdminGroup enforces the is_org_admin escalation gate on
+// the membership and group-access surfaces, mirroring the gate already on
+// group create/update/delete (errCreateOrgAdminGroupSuperOnly et al.).
+// Assigning a member to, removing a member from, or reshaping the access of an
+// is_org_admin group confers or strips full org-admin — a peer who can
+// ban/demote the granter — so it is reserved for super admin (X-Admin-Token).
+//
+// Tier-2 jwt_admin callers get a 403; super-admin ("admin_token") and dev ("")
+// pass through. is_org_readonly_admin groups are intentionally NOT gated
+// (delegation, a strict subset of tier-2's own powers — see the createGroup
+// rationale). Returns true and writes the 403 when the caller must be stopped;
+// the handler must then return. Call AFTER the cross-org / foreign-org check so
+// the opaque foreign-org error fires first for cross-tenant probes.
+func denyJWTAdminTouchOrgAdminGroup(c *gin.Context, group *rbac.Group) bool {
+	if group != nil && group.IsOrgAdmin && c.GetString("auth_method") == "jwt_admin" {
+		c.JSON(http.StatusForbidden, gin.H{"error": errModifyOrgAdminGroupSuperOnly})
+		return true
+	}
+	return false
+}
 
 // Org-admin group invariants (RD-968). The "org admin" role maps to three
 // independent fields (is_org_admin, is_org_readonly_admin, group_access.claims +
@@ -451,6 +488,14 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 		return
 	}
 
+	// is_org_admin escalation gate (RD-1099): reshaping an admin group's access
+	// (e.g. widening allowed_methods) changes what every org admin can do, so it
+	// is super-admin-only — mirrors the membership and group-CRUD gates. Placed
+	// after verifyGroupBelongsToPathOrg so foreign-org probes stay opaque.
+	if denyJWTAdminTouchOrgAdminGroup(c, group) {
+		return
+	}
+
 	var input struct {
 		AllowedMethods []string     `json:"allowed_methods"`
 		Claims         []rbac.Claim `json:"claims"`
@@ -746,6 +791,18 @@ func (s *Server) batchDeleteGroups(c *gin.Context) {
 			}
 		}
 
+		// is_org_admin escalation gate (RD-1099): batch deletion must not be a
+		// back door around deleteGroup's per-group gate. If a tier-2 (jwt_admin)
+		// caller's batch includes any org-admin group, abort the whole batch.
+		// Super-admin / dev are unaffected.
+		if c.GetString("auth_method") == "jwt_admin" {
+			for _, g := range groups {
+				if g.IsOrgAdmin {
+					return errBatchContainsOrgAdminGroup
+				}
+			}
+		}
+
 		// Delete each group with dependencies
 		for _, gid := range input.GroupIDs {
 			if err := tx.DeleteGroupWithDependenciesTx(ctx, gid); err != nil {
@@ -763,6 +820,12 @@ func (s *Server) batchDeleteGroups(c *gin.Context) {
 	})
 
 	if err != nil {
+		if errors.Is(err, errBatchContainsOrgAdminGroup) {
+			// Tier-2 tried to batch-delete an org-admin group. Reuse the
+			// deleteGroup gate's message (this is a deletion). RD-1099.
+			c.JSON(http.StatusForbidden, gin.H{"error": errDeleteOrgAdminGroupSuperOnly})
+			return
+		}
 		if strings.Contains(err.Error(), "not found") {
 			// The "X not found" error is built by the closure above with
 			// an attacker-supplied group_id concatenated in — surfacing

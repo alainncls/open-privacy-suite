@@ -45,7 +45,12 @@ export default function OnboardByDIDForm({
   const [error, setError] = useState<string | null>(null);
 
   // Use the prop if provided; otherwise fall back to what we fetched.
-  const availableGroups = groups ?? fetchedGroups;
+  // RD-1099: org-admin groups are excluded — only a super-admin (X-Admin-Token)
+  // may assign org-admin membership, so the backend rejects this from the
+  // dashboard's tier-2 (JWT) caller with a 403. Hiding them here keeps the UI
+  // honest; the backend gate (denyJWTAdminTouchOrgAdminGroup) is the real
+  // boundary. Read-only-admin groups stay assignable (delegation, not escalation).
+  const availableGroups = (groups ?? fetchedGroups).filter(g => !g.is_org_admin);
 
   useEffect(() => {
     if (groups) return; // Parent supplied them, nothing to load.
