@@ -15,6 +15,11 @@ type Checker struct {
 	store                   Store
 	recordExpiry            time.Duration // how long travel rule records stay valid
 	priceStalenessThreshold time.Duration // after this duration, system prices are considered stale
+	// defaultMode is the cluster-wide enforcement mode applied when a per-org
+	// compliance config leaves EnforcementMode unset. Empty resolves to
+	// enforce. Set once at startup via SetDefaultEnforcementMode from the
+	// COMPLIANCE_DEFAULT_MODE env var.
+	defaultMode EnforcementMode
 }
 
 // NewChecker creates a new compliance checker.
@@ -24,6 +29,93 @@ func NewChecker(store Store, recordExpiry time.Duration, priceStalenessThreshold
 		recordExpiry:            recordExpiry,
 		priceStalenessThreshold: priceStalenessThreshold,
 	}
+}
+
+// SetDefaultEnforcementMode sets the cluster-wide fallback enforcement mode,
+// applied when a per-org compliance config leaves EnforcementMode unset. An
+// empty or unrecognised value pins the default at enforce (fail-safe). Wired
+// once at startup from the COMPLIANCE_DEFAULT_MODE env var.
+func (c *Checker) SetDefaultEnforcementMode(mode EnforcementMode) {
+	if mode == EnforcementMonitor {
+		c.defaultMode = EnforcementMonitor
+		return
+	}
+	c.defaultMode = EnforcementEnforce
+}
+
+// effectiveMode resolves the enforcement mode for one check: a per-org config
+// value wins; an unset per-org value falls back to the cluster default; that
+// in turn defaults to enforce. Fail-safe — anything unrecognised => enforce.
+func (c *Checker) effectiveMode(config *ComplianceConfig) EnforcementMode {
+	if config != nil {
+		switch config.EnforcementMode {
+		case EnforcementMonitor:
+			return EnforcementMonitor
+		case EnforcementEnforce:
+			return EnforcementEnforce
+		}
+	}
+	// Per-org mode unset — use the cluster default.
+	if c.defaultMode == EnforcementMonitor {
+		return EnforcementMonitor
+	}
+	return EnforcementEnforce
+}
+
+// allowMonitored records a would-have-blocked violation under monitor mode and
+// allows the transfer to proceed. The fail-closed-on-log-failure invariant is
+// preserved: if the audit row cannot be persisted we DENY rather than silently
+// allow — a monitored violation with no forensic record defeats the purpose of
+// monitor mode and would break the ISO 27001 / FATF evidence trail.
+//
+// Sanctions never reach this path; callers only invoke it for monitor-eligible
+// violations (threshold-breach, travel-rule-record-required, unknown-price).
+func (c *Checker) allowMonitored(ctx context.Context, req *CheckRequest, info *TransferInfo,
+	amountFiat, thresholdFiat *float64, blockReason, currency string) (*CheckResult, error) {
+	slog.Warn("compliance MONITOR mode: violation allowed but recorded (would have blocked under enforce)",
+		"org", req.OrgID, "user", req.UserID, "reason", blockReason)
+	if err := c.logWouldBlock(ctx, req, info, amountFiat, thresholdFiat, blockReason, currency); err != nil {
+		slog.Error("compliance monitor: failed to persist would-block log, failing closed",
+			"org", req.OrgID, "user", req.UserID, "error", err)
+		return &CheckResult{
+			Allowed:      false,
+			Reason:       "compliance audit log unavailable, failing closed",
+			TransferInfo: info,
+		}, nil
+	}
+	return &CheckResult{
+		Allowed:      true,
+		Monitored:    true,
+		Reason:       "monitor mode (would block): " + blockReason,
+		TransferInfo: info,
+	}, nil
+}
+
+// logWouldBlock writes a compliance_logs row for a monitor-mode violation:
+// Decision="allowed" (the transfer proceeded) with would_block=true and the
+// real reason in denial_reason. Kept separate from logDecision so the
+// would_block flag is explicit at every monitor call site.
+func (c *Checker) logWouldBlock(ctx context.Context, req *CheckRequest, info *TransferInfo,
+	amountFiat, thresholdFiat *float64, blockReason, currency string) error {
+	reason := blockReason
+	entry := &ComplianceLog{
+		OrgID:         req.OrgID,
+		UserID:        req.UserID,
+		TransferType:  info.Type,
+		TokenAddress:  info.TokenAddress,
+		FromAddress:   info.FromAddress,
+		ToAddress:     info.ToAddress,
+		AmountWei:     info.AmountWei.String(),
+		AmountFiat:    amountFiat,
+		ThresholdFiat: thresholdFiat,
+		Currency:      currency,
+		Decision:      "allowed",
+		DenialReason:  &reason,
+		WouldBlock:    true,
+		CorrelationID: req.CorrelationID,
+	}
+	_, err := c.store.CreateComplianceLog(ctx, entry)
+	return err
 }
 
 // CheckRequest contains the parameters for a compliance check.
@@ -42,6 +134,11 @@ type CheckResult struct {
 	Allowed      bool
 	Reason       string
 	TransferInfo *TransferInfo
+	// Monitored is true when Allowed was forced true by monitor mode for a
+	// violation that would have blocked under enforce mode. Callers use it to
+	// emit a distinct metric / log line; the violation is also recorded in the
+	// compliance audit log with would_block=true.
+	Monitored bool
 }
 
 // Check performs a compliance check on the given transaction.
@@ -182,6 +279,11 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 		}
 
 		reason := fmt.Sprintf("no price configured for token %s and unknown price policy is forbidden", tokenAddr)
+		// Monitor mode: record the would-block and allow the transfer. Sanctions
+		// were already hard-checked above and are never monitor-eligible.
+		if c.effectiveMode(config) == EnforcementMonitor {
+			return c.allowMonitored(ctx, req, info, nil, nil, reason, currency)
+		}
 		slog.Warn("compliance denied (fail closed)", "org", req.OrgID, "user", req.UserID, "reason", reason)
 		if err := c.logDecision(ctx, req, info, nil, nil, "denied", reason, nil, currency); err != nil {
 			slog.Warn("failed to log denial decision", "org", req.OrgID, "user", req.UserID, "error", err)
@@ -239,6 +341,11 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 	}
 	if record == nil {
 		reason := fmt.Sprintf("transfer value $%.2f exceeds threshold $%.2f and no travel rule record found", amountFiat, threshold)
+		// Monitor mode: record the would-block and allow the transfer. Sanctions
+		// were already hard-checked above and are never monitor-eligible.
+		if c.effectiveMode(config) == EnforcementMonitor {
+			return c.allowMonitored(ctx, req, info, &amountFiat, &threshold, reason, currency)
+		}
 		slog.Warn("compliance denied", "org", req.OrgID, "user", req.UserID, "reason", reason)
 		// M2: Denial — warn on log failure, still deny.
 		if err := c.logDecision(ctx, req, info, &amountFiat, &threshold, "denied", reason, nil, currency); err != nil {

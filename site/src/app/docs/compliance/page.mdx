@@ -14,6 +14,28 @@ This regulatory requirement applies to Virtual Asset Service Providers (VASPs) a
 
 ---
 
+## Enforcement Mode: Enforce vs Monitor
+
+Compliance runs in one of two modes, selectable per organization (with a cluster-wide default):
+
+| Mode | Behavior |
+|------|----------|
+| **`enforce`** (default) | A compliance violation **blocks** the transaction. The safe, fail-closed default. |
+| **`monitor`** | A would-block violation is **allowed to proceed** but is **recorded** in the compliance log, marked "would have blocked" with the reason. |
+
+Monitor mode is for phased rollouts and observation periods — running compliance for visibility before turning on hard enforcement.
+
+**Sanctions are never monitored.** A transfer involving a sanctioned address (Layer 1) is always blocked, in both modes. Monitor mode only relaxes the threshold and travel-rule-record checks (Layers 2–3) and the unknown-price control.
+
+To set the mode:
+
+- **Per organization** — set **Enforcement mode** in the compliance dashboard, or `PUT /config` with `{ "enforcement_mode": "enforce" | "monitor" }`.
+- **Cluster-wide default** — set the `COMPLIANCE_DEFAULT_MODE` environment variable (`enforce` | `monitor`, default `enforce`). A per-org setting overrides it; the active default is reported by the `/status` endpoint.
+
+> **Audit / change-management note.** Monitor mode converts a *preventive* control into a *detective-only* one for the affected organization. The default is `enforce` (monitor is opt-in), every mode change is recorded in the RBAC audit log, and each monitored violation is preserved in the compliance log marked "would have blocked". Document any move to monitor mode for your ISO 27001 / SOC 2 evidence.
+
+---
+
 ## 3-Layer Compliance Pipeline
 
 Every value transfer (`eth_sendTransaction` and `eth_sendRawTransaction`) passes through a 3-layer pipeline. A transfer must pass all applicable layers to be allowed.
@@ -189,8 +211,8 @@ All paths under `/api/v1/admin/orgs/:org_id/compliance/`:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/config` | Retrieve compliance configuration (enabled status, threshold) |
-| PUT | `/config` | Update compliance configuration (enable/disable, set org-wide threshold) |
+| GET | `/config` | Retrieve compliance configuration (enabled status, threshold, enforcement mode) |
+| PUT | `/config` | Update compliance configuration (enable/disable, org-wide threshold, `enforcement_mode`) |
 | GET | `/tokens` | List all configured token prices |
 | PUT | `/tokens/:token_address` | Create or update price for a token |
 | DELETE | `/tokens/:token_address` | Remove token price configuration |
