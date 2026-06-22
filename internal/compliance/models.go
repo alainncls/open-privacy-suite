@@ -61,6 +61,33 @@ const (
 	UnknownPriceForbidden UnknownPricePolicy = "forbidden"
 )
 
+// EnforcementMode selects how the compliance pipeline reacts to a violation.
+//
+//   - EnforcementEnforce (default): a violation BLOCKS the transaction
+//     (fail-closed). This is the only safe default; new orgs and the
+//     compliance_config column default both resolve to it.
+//   - EnforcementMonitor: a would-block violation is ALLOWED to proceed but
+//     is recorded in the compliance audit log with would_block=true plus the
+//     real reason. Intended for phased rollout / observation periods, or
+//     deployments that want compliance visibility without hard enforcement.
+//
+// IMPORTANT — sanctions are NOT monitor-eligible (RD-1044). A transfer that
+// touches a sanctioned address stays hard-blocked even under monitor mode;
+// only threshold-breach, travel-rule-record-required, and unknown-price
+// violations are monitored. Relaxing the sanctions carve-out is a
+// Compliance/Legal decision, not an engineering one.
+type EnforcementMode string
+
+const (
+	EnforcementEnforce EnforcementMode = "enforce"
+	EnforcementMonitor EnforcementMode = "monitor"
+)
+
+// IsValidEnforcementMode reports whether s is a recognised enforcement mode.
+func IsValidEnforcementMode(s EnforcementMode) bool {
+	return s == EnforcementEnforce || s == EnforcementMonitor
+}
+
 // ComplianceConfig stores per-org compliance settings.
 type ComplianceConfig struct {
 	ID                 string             `json:"id"`
@@ -68,6 +95,10 @@ type ComplianceConfig struct {
 	Enabled            bool               `json:"enabled"`
 	ThresholdFiat      float64            `json:"threshold_fiat"`
 	UnknownPricePolicy UnknownPricePolicy `json:"unknown_price_policy"`
+	// EnforcementMode is enforce (block, default) or monitor (allow + record)
+	// for monitor-eligible violations. An empty value resolves to the cluster
+	// default (COMPLIANCE_DEFAULT_MODE), which itself defaults to enforce.
+	EnforcementMode    EnforcementMode    `json:"enforcement_mode"`
 	CreatedAt          time.Time          `json:"created_at"`
 	UpdatedAt          time.Time          `json:"updated_at"`
 }
@@ -149,6 +180,11 @@ type ComplianceLog struct {
 	Currency           string       `json:"currency,omitempty"`
 	Decision           string       `json:"decision"` // "allowed" or "denied"
 	DenialReason       *string      `json:"denial_reason,omitempty"`
+	// WouldBlock marks a monitor-mode violation: the transfer was allowed to
+	// proceed (Decision="allowed") but WOULD have been blocked under enforce
+	// mode. DenialReason carries the would-have-blocked reason. Lets auditors
+	// distinguish a monitored violation from a genuinely-compliant allow.
+	WouldBlock         bool         `json:"would_block"`
 	TravelRuleRecordID *string      `json:"travel_rule_record_id,omitempty"`
 	CorrelationID      string       `json:"correlation_id,omitempty"`
 	CreatedAt          time.Time    `json:"created_at"`
