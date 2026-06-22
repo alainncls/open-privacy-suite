@@ -1501,6 +1501,79 @@ func (s *Server) getExplorerTransaction(c *gin.Context) {
 	c.JSON(http.StatusOK, redactedTxs[0])
 }
 
+// countAcrossPages walks a newest-first item feed in pages and sums a per-page
+// count, bounded by maxScan total items. It exists because privacy/gRPC mode
+// clamps each indexer fetch to a small max page size (~100), so a single fetch
+// cannot count an active address's transactions — we must page through them.
+//
+// fetch(before) returns the page strictly older than the given block cursor
+// (nil = newest first); cursorOf extracts a page item's block for the next
+// cursor; perPageCount returns how many items in the page should be counted
+// (e.g. redaction survivors). It stops at an empty page, when maxScan items have
+// been scanned, or when the cursor stops decreasing (a single block larger than
+// one page — a safety break so the loop is always bounded and terminates).
+func countAcrossPages[T any](
+	fetch func(before *uint64) ([]T, error),
+	cursorOf func(T) uint64,
+	perPageCount func([]T) (int, error),
+	maxScan int,
+) (int, error) {
+	count, scanned := 0, 0
+	var before *uint64
+	for scanned < maxScan {
+		page, err := fetch(before)
+		if err != nil {
+			return 0, err
+		}
+		if len(page) == 0 {
+			break
+		}
+		scanned += len(page)
+		n, err := perPageCount(page)
+		if err != nil {
+			return 0, err
+		}
+		count += n
+		last := cursorOf(page[len(page)-1])
+		if before != nil && last >= *before {
+			break // no progress (single block exceeds a page) — stay bounded
+		}
+		if last == 0 {
+			break // reached genesis
+		}
+		bb := last
+		before = &bb
+	}
+	return count, nil
+}
+
+// countVisibleAddressTxs returns a stable, visibility-aware, post-redaction
+// transaction count for an address. It pages through the address's txs and sums
+// redaction survivors, so it is NOT capped at a single indexer page (privacy/
+// gRPC mode clamps page size to ~100). Bounded by maxScan to keep the cost
+// finite for very active addresses; opts is reused across pages so opts.Stats
+// accumulates the full-view redaction stats for the audit log.
+func (s *Server) countVisibleAddressTxs(ctx context.Context, address, viewerDID string, opts explorer.RedactOpts) (int, error) {
+	const (
+		perPage = 1000  // SQL honors this fully; the gRPC backend clamps to the indexer max (~100)
+		maxScan = 10000 // safety bound (matches the prior single-fetch cap)
+	)
+	return countAcrossPages(
+		func(before *uint64) ([]explorer.Transaction, error) {
+			return s.explorerStore.GetTransactionsByAddress(ctx, address, perPage, before)
+		},
+		func(t explorer.Transaction) uint64 { return t.BlockNumber },
+		func(page []explorer.Transaction) (int, error) {
+			redacted, err := s.explorerRedactor.RedactTransactions(ctx, page, viewerDID, opts)
+			if err != nil {
+				return 0, err
+			}
+			return len(redacted), nil
+		},
+		maxScan,
+	)
+}
+
 func (s *Server) getExplorerAddressStats(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -1538,17 +1611,16 @@ func (s *Server) getExplorerAddressStats(c *gin.Context) {
 		filter = s.addDisclosureAddressToFilter(filter, normalizedAddr)
 	}
 
-	// Load the actual transactions for this address and run RedactTransactions
-	// to get the accurate post-G10 count. The SQL-level count doesn't account
-	// for the non-participant drop (G10) or calldata participant detection.
-	allTxs, err := s.explorerStore.GetTransactionsByAddress(c.Request.Context(), address, 10000, nil)
-	if err == nil {
-		opts := s.buildRedactOptsForViewer(c.Request.Context(), resolvedDID)
-		redacted, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), allTxs, resolvedDID, opts)
-		if err == nil {
-			stats.TxCount = len(redacted)
-			s.auditAdminUserTxView(c, resolvedDID, "address_stats", address, opts.Stats)
-		}
+	// Page through the address's transactions and run RedactTransactions on each
+	// page to get the accurate post-G10 count (the SQL-level count doesn't
+	// account for the non-participant drop (G10) or calldata participant
+	// detection). Paging — rather than one fetch — is required because in
+	// privacy/gRPC mode the indexer clamps page size to ~100, which previously
+	// capped this count at 100 for active addresses.
+	opts := s.buildRedactOptsForViewer(c.Request.Context(), resolvedDID)
+	if txCount, err := s.countVisibleAddressTxs(c.Request.Context(), address, resolvedDID, opts); err == nil {
+		stats.TxCount = txCount
+		s.auditAdminUserTxView(c, resolvedDID, "address_stats", address, opts.Stats)
 	}
 
 	c.JSON(http.StatusOK, stats)
