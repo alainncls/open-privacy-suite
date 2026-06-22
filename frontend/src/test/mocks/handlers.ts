@@ -220,6 +220,7 @@ export const mockComplianceConfig: ComplianceConfigType = {
   org_id: 'org-1',
   enabled: true,
   threshold_fiat: 1000,
+  enforcement_mode: 'enforce',
   created_at: '2024-01-01T00:00:00Z',
   updated_at: '2024-01-01T00:00:00Z',
 };

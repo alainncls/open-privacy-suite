@@ -450,9 +450,12 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	// Initialize compliance checker for travel rule enforcement
 	if cfg.EnableTravelRule {
 		checker := compliance.NewChecker(database, cfg.TravelRecordExpiry, cfg.PriceStalenessThreshold)
+		// RD-1044: cluster-wide default enforce/monitor mode for orgs without a
+		// per-org setting. Per-org compliance config overrides this.
+		checker.SetDefaultEnforcementMode(compliance.EnforcementMode(cfg.ComplianceDefaultMode))
 		s.complianceChecker = checker
 		s.jsonrpcProcessor.SetComplianceChecker(checker)
-		slog.Info("travel rule compliance enabled", "record_expiry", cfg.TravelRecordExpiry)
+		slog.Info("travel rule compliance enabled", "record_expiry", cfg.TravelRecordExpiry, "default_enforcement_mode", cfg.ComplianceDefaultMode)
 
 		// Start background CoinGecko price fetcher (unless disabled)
 		if !cfg.DisableCoinGecko {
@@ -1374,6 +1377,9 @@ type ProxyStatus struct {
 // SecurityStatus represents the security configuration status
 type SecurityStatus struct {
 	TravelRuleEnabled bool `json:"travel_rule_enabled"`
+	// ComplianceDefaultMode is the cluster-wide default compliance enforcement
+	// mode ("enforce" | "monitor"). Per-org config may override it. (RD-1044)
+	ComplianceDefaultMode string `json:"compliance_default_mode"`
 }
 
 // NodeStatus represents the node status
@@ -1393,6 +1399,12 @@ func (s *Server) getStatus(c *gin.Context) {
 		proxyPort = s.config.Port
 	}
 
+	// RD-1044: surface the cluster-wide default compliance enforcement mode.
+	complianceMode := "enforce"
+	if s.config != nil && s.config.ComplianceDefaultMode != "" {
+		complianceMode = s.config.ComplianceDefaultMode
+	}
+
 	status := StatusResponse{
 		Proxy: ProxyStatus{
 			Status: "running",
@@ -1405,7 +1417,8 @@ func (s *Server) getStatus(c *gin.Context) {
 			Error:     nodeHealth.Error,
 		},
 		Security: SecurityStatus{
-			TravelRuleEnabled: s.complianceChecker != nil,
+			TravelRuleEnabled:     s.complianceChecker != nil,
+			ComplianceDefaultMode: complianceMode,
 		},
 		Methods: MethodsStatus{
 			ExtraNamespaces: rbac.ExtraNamespaces,
