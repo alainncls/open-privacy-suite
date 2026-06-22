@@ -1668,6 +1668,18 @@ func (p *JSONRPCProcessor) checkCompliance(ctx context.Context, req *ProcessRequ
 			},
 		}
 	}
+	if compResult.Monitored {
+		// RD-1044: monitor mode allowed a would-block violation through. It is
+		// recorded in compliance_logs with would_block=true; surface it
+		// distinctly in metrics + logs so enforcement posture is never
+		// ambiguous. Sanctions are never monitored — they still hard-block above.
+		if p.metrics != nil {
+			p.metrics.ComplianceDecisionsTotal.WithLabelValues("monitored").Inc()
+		}
+		slog.Warn("compliance MONITOR mode: transaction allowed despite violation",
+			"method", req.Method, "reason", compResult.Reason)
+		return nil
+	}
 	if p.metrics != nil {
 		p.metrics.ComplianceDecisionsTotal.WithLabelValues("allowed").Inc()
 	}

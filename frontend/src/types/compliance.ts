@@ -1,5 +1,8 @@
 export type TransferType = 'eth' | 'erc20';
 export type Decision = 'allowed' | 'denied';
+// EnforcementMode: 'enforce' blocks violations (default); 'monitor' allows them
+// but records a would-have-blocked entry. Sanctions stay blocked in both. (RD-1044)
+export type EnforcementMode = 'enforce' | 'monitor';
 
 export interface ComplianceConfig {
   id: string;
@@ -7,6 +10,7 @@ export interface ComplianceConfig {
   enabled: boolean;
   threshold_fiat: number;
   unknown_price_policy: 'allowed' | 'forbidden';
+  enforcement_mode: EnforcementMode;
   created_at: string;
   updated_at: string;
 }
@@ -15,6 +19,7 @@ export interface UpdateComplianceConfigInput {
   enabled?: boolean;
   threshold_fiat?: number;
   unknown_price_policy?: 'allowed' | 'forbidden';
+  enforcement_mode?: EnforcementMode;
 }
 
 export interface TokenPrice {
@@ -122,6 +127,9 @@ export interface ComplianceLog {
   currency?: string;
   decision: Decision;
   denial_reason?: string;
+  // would_block marks a monitor-mode violation: decision='allowed' but it would
+  // have been blocked under enforce mode; denial_reason carries the reason. (RD-1044)
+  would_block?: boolean;
   travel_rule_record_id?: string;
   created_at: string;
 }

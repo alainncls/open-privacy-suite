@@ -69,6 +69,17 @@ func compliancePaginationParams(c *gin.Context, defaultLimit int) (int, int) {
 	return limit, offset
 }
 
+// defaultEnforcementMode returns the cluster-wide default compliance
+// enforcement mode (RD-1044), falling back to enforce. Per-org config
+// overrides it; this only seeds the value shown/created when an org has no
+// compliance config row yet.
+func (s *Server) defaultEnforcementMode() compliance.EnforcementMode {
+	if s.config != nil && s.config.ComplianceDefaultMode == string(compliance.EnforcementMonitor) {
+		return compliance.EnforcementMonitor
+	}
+	return compliance.EnforcementEnforce
+}
+
 // Compliance Config handlers
 
 func (s *Server) getComplianceConfig(c *gin.Context) {
@@ -80,12 +91,15 @@ func (s *Server) getComplianceConfig(c *gin.Context) {
 		return
 	}
 
-	// Return default config if none exists
+	// Return default config if none exists. EnforcementMode reflects the
+	// cluster default so the dashboard shows the mode that would actually
+	// apply to this org (RD-1044).
 	if config == nil {
 		config = &compliance.ComplianceConfig{
-			OrgID:         orgID,
-			Enabled:       false,
-			ThresholdFiat: 1000,
+			OrgID:           orgID,
+			Enabled:         false,
+			ThresholdFiat:   1000,
+			EnforcementMode: s.defaultEnforcementMode(),
 		}
 	}
 
@@ -99,6 +113,7 @@ func (s *Server) updateComplianceConfig(c *gin.Context) {
 		Enabled            *bool                          `json:"enabled"`
 		ThresholdFiat      *float64                       `json:"threshold_fiat"`
 		UnknownPricePolicy *compliance.UnknownPricePolicy `json:"unknown_price_policy"`
+		EnforcementMode    *compliance.EnforcementMode    `json:"enforcement_mode"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		respondBadRequestAndLog(c, "invalid request body",
@@ -117,10 +132,11 @@ func (s *Server) updateComplianceConfig(c *gin.Context) {
 	if config == nil {
 		isNew = true
 		config = &compliance.ComplianceConfig{
-			ID:            uuid.New().String(),
-			OrgID:         orgID,
-			Enabled:       false,
-			ThresholdFiat: 1000,
+			ID:              uuid.New().String(),
+			OrgID:           orgID,
+			Enabled:         false,
+			ThresholdFiat:   1000,
+			EnforcementMode: s.defaultEnforcementMode(),
 		}
 	}
 
@@ -129,6 +145,7 @@ func (s *Server) updateComplianceConfig(c *gin.Context) {
 		"enabled":              config.Enabled,
 		"threshold_fiat":       config.ThresholdFiat,
 		"unknown_price_policy": config.UnknownPricePolicy,
+		"enforcement_mode":     config.EnforcementMode,
 	}
 
 	if input.Enabled != nil {
@@ -148,6 +165,16 @@ func (s *Server) updateComplianceConfig(c *gin.Context) {
 		}
 		config.UnknownPricePolicy = *input.UnknownPricePolicy
 	}
+	// RD-1044: enforce (block, default) vs monitor (allow + record). Changing
+	// this goes through this audited config-change path. Sanctions stay
+	// hard-blocked regardless of mode (enforced in the checker).
+	if input.EnforcementMode != nil {
+		if !compliance.IsValidEnforcementMode(*input.EnforcementMode) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "enforcement_mode must be 'enforce' or 'monitor'"})
+			return
+		}
+		config.EnforcementMode = *input.EnforcementMode
+	}
 
 	if err := s.db.UpsertComplianceConfig(c.Request.Context(), config); err != nil {
 		internalError(c, "failed to save compliance config", err)
@@ -166,6 +193,7 @@ func (s *Server) updateComplianceConfig(c *gin.Context) {
 			"enabled":              config.Enabled,
 			"threshold_fiat":       config.ThresholdFiat,
 			"unknown_price_policy": config.UnknownPricePolicy,
+			"enforcement_mode":     config.EnforcementMode,
 		})
 
 	c.JSON(http.StatusOK, config)

@@ -14,13 +14,13 @@ import (
 // Compliance Config operations
 
 func (d *DB) GetComplianceConfig(ctx context.Context, orgID string) (*compliance.ComplianceConfig, error) {
-	query := `SELECT id, org_id, enabled, threshold_fiat, unknown_price_policy, created_at, updated_at
+	query := `SELECT id, org_id, enabled, threshold_fiat, unknown_price_policy, enforcement_mode, created_at, updated_at
 	          FROM compliance_config WHERE org_id = $1`
 
 	config := &compliance.ComplianceConfig{}
 	err := d.conn.QueryRowContext(ctx, query, orgID).Scan(
 		&config.ID, &config.OrgID, &config.Enabled, &config.ThresholdFiat, &config.UnknownPricePolicy,
-		&config.CreatedAt, &config.UpdatedAt,
+		&config.EnforcementMode, &config.CreatedAt, &config.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -32,17 +32,27 @@ func (d *DB) GetComplianceConfig(ctx context.Context, orgID string) (*compliance
 }
 
 func (d *DB) UpsertComplianceConfig(ctx context.Context, config *compliance.ComplianceConfig) error {
-	query := `INSERT INTO compliance_config (id, org_id, enabled, threshold_fiat, unknown_price_policy)
-	          VALUES ($1, $2, $3, $4, $5)
+	// enforcement_mode is NOT NULL with a CHECK(enforce|monitor). Coalesce an
+	// unset value to the safe default so no caller can trip the constraint or
+	// silently persist an empty mode.
+	mode := config.EnforcementMode
+	if mode == "" {
+		mode = compliance.EnforcementEnforce
+	}
+
+	query := `INSERT INTO compliance_config (id, org_id, enabled, threshold_fiat, unknown_price_policy, enforcement_mode)
+	          VALUES ($1, $2, $3, $4, $5, $6)
 	          ON CONFLICT (org_id) DO UPDATE SET
 	          enabled = EXCLUDED.enabled,
 	          threshold_fiat = EXCLUDED.threshold_fiat,
 	          unknown_price_policy = EXCLUDED.unknown_price_policy,
+	          enforcement_mode = EXCLUDED.enforcement_mode,
 	          updated_at = CURRENT_TIMESTAMP
 	          RETURNING created_at, updated_at`
 
+	config.EnforcementMode = mode
 	return d.conn.QueryRowContext(ctx, query,
-		config.ID, config.OrgID, config.Enabled, config.ThresholdFiat, config.UnknownPricePolicy,
+		config.ID, config.OrgID, config.Enabled, config.ThresholdFiat, config.UnknownPricePolicy, mode,
 	).Scan(&config.CreatedAt, &config.UpdatedAt)
 }
 
@@ -539,8 +549,8 @@ func (d *DB) ListSanctionedAddresses(ctx context.Context, orgID *string, limit, 
 func (d *DB) CreateComplianceLog(ctx context.Context, entry *compliance.ComplianceLog) (int64, error) {
 	query := `INSERT INTO compliance_logs (org_id, user_id, transfer_type, token_address,
 	          from_address, to_address, amount_wei, amount_fiat, threshold_fiat,
-	          currency, decision, denial_reason, travel_rule_record_id, correlation_id)
-	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+	          currency, decision, denial_reason, would_block, travel_rule_record_id, correlation_id)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 	          RETURNING id, created_at`
 
 	var corrID *string
@@ -552,7 +562,7 @@ func (d *DB) CreateComplianceLog(ctx context.Context, entry *compliance.Complian
 		entry.OrgID, entry.UserID, entry.TransferType, entry.TokenAddress,
 		strings.ToLower(entry.FromAddress), strings.ToLower(entry.ToAddress),
 		entry.AmountWei, entry.AmountFiat, entry.ThresholdFiat,
-		entry.Currency, entry.Decision, entry.DenialReason, entry.TravelRuleRecordID,
+		entry.Currency, entry.Decision, entry.DenialReason, entry.WouldBlock, entry.TravelRuleRecordID,
 		corrID,
 	).Scan(&entry.ID, &entry.CreatedAt)
 	if err != nil {
@@ -565,7 +575,7 @@ func (d *DB) CreateComplianceLog(ctx context.Context, entry *compliance.Complian
 func (d *DB) GetComplianceLog(ctx context.Context, id int64) (*compliance.ComplianceLog, error) {
 	query := `SELECT id, org_id, user_id, transfer_type, token_address,
 	          from_address, to_address, amount_wei, amount_fiat, threshold_fiat,
-	          currency, decision, denial_reason, travel_rule_record_id, created_at
+	          currency, decision, denial_reason, would_block, travel_rule_record_id, created_at
 	          FROM compliance_logs WHERE id = $1`
 
 	return scanComplianceLog(d.conn.QueryRowContext(ctx, query, id))
@@ -616,7 +626,7 @@ func (d *DB) ListComplianceLogs(ctx context.Context, orgID string, filters *comp
 
 	query := fmt.Sprintf(`SELECT cl.id, cl.org_id, cl.user_id, COALESCE(u.external_id, ''), cl.transfer_type, cl.token_address,
 	          cl.from_address, cl.to_address, cl.amount_wei, cl.amount_fiat, cl.threshold_fiat,
-	          cl.currency, cl.decision, cl.denial_reason, cl.travel_rule_record_id, cl.created_at
+	          cl.currency, cl.decision, cl.denial_reason, cl.would_block, cl.travel_rule_record_id, cl.created_at
 	          FROM compliance_logs cl LEFT JOIN users u ON u.id = cl.user_id
 	          %s ORDER BY cl.created_at DESC LIMIT $%d OFFSET $%d`,
 		where, paramIdx, paramIdx+1)
@@ -881,7 +891,7 @@ func scanComplianceLog(row *sql.Row) (*compliance.ComplianceLog, error) {
 		&entry.ID, &entry.OrgID, &entry.UserID, &entry.TransferType, &tokenAddress,
 		&entry.FromAddress, &entry.ToAddress, &entry.AmountWei,
 		&amountFiat, &thresholdFiat,
-		&entry.Currency, &entry.Decision, &denialReason, &travelRuleRecordID, &entry.CreatedAt,
+		&entry.Currency, &entry.Decision, &denialReason, &entry.WouldBlock, &travelRuleRecordID, &entry.CreatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -986,7 +996,7 @@ func scanComplianceLogs(rows *sql.Rows) ([]*compliance.ComplianceLog, error) {
 			&entry.ID, &entry.OrgID, &entry.UserID, &entry.UserExternalID, &entry.TransferType, &tokenAddress,
 			&entry.FromAddress, &entry.ToAddress, &entry.AmountWei,
 			&amountFiat, &thresholdFiat,
-			&entry.Currency, &entry.Decision, &denialReason, &travelRuleRecordID, &entry.CreatedAt,
+			&entry.Currency, &entry.Decision, &denialReason, &entry.WouldBlock, &travelRuleRecordID, &entry.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan compliance log: %w", err)
 		}

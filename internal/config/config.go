@@ -294,6 +294,11 @@ type Config struct {
 	// Travel rule compliance configuration
 	EnableTravelRule   bool          // If true, enable travel rule enforcement (default: false)
 	TravelRecordExpiry time.Duration // How long travel rule records stay valid (default: 24h)
+	// ComplianceDefaultMode is the cluster-wide default enforcement mode
+	// ("enforce" | "monitor") for orgs that have not set a per-org mode.
+	// Default "enforce" (fail-closed). Per-org config overrides it; surfaced
+	// in /status. (RD-1044)
+	ComplianceDefaultMode string
 
 	// Token price fetching configuration
 	PriceFetchInterval      time.Duration // How often to fetch prices from CoinGecko (default: 5m)
@@ -471,6 +476,14 @@ func Load() *Config {
 		}
 	}
 
+	// COMPLIANCE_DEFAULT_MODE: cluster-wide default enforcement mode for orgs
+	// without a per-org setting. Invalid values fall back to the safe default
+	// (enforce) silently — fail-safe per RD-1044.
+	complianceDefaultMode := strings.ToLower(getEnv("COMPLIANCE_DEFAULT_MODE", "enforce"))
+	if complianceDefaultMode != "enforce" && complianceDefaultMode != "monitor" {
+		complianceDefaultMode = "enforce"
+	}
+
 	// Token price fetching configuration
 	priceFetchInterval := 5 * time.Minute
 	if intervalStr := getEnv("PRICE_FETCH_INTERVAL", ""); intervalStr != "" {
@@ -617,6 +630,7 @@ func Load() *Config {
 		RuntimeTracingIntraOrgGrantsEnabled: intraOrgGrantsTracingEnabled,
 		EnableTravelRule:                    enableTravelRule,
 		TravelRecordExpiry:                  travelRecordExpiry,
+		ComplianceDefaultMode:               complianceDefaultMode,
 		PriceFetchInterval:                  priceFetchInterval,
 		PriceStalenessThreshold:             priceStalenessThreshold,
 		DisableCoinGecko:                    disableCoinGecko,

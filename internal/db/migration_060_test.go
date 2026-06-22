@@ -47,7 +47,7 @@ func TestMigration060_OrgAdminCleanup(t *testing.T) {
 
 	// Migrate up to the migration just before 060 so we can seed offending rows
 	// before the cleanup + CHECK constraint land.
-	require.NoError(t, migrator.MigrateTo(ctx, total-1))
+	require.NoError(t, migrator.MigrateTo(ctx, 59))
 
 	sqlDB, err := sql.Open("pgx", connStr)
 	require.NoError(t, err)
@@ -89,7 +89,7 @@ func TestMigration060_OrgAdminCleanup(t *testing.T) {
 	insertAccess(groupNormal, `ARRAY['eth_call']::text[]`, `ARRAY['deploy']::text[]`)
 
 	// Apply migration 060.
-	require.NoError(t, migrator.MigrateTo(ctx, total))
+	require.NoError(t, migrator.MigrateTo(ctx, 60))
 
 	// 1) Mutual exclusion: read-only flag cleared where is_org_admin was also set.
 	var roStillSet bool

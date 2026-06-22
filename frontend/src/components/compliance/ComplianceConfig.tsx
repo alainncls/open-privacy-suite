@@ -31,6 +31,7 @@ export default function ComplianceConfig() {
   const [enabled, setEnabled] = useState(false);
   const [thresholdFiat, setThresholdFiat] = useState('1000');
   const [unknownPricePolicy, setUnknownPricePolicy] = useState<'allowed' | 'forbidden'>('forbidden');
+  const [enforcementMode, setEnforcementMode] = useState<'enforce' | 'monitor'>('enforce');
 
   const loadConfig = async () => {
     if (!orgId) return;
@@ -43,6 +44,7 @@ export default function ComplianceConfig() {
       setEnabled(cfg.enabled);
       setThresholdFiat(String(cfg.threshold_fiat));
       setUnknownPricePolicy(cfg.unknown_price_policy || 'forbidden');
+      setEnforcementMode(cfg.enforcement_mode || 'enforce');
     } catch (err: unknown) {
       const axiosError = err as { response?: { status?: number; data?: { error?: string } } };
       if (axiosError.response?.status === 404) {
@@ -51,6 +53,7 @@ export default function ComplianceConfig() {
         setEnabled(false);
         setThresholdFiat('1000');
         setUnknownPricePolicy('forbidden');
+        setEnforcementMode('enforce');
       } else {
         setError(axiosError.response?.data?.error || 'Failed to load compliance config');
       }
@@ -78,6 +81,7 @@ export default function ComplianceConfig() {
         enabled,
         threshold_fiat: parseFloat(thresholdFiat) || 0,
         unknown_price_policy: unknownPricePolicy,
+        enforcement_mode: enforcementMode,
       });
       setConfig(response.data);
       setSuccess(true);
@@ -204,6 +208,34 @@ export default function ComplianceConfig() {
           <p className="text-xs text-neutral-400 mt-1">
             When token price is missing, Allowed bypasses the threshold; Forbidden fails closed
           </p>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-neutral-700 mb-1.5">
+            Enforcement mode
+          </label>
+          <Select
+            value={enforcementMode}
+            onValueChange={(val: 'enforce' | 'monitor') => setEnforcementMode(val)}
+            disabled={isReadonlyAdmin}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Select mode" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="enforce">Enforce — block violations</SelectItem>
+              <SelectItem value="monitor">Monitor — allow &amp; record</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-neutral-400 mt-1">
+            Enforce blocks non-compliant transfers (default). Monitor lets them proceed but records each as a “would-have-blocked” entry in the compliance log. Sanctioned addresses stay blocked in either mode.
+          </p>
+          {enforcementMode === 'monitor' && (
+            <div className="flex items-center gap-2 mt-2 p-2 rounded-lg bg-amber-50 border border-amber-300 text-amber-800 text-xs">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+              Monitor mode: threshold &amp; travel-rule violations are recorded but NOT blocked. Sanctions still block.
+            </div>
+          )}
         </div>
 
         {!isReadonlyAdmin && (
