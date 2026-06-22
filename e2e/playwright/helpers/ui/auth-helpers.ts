@@ -55,8 +55,18 @@ export async function mockLoginViaUI(page: Page): Promise<void> {
 // admin-org middleware rejects calls to /api/v1/admin/orgs/<new-org>/...
 let _currentMockAdminDID: string | null = null;
 
+// RD-1107: the mock admin's access token, captured alongside the DID. The
+// RBACTestFixture routes per-org mutations through this JWT (the mock admin is
+// is_org_admin in every fixture-created org) because the super-admin token can
+// no longer perform per-org tenant management.
+let _currentMockAdminToken: string | null = null;
+
 export function getCurrentMockAdminDID(): string | null {
   return _currentMockAdminDID;
+}
+
+export function getCurrentMockAdminToken(): string | null {
+  return _currentMockAdminToken;
 }
 
 export async function mockLoginViaAPI(
@@ -74,8 +84,10 @@ export async function mockLoginViaAPI(
   if (admin) {
     await ensureAdminClaim(did);
     _currentMockAdminDID = did;
+    _currentMockAdminToken = tokens.accessToken;
   } else {
     _currentMockAdminDID = null;
+    _currentMockAdminToken = null;
   }
 
   // Synchronously clear any "auth_cleared" sentinel left by a beforeEach
