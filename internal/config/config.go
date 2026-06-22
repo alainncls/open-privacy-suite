@@ -368,6 +368,11 @@ type Config struct {
 	AzureADClientID     string // AZURE_AD_CLIENT_ID
 	AzureADClientSecret string // AZURE_AD_CLIENT_SECRET
 	AzureADTenantID     string // AZURE_AD_TENANT_ID (default: "common" for multi-tenant)
+	// AzureADSPAudience is the expected `aud` for service-principal
+	// (client-credentials) access tokens at /api/v1/auth/azure/service-principal
+	// (RD-1120). Empty defaults to AzureADClientID. Set this when the client
+	// requests the token for a distinct API resource (e.g. api://<app-id>).
+	AzureADSPAudience string // AZURE_AD_SP_AUDIENCE
 
 	// Redis URL for shared state stores (e.g., "redis://localhost:6379").
 	// Empty means fall back to in-memory stores.
@@ -663,6 +668,7 @@ func Load() *Config {
 		AzureADClientID:                     getEnv("AZURE_AD_CLIENT_ID", ""),
 		AzureADClientSecret:                 getEnv("AZURE_AD_CLIENT_SECRET", ""),
 		AzureADTenantID:                     getEnv("AZURE_AD_TENANT_ID", "common"),
+		AzureADSPAudience:                   getEnv("AZURE_AD_SP_AUDIENCE", ""),
 		RedisURL:                            getEnv("REDIS_URL", ""),
 	}
 }
