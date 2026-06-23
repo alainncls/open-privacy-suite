@@ -137,6 +137,18 @@ func (a checkpointAdapter) LatestCheckpoint(ctx context.Context, chainName strin
 	}, nil
 }
 
+// SetAnchor + WriteReAnchor let checkpointAdapter also satisfy
+// audit.ReAnchorStore, so the break-glass re-anchor operation
+// (audit.BreakGlassReAnchor) can run against the live database (RD-1112 #8).
+func (a checkpointAdapter) SetAnchor(ctx context.Context, chainName string, lastID int64, lastHash string) error {
+	return a.db.UpsertAuditChainAnchor(ctx, chainName, lastID, lastHash)
+}
+
+func (a checkpointAdapter) WriteReAnchor(ctx context.Context, r audit.ReAnchor) error {
+	return a.db.WriteAuditChainReAnchor(ctx, r.ChainName, r.Reason, r.Actor,
+		r.FromHeadID, r.FromHash, r.ToHeadID, r.ToHash, r.KeyID, r.Signature, r.CreatedAt)
+}
+
 // DB returns the database instance (for testing)
 func (s *Server) DB() *db.DB {
 	return s.db

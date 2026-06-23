@@ -823,6 +823,20 @@ func (d *DB) GetAccessLogChainStats(ctx context.Context, chainName string) (rowC
 	return rowCount, headID, hh.String, nil
 }
 
+// WriteAuditChainReAnchor appends a signed break-glass re-anchor record — the
+// permanent, attributable trail of an authorized chain discontinuity (RD-1112
+// #8). Append-only; rows are never updated or deleted.
+func (d *DB) WriteAuditChainReAnchor(ctx context.Context, chainName, reason, actor string, fromHeadID int64, fromHash string, toHeadID int64, toHash, keyID, signature string, createdAt time.Time) error {
+	_, err := d.conn.ExecContext(ctx,
+		`INSERT INTO audit_chain_reanchor (chain_name, reason, actor, from_head_id, from_hash, to_head_id, to_hash, key_id, signature, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		chainName, reason, actor, fromHeadID, fromHash, toHeadID, toHash, keyID, signature, createdAt.UTC())
+	if err != nil {
+		return fmt.Errorf("write audit chain re-anchor: %w", err)
+	}
+	return nil
+}
+
 // GetLatestRBACAuditLogHash returns the seed for the rbac_audit_log hash
 // chain (RD-858). Resolution order mirrors GetLatestAccessLogHash:
 //  1. The entry_hash of the most recent surviving rbac_audit_log row.
