@@ -41,6 +41,9 @@ func setupTieredAdminTestServer(t *testing.T, adminToken string) (*Server, *gin.
 
 	cfg := &config.Config{
 		AdminAPIToken: adminToken,
+		// RD-1132: a fixed restricted operator token so tests can exercise the
+		// denyOperator* gates (X-Admin-Token: testOperatorToken → operator_token).
+		OperatorAPIToken: testOperatorToken,
 	}
 
 	srv := &Server{

@@ -1068,9 +1068,20 @@ func (s *Server) adminAuthMiddleware() gin.HandlerFunc {
 
 	return func(c *gin.Context) {
 		// --- Path 1: X-Admin-Token (M2M / bootstrap) ---
+		// The same header carries either the full admin token or the restricted
+		// operator token (RD-1132); they're distinguished by which configured
+		// value matches. admin_token = full super-admin; operator_token =
+		// platform-only (no per-org tenant reads/mutations — enforced by the
+		// denyOperator* gates in the handlers).
 		if provided := strings.TrimSpace(c.GetHeader("X-Admin-Token")); provided != "" {
 			if expectedToken != "" && subtle.ConstantTimeCompare([]byte(provided), []byte(expectedToken)) == 1 {
 				c.Set("auth_method", "admin_token")
+				c.Next()
+				return
+			}
+			if operatorToken := strings.TrimSpace(s.config.OperatorAPIToken); operatorToken != "" &&
+				subtle.ConstantTimeCompare([]byte(provided), []byte(operatorToken)) == 1 {
+				c.Set("auth_method", "operator_token")
 				c.Next()
 				return
 			}
@@ -1184,8 +1195,11 @@ func (s *Server) orgScopingMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authMethod := c.GetString("auth_method")
 
-		// Super admin (X-Admin-Token) bypasses org scoping entirely.
-		if authMethod == "admin_token" {
+		// Super admin (X-Admin-Token) bypasses org scoping entirely. The
+		// operator token also bypasses scoping so it can reach any org's
+		// is_org_admin group to mint admins; the per-handler denyOperator*
+		// gates then reject any per-org tenant read/mutation.
+		if authMethod == "admin_token" || authMethod == "operator_token" {
 			c.Next()
 			return
 		}

@@ -98,6 +98,10 @@ const (
 // Group handlers
 
 func (s *Server) listGroups(c *gin.Context) {
+	// RD-1132: tenant-confidential read — not readable with the operator token.
+	if denyOperatorTenantRead(c) {
+		return
+	}
 	orgID := c.Param("org_id")
 	limit, offset := parsePaginationParams(c, 50)
 
@@ -166,9 +170,9 @@ func (s *Server) createGroup(c *gin.Context) {
 	// is_org_admin / is_org_readonly_admin groups stays super-admin (those
 	// are the admin tier), but creating a REGULAR group is per-org tenant
 	// management — the org admin's job. Block the super-admin token here.
-	if c.GetString("auth_method") == "admin_token" && !input.IsOrgAdmin && !input.IsOrgReadonlyAdmin &&
+	if c.GetString("auth_method") == "operator_token" && !input.IsOrgAdmin && !input.IsOrgReadonlyAdmin &&
 		orgID != rbac.DefaultOrgID {
-		c.JSON(http.StatusForbidden, gin.H{"error": errSuperAdminNoTenantMgmt})
+		c.JSON(http.StatusForbidden, gin.H{"error": errOperatorNoTenantMgmt})
 		return
 	}
 
@@ -276,6 +280,10 @@ func verifyGroupBelongsToPathOrg(c *gin.Context, group *rbac.Group) bool {
 }
 
 func (s *Server) getGroup(c *gin.Context) {
+	// RD-1132: tenant-confidential read — not readable with the operator token.
+	if denyOperatorTenantRead(c) {
+		return
+	}
 	groupID := c.Param("group_id")
 	group, err := s.db.GetGroup(c.Request.Context(), groupID)
 	if err != nil {
@@ -340,12 +348,12 @@ func (s *Server) updateGroup(c *gin.Context) {
 	// readonly-admin groups) but not regular groups. Allow when the group is
 	// already an admin group OR this update promotes it to one (minting);
 	// block a plain regular-group edit. (is_system was rejected above.)
-	if c.GetString("auth_method") == "admin_token" {
+	if c.GetString("auth_method") == "operator_token" {
 		currentlyAdminTier := group.IsOrgAdmin || group.IsOrgReadonlyAdmin
 		promoting := (input.IsOrgAdmin != nil && *input.IsOrgAdmin) ||
 			(input.IsOrgReadonlyAdmin != nil && *input.IsOrgReadonlyAdmin)
 		if !currentlyAdminTier && !promoting {
-			c.JSON(http.StatusForbidden, gin.H{"error": errSuperAdminNoTenantMgmt})
+			c.JSON(http.StatusForbidden, gin.H{"error": errOperatorNoTenantMgmt})
 			return
 		}
 	}
@@ -428,7 +436,7 @@ func (s *Server) deleteGroup(c *gin.Context) {
 		return
 	}
 	// RD-1107: super-admin manages admin-tier groups, not regular ones.
-	if denySuperAdminRegularGroup(c, group) {
+	if denyOperatorRegularGroup(c, group) {
 		return
 	}
 
@@ -456,6 +464,10 @@ func (s *Server) deleteGroup(c *gin.Context) {
 // Group Access handlers
 
 func (s *Server) getGroupAccess(c *gin.Context) {
+	// RD-1132: tenant-confidential read — not readable with the operator token.
+	if denyOperatorTenantRead(c) {
+		return
+	}
 	groupID := c.Param("group_id")
 	// Re-verify group belongs to path :org_id (audit C2). Pre-fix,
 	// PUT /orgs/orgA/groups/<orgB-group-id>/access could read /
@@ -531,7 +543,7 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 	}
 	// RD-1107: reshaping a REGULAR group's access is per-org tenant management
 	// (org admin's job); super-admin keeps is_org_admin/system access (above).
-	if denySuperAdminRegularGroup(c, group) {
+	if denyOperatorRegularGroup(c, group) {
 		return
 	}
 
@@ -846,7 +858,7 @@ func (s *Server) batchDeleteGroups(c *gin.Context) {
 		// includes any REGULAR (non-admin, non-system) group is per-org tenant
 		// management — abort the whole batch. is_org_admin/system groups are
 		// still deletable by super-admin.
-		if c.GetString("auth_method") == "admin_token" {
+		if c.GetString("auth_method") == "operator_token" {
 			for _, g := range groups {
 				if !g.IsOrgAdmin && !g.IsOrgReadonlyAdmin && !g.IsSystem {
 					return errBatchContainsRegularGroup
@@ -879,7 +891,7 @@ func (s *Server) batchDeleteGroups(c *gin.Context) {
 		}
 		if errors.Is(err, errBatchContainsRegularGroup) {
 			// Super-admin tried to batch-delete a regular group (RD-1107).
-			c.JSON(http.StatusForbidden, gin.H{"error": errSuperAdminNoTenantMgmt})
+			c.JSON(http.StatusForbidden, gin.H{"error": errOperatorNoTenantMgmt})
 			return
 		}
 		if strings.Contains(err.Error(), "not found") {

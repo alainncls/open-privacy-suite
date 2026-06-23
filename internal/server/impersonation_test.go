@@ -194,7 +194,7 @@ func TestImpersonation_RejectsSuperAdminToken(t *testing.T) {
 		impersonatePath(f.userDID, f.orgID, "/api/v1/explorer/chain-id"),
 		"admin_token", "", nil)
 	assert.Equal(t, http.StatusForbidden, w.Code)
-	assert.Contains(t, w.Body.String(), "super-admin tokens are not authorised")
+	assert.Contains(t, w.Body.String(), "X-Admin-Token credentials are not authorised")
 }
 
 func TestImpersonation_RejectsUnauthenticated(t *testing.T) {

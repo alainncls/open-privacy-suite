@@ -254,7 +254,8 @@ type Config struct {
 	BillionsCredentialQueryFile string         // env BILLIONS_CREDENTIAL_QUERY_FILE — path to JSON file with the credential query
 	BillionsCredentialQuery     map[string]any // Parsed from BillionsCredentialQueryFile at startup
 
-	AdminAPIToken          string              // Shared token required for admin API access (required in production)
+	AdminAPIToken          string              // Shared token required for admin API access (required in production). FULL super-admin: reads + writes + platform/fleet. Held by trusted ops / MCP.
+	OperatorAPIToken       string              // RD-1132: optional restricted "operator/onboarder" token. Platform-only — create/manage orgs + mint org admins; NO per-org tenant reads or mutations. For a 3rd-party onboarder that should not see/touch tenant data.
 	ENSResolverURL         string              // Ethereum mainnet RPC URL for ENS resolution
 	CORSAllowedOrigins     string              // Comma-separated list of allowed origins, or "*" for all (default: "*" in dev)
 	MockSignatures         bool                // If true, accept any signature without verification (dev/demo only, NEVER in production)
@@ -601,6 +602,7 @@ func Load() *Config {
 		BillionsCredentialQueryFile:         billionsQueryFile,
 		BillionsCredentialQuery:             billionsQuery,
 		AdminAPIToken:                       getEnv("ADMIN_API_TOKEN", ""),
+		OperatorAPIToken:                    getEnv("OPERATOR_API_TOKEN", ""),
 		ENSResolverURL:                      getEnv("ENS_RESOLVER_URL", "https://eth.llamarpc.com"), // Public mainnet RPC
 		CORSAllowedOrigins:                  corsOrigins,
 		MockSignatures:                      mockSigs,
