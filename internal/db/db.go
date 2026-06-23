@@ -760,6 +760,68 @@ func (d *DB) SealBufferedAccessLog(ctx context.Context, chain RBACAuditChain, re
 	return hash, nil
 }
 
+// AuditChainCheckpointRow is a persisted signed checkpoint (RD-1112 #8),
+// exchanged as primitives so the db package need not import internal/audit
+// (the audit package reconstructs its signed Checkpoint from this).
+type AuditChainCheckpointRow struct {
+	ChainName string
+	HeadID    int64
+	HeadHash  string
+	RowCount  int64
+	KeyID     string
+	Signature string
+	CreatedAt time.Time
+}
+
+// WriteAuditChainCheckpoint appends a signed truncation-detection checkpoint.
+func (d *DB) WriteAuditChainCheckpoint(ctx context.Context, c AuditChainCheckpointRow) error {
+	_, err := d.conn.ExecContext(ctx,
+		`INSERT INTO audit_chain_checkpoint (chain_name, head_id, head_hash, row_count, key_id, signature, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		c.ChainName, c.HeadID, c.HeadHash, c.RowCount, c.KeyID, c.Signature, c.CreatedAt.UTC())
+	if err != nil {
+		return fmt.Errorf("write audit chain checkpoint: %w", err)
+	}
+	return nil
+}
+
+// GetLatestAuditChainCheckpoint returns the most recent checkpoint for
+// chainName, or (nil, nil) if none exist.
+func (d *DB) GetLatestAuditChainCheckpoint(ctx context.Context, chainName string) (*AuditChainCheckpointRow, error) {
+	var c AuditChainCheckpointRow
+	err := d.conn.QueryRowContext(ctx,
+		`SELECT chain_name, head_id, head_hash, row_count, key_id, signature, created_at
+		 FROM audit_chain_checkpoint WHERE chain_name = $1 ORDER BY id DESC LIMIT 1`, chainName,
+	).Scan(&c.ChainName, &c.HeadID, &c.HeadHash, &c.RowCount, &c.KeyID, &c.Signature, &c.CreatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get latest audit chain checkpoint: %w", err)
+	}
+	return &c, nil
+}
+
+// GetAccessLogChainStats returns the row count and current head (id + entry_hash)
+// for the named chain — the inputs the checkpoint worker signs (RD-1112 #8).
+// rowCount=0 (zero head) when the chain is empty.
+func (d *DB) GetAccessLogChainStats(ctx context.Context, chainName string) (rowCount, headID int64, headHash string, err error) {
+	if e := d.conn.QueryRowContext(ctx,
+		`SELECT count(*) FROM access_logs WHERE chain_name = $1`, chainName).Scan(&rowCount); e != nil {
+		return 0, 0, "", fmt.Errorf("count access_logs: %w", e)
+	}
+	if rowCount == 0 {
+		return 0, 0, "", nil
+	}
+	var hh sql.NullString
+	if e := d.conn.QueryRowContext(ctx,
+		`SELECT id, entry_hash FROM access_logs WHERE chain_name = $1 ORDER BY id DESC LIMIT 1`, chainName,
+	).Scan(&headID, &hh); e != nil {
+		return 0, 0, "", fmt.Errorf("head access_logs: %w", e)
+	}
+	return rowCount, headID, hh.String, nil
+}
+
 // GetLatestRBACAuditLogHash returns the seed for the rbac_audit_log hash
 // chain (RD-858). Resolution order mirrors GetLatestAccessLogHash:
 //  1. The entry_hash of the most recent surviving rbac_audit_log row.

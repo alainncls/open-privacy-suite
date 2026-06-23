@@ -62,6 +62,10 @@ const (
 	ReasonAnchorMismatch  = "anchor_mismatch"
 	ReasonUnknownFormat   = "unknown_hash_format_version"
 	ReasonContextCanceled = "context_canceled"
+	// RD-1112 #8 signed-checkpoint truncation guard:
+	ReasonCheckpointReadFailed = "checkpoint_read_failed"
+	ReasonCheckpointForged     = "checkpoint_signature_invalid"
+	ReasonChainTruncated       = "chain_truncated"
 )
 
 // SeedReader retrieves the chain seed for a given chain name. The
@@ -83,6 +87,60 @@ type SeedReader interface {
 type Verifier struct {
 	conn   *sql.DB
 	seedFn SeedReader
+	// RD-1112 #8: optional signed-checkpoint truncation guard. When both are
+	// set, Verify additionally checks the access_logs chain hasn't been
+	// tail-truncated below the latest signed checkpoint.
+	ckptReader CheckpointReader
+	ckptSigner Signer
+}
+
+// SetCheckpointVerification enables the signed-checkpoint truncation guard
+// (RD-1112 #8). reader supplies the latest checkpoint; signer verifies its
+// signature. Leaving both unset (the default) disables the guard.
+func (v *Verifier) SetCheckpointVerification(reader CheckpointReader, signer Signer) {
+	v.ckptReader = reader
+	v.ckptSigner = signer
+}
+
+// checkTruncation applies the signed-checkpoint truncation guard to res (a
+// no-op when the guard is not configured). It runs after the hash walk: the
+// walk catches insert / modify / middle-delete; this catches TAIL truncation,
+// which the walk cannot see (deleting the most recent rows breaks no
+// downstream hash). Only valid for the access_logs chain (the chain_name
+// column lives there).
+func (v *Verifier) checkTruncation(ctx context.Context, chain ChainName, res *Result) {
+	if v.ckptReader == nil || v.ckptSigner == nil {
+		return
+	}
+	c, err := v.ckptReader.LatestCheckpoint(ctx, string(chain))
+	if err != nil {
+		res.OK = false
+		res.FirstMismatchReason = ReasonCheckpointReadFailed
+		return
+	}
+	if c == nil {
+		return // no checkpoint yet — nothing to enforce
+	}
+	if err := VerifyCheckpoint(v.ckptSigner, *c); err != nil {
+		// A checkpoint the verifier cannot trust is itself a tamper signal.
+		res.OK = false
+		res.FirstMismatchReason = ReasonCheckpointForged
+		return
+	}
+	var curHead sql.NullInt64
+	if err := v.conn.QueryRowContext(ctx,
+		`SELECT max(id) FROM access_logs WHERE chain_name = $1`, string(chain),
+	).Scan(&curHead); err != nil {
+		res.OK = false
+		res.FirstMismatchReason = ReasonCheckpointReadFailed
+		return
+	}
+	if checkpointTruncated(c, curHead.Valid, curHead.Int64) {
+		res.OK = false
+		res.FirstMismatchReason = ReasonChainTruncated
+		res.FirstMismatchID = c.HeadID
+		res.FirstMismatchExpect = c.HeadHash
+	}
 }
 
 // NewVerifier constructs a Verifier. conn must point at a database
@@ -217,6 +275,12 @@ func (v *Verifier) verifyAccessLogs(ctx context.Context) (*Result, error) {
 		// Not necessarily a failure — seed lag is normal. Record but
 		// keep OK = true.
 	}
+	// RD-1112 #8: signed-checkpoint tail-truncation guard (no-op unless
+	// configured). Runs only when the walk passed, so a walk failure's reason
+	// is preserved.
+	if res.OK {
+		v.checkTruncation(ctx, ChainAccessLogs, res)
+	}
 	return res, nil
 }
 
@@ -261,12 +325,12 @@ func (v *Verifier) verifyRBACAuditLog(ctx context.Context) (*Result, error) {
 			return res, ctx.Err()
 		}
 		var (
-			id                                                                                 int64
+			id                                                                                int64
 			actorExternalID, action, resourceType, resourceID, resourceName, orgID, ipAddress string
-			createdAt                                                                          time.Time
-			oldValue, newValue                                                                 string
-			entryHash                                                                          sql.NullString
-			hashFormatVersion                                                                  int
+			createdAt                                                                         time.Time
+			oldValue, newValue                                                                string
+			entryHash                                                                         sql.NullString
+			hashFormatVersion                                                                 int
 		)
 		if err := rows.Scan(&id, &actorExternalID, &action, &resourceType, &resourceID,
 			&resourceName, &orgID, &ipAddress, &createdAt, &oldValue, &newValue,

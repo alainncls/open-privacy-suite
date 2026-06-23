@@ -234,8 +234,15 @@ type Config struct {
 	// AuditBufferDir, when set, enables async access-log auditing (RD-1112):
 	// the hot path appends to a durable Pebble buffer at this path and a
 	// background sealer drains it into the chain. Empty = synchronous (legacy).
-	AuditBufferDir      string
-	ExplorerDatabaseURL string
+	AuditBufferDir string
+	// AuditCheckpointKey, when set, enables signed truncation-detection
+	// checkpoints (RD-1112 #8): the checkpoint worker signs the chain head +
+	// row count so the verifier can detect tail truncation. HMAC key for MVP —
+	// source it from a secret DISTINCT from the DB credential (a signature the
+	// DB-writing identity can also forge is decorative). Empty = disabled.
+	AuditCheckpointKey      string
+	AuditCheckpointInterval time.Duration
+	ExplorerDatabaseURL     string
 	// IndexerURL, when non-empty, enables the gRPC chain-indexer backend for
 	// explorer reads. Methods not yet ported to gRPC fall back to direct
 	// SQL on the explorer postgres. Leave empty to use SQL exclusively.
@@ -628,6 +635,8 @@ func Load() *Config {
 		NodeMaxConnsPerHost:                 nodeMaxConnsPerHost,
 		NodeIdleConnTimeout:                 nodeIdleConnTimeout,
 		AuditBufferDir:                      getEnv("AUDIT_BUFFER_DIR", ""),
+		AuditCheckpointKey:                  getEnv("AUDIT_CHECKPOINT_KEY", ""),
+		AuditCheckpointInterval:             parseDurationEnv("AUDIT_CHECKPOINT_INTERVAL", time.Minute),
 		PrivadoRPCURL:                       getEnv("PRIVADO_RPC_URL", "https://rpc-mainnet.privado.id"),
 		IPFSGateway:                         getEnv("IPFS_GATEWAY", "https://ipfs-proxy-cache.privado.id"), // IPFS gateway for schema resolution
 		JWTSecret:                           getEnv("JWT_SECRET", ""),                                      // If empty, will be auto-generated (dev only)

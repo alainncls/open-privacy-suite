@@ -105,6 +105,36 @@ type Server struct {
 	auditBuffer       *buffer.Buffer
 	auditSealer       *sealer.Sealer
 	auditSealerCancel context.CancelFunc
+	// RD-1112 #8 signed truncation-detection checkpoints (nil when disabled).
+	auditCheckpointWorker *audit.CheckpointWorker
+	auditCheckpointCancel context.CancelFunc
+}
+
+// checkpointAdapter bridges *db.DB to the audit package's CheckpointStore and
+// CheckpointReader interfaces (the audit package deliberately does not import
+// db; this adapter, in the server layer which imports both, does the mapping).
+type checkpointAdapter struct{ db *db.DB }
+
+func (a checkpointAdapter) ChainStats(ctx context.Context, chainName string) (int64, int64, string, error) {
+	return a.db.GetAccessLogChainStats(ctx, chainName)
+}
+
+func (a checkpointAdapter) WriteCheckpoint(ctx context.Context, c audit.Checkpoint) error {
+	return a.db.WriteAuditChainCheckpoint(ctx, db.AuditChainCheckpointRow{
+		ChainName: c.ChainName, HeadID: c.HeadID, HeadHash: c.HeadHash,
+		RowCount: c.RowCount, KeyID: c.KeyID, Signature: c.Signature, CreatedAt: c.CreatedAt,
+	})
+}
+
+func (a checkpointAdapter) LatestCheckpoint(ctx context.Context, chainName string) (*audit.Checkpoint, error) {
+	row, err := a.db.GetLatestAuditChainCheckpoint(ctx, chainName)
+	if err != nil || row == nil {
+		return nil, err
+	}
+	return &audit.Checkpoint{
+		ChainName: row.ChainName, HeadID: row.HeadID, HeadHash: row.HeadHash,
+		RowCount: row.RowCount, KeyID: row.KeyID, Signature: row.Signature, CreatedAt: row.CreatedAt,
+	}, nil
 }
 
 // DB returns the database instance (for testing)
@@ -158,6 +188,12 @@ func (s *Server) Stop() {
 	}
 	if s.auditSealer != nil {
 		s.auditSealer.Wait()
+	}
+	if s.auditCheckpointCancel != nil {
+		s.auditCheckpointCancel()
+	}
+	if s.auditCheckpointWorker != nil {
+		s.auditCheckpointWorker.Wait()
 	}
 	if s.auditBuffer != nil {
 		if err := s.auditBuffer.Close(); err != nil {
@@ -630,6 +666,25 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		slog.Info("async access-log auditing enabled (RD-1112)", "buffer_dir", cfg.AuditBufferDir)
 	}
 
+	// RD-1112 #8: signed truncation-detection checkpoints. The worker periodically
+	// signs each chain's head + row count; the integrity verifier (below) uses the
+	// latest signed checkpoint to detect tail truncation that a plain hash-walk
+	// cannot see. Enabled when AUDIT_CHECKPOINT_KEY is set; the key must come from a
+	// secret distinct from the DB credential (security review #2).
+	var checkpointSigner audit.Signer
+	var checkpointReader audit.CheckpointReader
+	if cfg.AuditCheckpointKey != "" {
+		checkpointSigner = audit.NewHMACSigner("default", []byte(cfg.AuditCheckpointKey))
+		adapter := checkpointAdapter{db: database}
+		checkpointReader = adapter
+		s.auditCheckpointWorker = audit.NewCheckpointWorker(adapter, checkpointSigner,
+			[]audit.ChainName{audit.ChainAccessLogs}, cfg.AuditCheckpointInterval)
+		ckptCtx, ckptCancel := context.WithCancel(context.Background())
+		s.auditCheckpointCancel = ckptCancel
+		go s.auditCheckpointWorker.Run(ckptCtx)
+		slog.Info("audit chain checkpointing enabled (RD-1112 #8)", "interval", cfg.AuditCheckpointInterval)
+	}
+
 	// Initialize retention cleaner
 	retentionCleaner := audit.NewRetentionCleaner(audit.RetentionConfig{
 		AccessLogs:       cfg.RetentionAccessLogs,
@@ -665,6 +720,10 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	// URL is enforced in config.Validate.
 	if cfg.AuditIntegrityVerifyInterval > 0 {
 		verifier := audit.NewVerifier(database.Conn(), database)
+		// RD-1112 #8: enable the signed-checkpoint tail-truncation guard.
+		if checkpointSigner != nil && checkpointReader != nil {
+			verifier.SetCheckpointVerification(checkpointReader, checkpointSigner)
+		}
 		notifiers := &audit.MultiNotifier{}
 		if siemForwarder != nil {
 			notifiers.Notifiers = append(notifiers.Notifiers, &audit.SIEMNotifier{Forwarder: siemForwarder})
