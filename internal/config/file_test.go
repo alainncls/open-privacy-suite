@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // writeConfigFile writes content to a temp TOML file and returns its path.
@@ -158,5 +159,40 @@ func TestLoad_ConfigFileFeedsConfig(t *testing.T) {
 	cfg = Load()
 	if cfg.BaseURL != "https://from-env.example" {
 		t.Errorf("BaseURL with env override = %q, want https://from-env.example", cfg.BaseURL)
+	}
+}
+
+func TestLoadConfigFile_TypedFieldsReachConfig(t *testing.T) {
+	resetFileConfig(t)
+	// A spread of real, typed settings sourced from the file must each land in
+	// the corresponding Config field (string/bool/int/duration), and an env var
+	// must still override the file value.
+	path := writeConfigFile(t, `
+version = 1
+BASE_URL = "https://file.example"
+ENABLE_TRAVEL_RULE = true
+MAX_CONCURRENT_REQUESTS = 99
+ETH_CALL_TRACE_TIMEOUT = "9s"
+COMPLIANCE_DEFAULT_MODE = "monitor"
+`)
+	t.Setenv("CONFIG_FILE", path)
+	t.Setenv("COMPLIANCE_DEFAULT_MODE", "enforce") // env overrides the file value
+
+	cfg := Load()
+
+	if cfg.BaseURL != "https://file.example" {
+		t.Errorf("BaseURL (string) = %q, want https://file.example", cfg.BaseURL)
+	}
+	if !cfg.EnableTravelRule {
+		t.Error("EnableTravelRule (bool) = false, want true (from file)")
+	}
+	if cfg.MaxConcurrentRequests != 99 {
+		t.Errorf("MaxConcurrentRequests (int) = %d, want 99 (from file)", cfg.MaxConcurrentRequests)
+	}
+	if cfg.EthCallTraceTimeout != 9*time.Second {
+		t.Errorf("EthCallTraceTimeout (duration) = %v, want 9s (from file)", cfg.EthCallTraceTimeout)
+	}
+	if cfg.ComplianceDefaultMode != "enforce" {
+		t.Errorf("ComplianceDefaultMode = %q, want enforce (env must override the file)", cfg.ComplianceDefaultMode)
 	}
 }
