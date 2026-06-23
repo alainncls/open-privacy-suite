@@ -27,13 +27,13 @@ type LoadTester struct {
 	accounts   []*Account
 
 	// Clients
-	nodeClient  *ethclient.Client // Direct node connection
-	httpClient  *http.Client
+	nodeClient *ethclient.Client // Direct node connection
+	httpClient *http.Client
 
 	// Deployed contracts
-	tokenA  common.Address
-	tokenB  common.Address
-	pool    common.Address
+	tokenA common.Address
+	tokenB common.Address
+	pool   common.Address
 
 	// Chain info
 	chainID *big.Int
@@ -193,9 +193,15 @@ func (lt *LoadTester) worker(ctx context.Context, wg *sync.WaitGroup, acc *Accou
 func (lt *LoadTester) sendTransaction(ctx context.Context, acc *Account) {
 	start := time.Now()
 
-	// Build transaction (token transfer)
+	// Build transaction — EOA→EOA value transfer (RD-1112 workload) or ERC-20.
 	nonce := acc.GetAndIncrementNonce()
-	tx, err := lt.buildTokenTransfer(acc, nonce)
+	var tx *types.Transaction
+	var err error
+	if lt.cfg.ValueTransfer {
+		tx, err = lt.buildValueTransfer(acc, nonce)
+	} else {
+		tx, err = lt.buildTokenTransfer(acc, nonce)
+	}
 	if err != nil {
 		lt.metrics.RecordError()
 		return
@@ -247,6 +253,30 @@ func (lt *LoadTester) buildTokenTransfer(acc *Account, nonce uint64) (*types.Tra
 		return nil, fmt.Errorf("failed to sign tx: %w", err)
 	}
 
+	return signedTx, nil
+}
+
+// buildValueTransfer creates a signed EOA→EOA value transfer (no calldata) —
+// the RD-1112 target workload. This exercises the proxy's hot path
+// (eth_getCode EOA check + access control + audit), unlike the ERC-20 path
+// which hits a contract and triggers debug_traceCall.
+func (lt *LoadTester) buildValueTransfer(acc *Account, nonce uint64) (*types.Transaction, error) {
+	toIdx := (acc.Index + 1) % len(lt.accounts)
+	to := lt.accounts[toIdx].Address
+
+	tx := types.NewTransaction(
+		nonce,
+		to,
+		big.NewInt(1),          // 1 wei
+		21000,                  // plain transfer gas
+		big.NewInt(1000000000), // 1 gwei
+		nil,                    // no calldata → EOA transfer
+	)
+
+	signedTx, err := types.SignTx(tx, types.NewEIP155Signer(lt.chainID), acc.PrivateKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign value-transfer tx: %w", err)
+	}
 	return signedTx, nil
 }
 
@@ -389,12 +419,12 @@ func buildTransferData(to common.Address, amount *big.Int) []byte {
 
 // Metrics tracks load test metrics
 type Metrics struct {
-	txCount    atomic.Int64
-	errors     atomic.Int64
-	totalGas   atomic.Uint64
-	latencies  []time.Duration
-	latencyMu  sync.Mutex
-	startTime  time.Time
+	txCount   atomic.Int64
+	errors    atomic.Int64
+	totalGas  atomic.Uint64
+	latencies []time.Duration
+	latencyMu sync.Mutex
+	startTime time.Time
 }
 
 // NewMetrics creates a new metrics tracker

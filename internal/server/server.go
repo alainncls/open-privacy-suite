@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"net/url"
 	"privacy-proxy/internal/audit"
+	"privacy-proxy/internal/audit/buffer"
+	"privacy-proxy/internal/audit/sealer"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/compliance"
 	"privacy-proxy/internal/config"
@@ -20,6 +22,7 @@ import (
 	"privacy-proxy/internal/explorer"
 	"privacy-proxy/internal/explorer/indexerclient"
 	"privacy-proxy/internal/metrics"
+	"privacy-proxy/internal/nodehttp"
 	"privacy-proxy/internal/pricing"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
@@ -98,6 +101,52 @@ type Server struct {
 	auditIntegrityWorker *audit.IntegrityWorker
 	visibilityReconciler *VisibilityReconciler // M7 outbox drain
 	redisCloser          io.Closer
+	// RD-1112 async access-log auditing (nil when AUDIT_BUFFER_DIR unset).
+	auditBuffer       *buffer.Buffer
+	auditSealer       *sealer.Sealer
+	auditSealerCancel context.CancelFunc
+	// RD-1112 #8 signed truncation-detection checkpoints (nil when disabled).
+	auditCheckpointWorker *audit.CheckpointWorker
+	auditCheckpointCancel context.CancelFunc
+}
+
+// checkpointAdapter bridges *db.DB to the audit package's CheckpointStore and
+// CheckpointReader interfaces (the audit package deliberately does not import
+// db; this adapter, in the server layer which imports both, does the mapping).
+type checkpointAdapter struct{ db *db.DB }
+
+func (a checkpointAdapter) ChainStats(ctx context.Context, chainName string) (int64, int64, string, error) {
+	return a.db.GetAccessLogChainStats(ctx, chainName)
+}
+
+func (a checkpointAdapter) WriteCheckpoint(ctx context.Context, c audit.Checkpoint) error {
+	return a.db.WriteAuditChainCheckpoint(ctx, db.AuditChainCheckpointRow{
+		ChainName: c.ChainName, HeadID: c.HeadID, HeadHash: c.HeadHash,
+		RowCount: c.RowCount, KeyID: c.KeyID, Signature: c.Signature, CreatedAt: c.CreatedAt,
+	})
+}
+
+func (a checkpointAdapter) LatestCheckpoint(ctx context.Context, chainName string) (*audit.Checkpoint, error) {
+	row, err := a.db.GetLatestAuditChainCheckpoint(ctx, chainName)
+	if err != nil || row == nil {
+		return nil, err
+	}
+	return &audit.Checkpoint{
+		ChainName: row.ChainName, HeadID: row.HeadID, HeadHash: row.HeadHash,
+		RowCount: row.RowCount, KeyID: row.KeyID, Signature: row.Signature, CreatedAt: row.CreatedAt,
+	}, nil
+}
+
+// SetAnchor + WriteReAnchor let checkpointAdapter also satisfy
+// audit.ReAnchorStore, so the break-glass re-anchor operation
+// (audit.BreakGlassReAnchor) can run against the live database (RD-1112 #8).
+func (a checkpointAdapter) SetAnchor(ctx context.Context, chainName string, lastID int64, lastHash string) error {
+	return a.db.UpsertAuditChainAnchor(ctx, chainName, lastID, lastHash)
+}
+
+func (a checkpointAdapter) WriteReAnchor(ctx context.Context, r audit.ReAnchor) error {
+	return a.db.WriteAuditChainReAnchor(ctx, r.ChainName, r.Reason, r.Actor,
+		r.FromHeadID, r.FromHash, r.ToHeadID, r.ToHash, r.KeyID, r.Signature, r.CreatedAt)
 }
 
 // DB returns the database instance (for testing)
@@ -143,6 +192,25 @@ func (s *Server) Stop() {
 	}
 	if s.visibilityReconciler != nil {
 		s.visibilityReconciler.Stop()
+	}
+	// RD-1112: stop the audit sealer's drain loop and wait for the in-flight
+	// tick to finish before closing its buffer, so Close never races a tick.
+	if s.auditSealerCancel != nil {
+		s.auditSealerCancel()
+	}
+	if s.auditSealer != nil {
+		s.auditSealer.Wait()
+	}
+	if s.auditCheckpointCancel != nil {
+		s.auditCheckpointCancel()
+	}
+	if s.auditCheckpointWorker != nil {
+		s.auditCheckpointWorker.Wait()
+	}
+	if s.auditBuffer != nil {
+		if err := s.auditBuffer.Close(); err != nil {
+			slog.Warn("audit buffer close failed", "error", err)
+		}
 	}
 	if s.azureStateStore != nil {
 		s.azureStateStore.Stop()
@@ -217,7 +285,7 @@ func New(cfg *config.Config) (*Server, error) {
 // If verifier is nil, creates a real PrivadoVerifier from config
 // This allows injecting a mock verifier for testing
 func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, error) {
-	database, err := db.New(cfg.DatabaseURL)
+	database, err := db.New(cfg.DatabaseURL, db.WithPool(cfg.DBMaxOpenConns, cfg.DBMaxIdleConns, cfg.DBConnMaxLifetime))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create database: %w", err)
 	}
@@ -273,7 +341,15 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		return nil, fmt.Errorf("failed to create JWT service: %w", err)
 	}
 
-	proxySvc := proxy.New(cfg.NodeURL)
+	// Upstream node connection-pool sizing (RD-1112), shared by the forwarder
+	// and the runtime tracer (both talk to the single node host).
+	nodeTransport := nodehttp.TransportConfig{
+		MaxIdleConns:        cfg.NodeMaxIdleConns,
+		MaxIdleConnsPerHost: cfg.NodeMaxIdleConnsPerHost,
+		MaxConnsPerHost:     cfg.NodeMaxConnsPerHost,
+		IdleConnTimeout:     cfg.NodeIdleConnTimeout,
+	}
+	proxySvc := proxy.NewWithTransport(cfg.NodeURL, nodeTransport)
 
 	// Initialize state stores: Redis-backed when REDIS_URL is set, in-memory otherwise.
 	var sessionStore SessionManager
@@ -390,6 +466,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		CacheTTL:      cfg.TraceCacheTTL,
 		Timeout:       cfg.TraceTimeout,
 		TieredEnabled: cfg.TraceTieredValidation,
+		Transport:     nodeTransport,
 	})
 	traceValidator := rbac.NewTraceValidator(database)
 	// M5 (security audit follow-up to RD-915): wire the runtime tracer
@@ -485,7 +562,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	}
 
 	// Initialize enhanced audit: hash chain, SIEM forwarder, retention cleaner
-	hashChainSeed, err := database.GetLatestAccessLogHash(context.Background())
+	hashChainSeed, err := database.GetLatestAccessLogHashForChain(context.Background(), cfg.AuditChainName)
 	if err != nil {
 		slog.Warn("failed to seed hash chain from DB, starting fresh", "error", err)
 	}
@@ -536,6 +613,93 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	// Wire enhanced audit into JSON-RPC processor
 	s.jsonrpcProcessor.SetEnhancedAudit(database, hashChain, siemForwarder, cfg.AuditLogParams)
 
+	// RD-1112: async access-log auditing. When AUDIT_BUFFER_DIR is set, the hot
+	// path appends each entry to a durable Pebble buffer and a single background
+	// sealer drains it into the access_logs chain off the request path — removing
+	// the per-request chain mutex + 2 PG round-trips that capped throughput. A
+	// single-writer sealer means no chain fork. Empty dir = synchronous legacy path.
+	if cfg.AuditBufferDir != "" {
+		auditBuf, bufErr := buffer.Open(cfg.AuditBufferDir)
+		if bufErr != nil {
+			return nil, fmt.Errorf("open audit buffer at %q: %w", cfg.AuditBufferDir, bufErr)
+		}
+		s.auditBuffer = auditBuf
+
+		sealFn := func(ctx context.Context, seq uint64, data []byte) error {
+			var rec db.AccessLogRecord
+			if err := json.Unmarshal(data, &rec); err != nil {
+				// A corrupt buffered record must not wedge the sealer. Log loudly
+				// and skip it; the high-water advances past it on the next drain.
+				slog.Error("audit sealer: corrupt buffered record skipped", "seq", seq, "error", err)
+				return nil
+			}
+			hash, err := database.SealBufferedAccessLog(ctx, hashChain, rec, seq, cfg.AuditChainName)
+			if err != nil {
+				return err
+			}
+			// SIEM forwarding moved here from logAccess (off the hot path).
+			if siemForwarder != nil {
+				outcome := "success"
+				if rec.StatusCode >= 400 {
+					outcome = "denied"
+				}
+				if rec.StatusCode >= 500 {
+					outcome = "error"
+				}
+				respStatus := rec.StatusCode
+				if rec.ResponseStatus != nil {
+					respStatus = *rec.ResponseStatus
+				}
+				ev := audit.SIEMEvent{
+					Timestamp:     time.Now().UTC(),
+					EventType:     "access",
+					CorrelationID: rec.CorrelationID,
+					ActorID:       rec.ExternalID,
+					Action:        rec.Method,
+					Outcome:       outcome,
+					Details:       fmt.Sprintf("decision=%d response=%d", rec.StatusCode, respStatus),
+					SourceIP:      rec.IPAddress,
+					EntryHash:     hash,
+				}
+				if w := rbac.MatchWildcard(rec.Method); w != nil {
+					ev.MatchedVia = "wildcard"
+					ev.MatchedPrefix = w.Prefix
+				}
+				siemForwarder.Send(ev)
+			}
+			return nil
+		}
+		highWater := func(ctx context.Context) (uint64, error) {
+			return database.GetMaxAccessLogBufferSeq(ctx, cfg.AuditChainName)
+		}
+		s.auditSealer = sealer.New(auditBuf, sealFn, highWater, sealer.Config{})
+		sealerCtx, sealerCancel := context.WithCancel(context.Background())
+		s.auditSealerCancel = sealerCancel
+		go s.auditSealer.Run(sealerCtx)
+
+		s.jsonrpcProcessor.SetAuditBuffer(auditBuf)
+		slog.Info("async access-log auditing enabled (RD-1112)", "buffer_dir", cfg.AuditBufferDir)
+	}
+
+	// RD-1112 #8: signed truncation-detection checkpoints. The worker periodically
+	// signs each chain's head + row count; the integrity verifier (below) uses the
+	// latest signed checkpoint to detect tail truncation that a plain hash-walk
+	// cannot see. Enabled when AUDIT_CHECKPOINT_KEY is set; the key must come from a
+	// secret distinct from the DB credential (security review #2).
+	var checkpointSigner audit.Signer
+	var checkpointReader audit.CheckpointReader
+	if cfg.AuditCheckpointKey != "" {
+		checkpointSigner = audit.NewHMACSigner("default", []byte(cfg.AuditCheckpointKey))
+		adapter := checkpointAdapter{db: database}
+		checkpointReader = adapter
+		s.auditCheckpointWorker = audit.NewCheckpointWorker(adapter, checkpointSigner,
+			[]audit.ChainName{audit.ChainName(cfg.AuditChainName)}, cfg.AuditCheckpointInterval)
+		ckptCtx, ckptCancel := context.WithCancel(context.Background())
+		s.auditCheckpointCancel = ckptCancel
+		go s.auditCheckpointWorker.Run(ckptCtx)
+		slog.Info("audit chain checkpointing enabled (RD-1112 #8)", "interval", cfg.AuditCheckpointInterval)
+	}
+
 	// Initialize retention cleaner
 	retentionCleaner := audit.NewRetentionCleaner(audit.RetentionConfig{
 		AccessLogs:       cfg.RetentionAccessLogs,
@@ -571,6 +735,10 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	// URL is enforced in config.Validate.
 	if cfg.AuditIntegrityVerifyInterval > 0 {
 		verifier := audit.NewVerifier(database.Conn(), database)
+		// RD-1112 #8: enable the signed-checkpoint tail-truncation guard.
+		if checkpointSigner != nil && checkpointReader != nil {
+			verifier.SetCheckpointVerification(checkpointReader, checkpointSigner)
+		}
 		notifiers := &audit.MultiNotifier{}
 		if siemForwarder != nil {
 			notifiers.Notifiers = append(notifiers.Notifiers, &audit.SIEMNotifier{Forwarder: siemForwarder})

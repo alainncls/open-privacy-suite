@@ -27,6 +27,13 @@ import (
 	"privacy-proxy/internal/tracer"
 )
 
+// AuditBuffer is the durable staging buffer the hot path appends access-log
+// entries to when async audit sealing is enabled (RD-1112). Satisfied by
+// *internal/audit/buffer.Buffer.
+type AuditBuffer interface {
+	Append(data []byte) (uint64, error)
+}
+
 // JSONRPCProcessor handles the business logic for JSON-RPC requests.
 // It separates concerns from HTTP handling, making the logic testable
 // and reusable.
@@ -44,6 +51,10 @@ type JSONRPCProcessor struct {
 	hashChain      *audit.HashChain
 	siemForwarder  *audit.SIEMForwarder
 	logParams      bool
+	// auditBuffer, when set (AUDIT_BUFFER_DIR configured), receives access-log
+	// entries on the hot path instead of the synchronous chained write; a
+	// background sealer drains it into the chain off the request path (RD-1112).
+	auditBuffer AuditBuffer
 
 	// Per-tx visibility store (visibleTo feature)
 	txVisibilityStore rbac.TxVisibilityProvider
@@ -366,6 +377,14 @@ func (p *JSONRPCProcessor) SetEnhancedAudit(logger EnhancedAccessLogger, hashCha
 	p.logParams = logParams
 }
 
+// SetAuditBuffer enables async audit logging (RD-1112): logAccess appends to
+// this durable buffer on the hot path and a background sealer drains it into
+// the chain off the request path. When nil, logAccess uses the synchronous
+// chained write (legacy behaviour).
+func (p *JSONRPCProcessor) SetAuditBuffer(b AuditBuffer) {
+	p.auditBuffer = b
+}
+
 // SetMetrics configures Prometheus metrics for the processor.
 func (p *JSONRPCProcessor) SetMetrics(m *metrics.Metrics) {
 	p.metrics = m
@@ -401,6 +420,38 @@ func (p *JSONRPCProcessor) logAccess(ctx context.Context, req *ProcessRequest, s
 	respStatus := statusCode
 	if len(responseStatus) > 0 {
 		respStatus = responseStatus[0]
+	}
+
+	// RD-1112 async path: append to the durable buffer and return; the sealer
+	// chains, persists, and forwards to SIEM off the hot path. Best-effort
+	// (matches the synchronous path): on append failure, log loudly and fall
+	// back to basic chain-less logging so coverage never drops below today.
+	if p.auditBuffer != nil {
+		var params []byte
+		if p.logParams && req.Params != nil {
+			params = audit.RedactParams(req.Method, req.Params)
+		}
+		var rsp *int
+		if respStatus != statusCode {
+			rsp = &respStatus
+		}
+		rec := db.AccessLogRecord{
+			ExternalID:     req.UserID,
+			Method:         req.Method,
+			StatusCode:     statusCode,
+			IPAddress:      req.ClientIP,
+			CorrelationID:  req.CorrelationID,
+			Params:         params,
+			ResponseStatus: rsp,
+		}
+		if data, mErr := json.Marshal(rec); mErr != nil {
+			slog.Error("audit record marshal failed; basic logging fallback", "error", mErr)
+			p.accessLogger.LogAccess(ctx, req.UserID, req.Method, statusCode, req.ClientIP)
+		} else if _, aErr := p.auditBuffer.Append(data); aErr != nil {
+			slog.Error("audit buffer append failed; basic logging fallback (entry not chained)", "error", aErr)
+			p.accessLogger.LogAccess(ctx, req.UserID, req.Method, statusCode, req.ClientIP)
+		}
+		return
 	}
 
 	if p.enhancedLogger != nil && p.hashChain != nil {

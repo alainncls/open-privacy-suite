@@ -125,21 +125,36 @@ func TestCacheInvalidateOrg(t *testing.T) {
 }
 
 func TestCacheLRUEviction(t *testing.T) {
+	// The cache uses approximate (sampled) LRU to keep Get on an O(1) read path
+	// (RD-1112): recency is a per-entry timestamp and eviction samples up to
+	// evictSampleSize entries and drops the oldest. When the entry count is
+	// <= evictSampleSize the sample covers every entry, so eviction is exact;
+	// the 1ms spacing below guarantees distinct access timestamps so "least
+	// recently used" is unambiguous and this test is deterministic.
 	cache := NewCache(CacheConfig{
 		TTL:        5 * time.Minute,
 		MaxEntries: 3,
 	})
 
-	// Add 3 entries
+	// Add 3 entries with distinct access timestamps.
 	cache.Set(&EffectivePermissions{UserID: "user1", OrgID: "org1"})
+	time.Sleep(time.Millisecond)
 	cache.Set(&EffectivePermissions{UserID: "user2", OrgID: "org1"})
+	time.Sleep(time.Millisecond)
 	cache.Set(&EffectivePermissions{UserID: "user3", OrgID: "org1"})
+	time.Sleep(time.Millisecond)
 
-	// Access user1 to make it recently used
+	// Access user1 to make it the most recently used.
 	_ = cache.Get("user1", "org1")
+	time.Sleep(time.Millisecond)
 
-	// Add 4th entry - should evict user2 (least recently used)
+	// Add 4th entry - should evict user2 (least recently used).
 	cache.Set(&EffectivePermissions{UserID: "user4", OrgID: "org1"})
+
+	// user2 is the LRU victim and must be gone.
+	if cache.Get("user2", "org1") != nil {
+		t.Error("Expected user2:org1 to be evicted (least recently used)")
+	}
 
 	// user1 should still exist (accessed recently)
 	if cache.Get("user1", "org1") == nil {

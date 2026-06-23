@@ -215,9 +215,38 @@ func (e *ExtraRPCNamespaces) Wildcards() map[string]*WildcardConfig {
 }
 
 type Config struct {
-	Version             string // Set by cmd/server/main.go from build-time constant
-	NodeURL             string
-	DatabaseURL         string
+	Version     string // Set by cmd/server/main.go from build-time constant
+	NodeURL     string
+	DatabaseURL string
+	// DB connection pool sizing (RD-1112). DBMaxIdleConns defaults to
+	// DBMaxOpenConns to avoid connection churn; size DBMaxOpenConns so N
+	// replicas stay under Postgres max_connections.
+	DBMaxOpenConns    int
+	DBMaxIdleConns    int
+	DBConnMaxLifetime time.Duration
+	// Upstream node HTTP transport pool (RD-1112). proxy + tracer talk to one
+	// node host at high concurrency; Go's default caps idle keep-alive at 2
+	// per host, churning TCP connections. These tune the pool.
+	NodeMaxIdleConns        int
+	NodeMaxIdleConnsPerHost int
+	NodeMaxConnsPerHost     int
+	NodeIdleConnTimeout     time.Duration
+	// AuditBufferDir, when set, enables async access-log auditing (RD-1112):
+	// the hot path appends to a durable Pebble buffer at this path and a
+	// background sealer drains it into the chain. Empty = synchronous (legacy).
+	AuditBufferDir string
+	// AuditCheckpointKey, when set, enables signed truncation-detection
+	// checkpoints (RD-1112 #8): the checkpoint worker signs the chain head +
+	// row count so the verifier can detect tail truncation. HMAC key for MVP —
+	// source it from a secret DISTINCT from the DB credential (a signature the
+	// DB-writing identity can also forge is decorative). Empty = disabled.
+	AuditCheckpointKey      string
+	AuditCheckpointInterval time.Duration
+	// AuditChainName is this instance's audit chain partition (RD-1112 #8).
+	// Default 'access_logs' (one global chain). For multi-instance, set a
+	// per-instance value (e.g. hostname / pod name) so each instance is the
+	// SOLE writer of its own chain — preventing the multi-writer chain fork.
+	AuditChainName      string
 	ExplorerDatabaseURL string
 	// IndexerURL, when non-empty, enables the gRPC chain-indexer backend for
 	// explorer reads. Methods not yet ported to gRPC fall back to direct
@@ -604,9 +633,28 @@ func Load() *Config {
 		panic(fmt.Sprintf("RPC_API_KEY_HEADER %q is invalid: must match ^[A-Za-z0-9-]+$", rpcAPIKeyHeader))
 	}
 
+	dbMaxOpen := getEnvInt("DB_MAX_OPEN_CONNS", 50)
+	dbMaxIdle := getEnvInt("DB_MAX_IDLE_CONNS", dbMaxOpen) // default = MaxOpen to avoid connection churn
+	dbConnMaxLifetime := parseDurationEnv("DB_CONN_MAX_LIFETIME", 5*time.Minute)
+	nodeMaxIdleConns := getEnvInt("NODE_HTTP_MAX_IDLE_CONNS", 512)
+	nodeMaxIdleConnsPerHost := getEnvInt("NODE_HTTP_MAX_IDLE_CONNS_PER_HOST", 256)
+	nodeMaxConnsPerHost := getEnvInt("NODE_HTTP_MAX_CONNS_PER_HOST", 0)
+	nodeIdleConnTimeout := parseDurationEnv("NODE_HTTP_IDLE_CONN_TIMEOUT", 90*time.Second)
+
 	return &Config{
 		NodeURL:                             getEnv("NODE_URL", "http://localhost:8545"),
 		DatabaseURL:                         getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/privacy_proxy?sslmode=disable"),
+		DBMaxOpenConns:                      dbMaxOpen,
+		DBMaxIdleConns:                      dbMaxIdle,
+		DBConnMaxLifetime:                   dbConnMaxLifetime,
+		NodeMaxIdleConns:                    nodeMaxIdleConns,
+		NodeMaxIdleConnsPerHost:             nodeMaxIdleConnsPerHost,
+		NodeMaxConnsPerHost:                 nodeMaxConnsPerHost,
+		NodeIdleConnTimeout:                 nodeIdleConnTimeout,
+		AuditBufferDir:                      getEnv("AUDIT_BUFFER_DIR", ""),
+		AuditCheckpointKey:                  getEnv("AUDIT_CHECKPOINT_KEY", ""),
+		AuditCheckpointInterval:             parseDurationEnv("AUDIT_CHECKPOINT_INTERVAL", time.Minute),
+		AuditChainName:                      getEnv("AUDIT_CHAIN_NAME", "access_logs"),
 		PrivadoRPCURL:                       getEnv("PRIVADO_RPC_URL", "https://rpc-mainnet.privado.id"),
 		IPFSGateway:                         getEnv("IPFS_GATEWAY", "https://ipfs-proxy-cache.privado.id"), // IPFS gateway for schema resolution
 		JWTSecret:                           getEnv("JWT_SECRET", ""),                                      // If empty, will be auto-generated (dev only)
@@ -902,6 +950,17 @@ func getEnv(key, defaultValue string) string {
 	if fileConfig != nil {
 		if value, ok := fileConfig[key]; ok && value != "" {
 			return value
+		}
+	}
+	return defaultValue
+}
+
+// getEnvInt reads an environment variable as an int, returning defaultValue if
+// the variable is unset or not a valid integer.
+func getEnvInt(key string, defaultValue int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
 		}
 	}
 	return defaultValue

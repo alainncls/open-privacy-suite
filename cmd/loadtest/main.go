@@ -47,6 +47,10 @@ type Config struct {
 
 	// Direct mode - bypass proxy, send directly to node
 	Direct bool
+
+	// ValueTransfer sends EOA→EOA value transfers (the RD-1112 5K-TPS
+	// workload) instead of ERC-20 token transfers.
+	ValueTransfer bool
 }
 
 func main() {
@@ -61,6 +65,7 @@ func main() {
 	flag.BoolVar(&cfg.VerifyReceipts, "verify", false, "Wait for receipts to verify txs succeed (slower, for debugging)")
 	flag.BoolVar(&cfg.SkipSetup, "skip-setup", false, "Skip setup phase (use existing contracts)")
 	flag.BoolVar(&cfg.Direct, "direct", false, "Direct mode - send txs directly to node, bypass proxy")
+	flag.BoolVar(&cfg.ValueTransfer, "value-transfer", false, "Send EOA→EOA value transfers (the RD-1112 5K-TPS workload) instead of ERC-20 token transfers")
 	flag.Parse()
 
 	if cfg.FundingKey == "" {

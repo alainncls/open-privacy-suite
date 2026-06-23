@@ -720,7 +720,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		addr := strings.ToLower(req.TargetAddress)
 		// Check if this address is registered as a contract or preregistered address
 		if !perms.IsContractRegistered(addr) {
-			ownerOrgID, err := c.store.GetContractOwnerOrgID(ctx, addr)
+			ownerOrgID, err := orgCtx.OwnerOrgID(ctx, addr)
 			if err != nil {
 				return nil, fmt.Errorf("failed to check address ownership: %w", err)
 			}
@@ -757,7 +757,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 	if req.TargetAddress != "" && isBasicAddressQuery(req.EffectiveMethod()) {
 		addr := strings.ToLower(req.TargetAddress)
 		if !perms.IsContractRegistered(addr) {
-			ownerOrgID, err := c.store.GetContractOwnerOrgID(ctx, addr)
+			ownerOrgID, err := orgCtx.OwnerOrgID(ctx, addr)
 			if err != nil {
 				return nil, fmt.Errorf("failed to check address ownership: %w", err)
 			}
@@ -798,7 +798,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		)
 		if access != nil && !hasExplicitAccess {
 			var err error
-			ownerOrgID, err = c.store.GetContractOwnerOrgID(ctx, addr)
+			ownerOrgID, err = orgCtx.OwnerOrgID(ctx, addr)
 			if err != nil {
 				return nil, fmt.Errorf("failed to check address ownership: %w", err)
 			}
@@ -825,7 +825,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		if access == nil {
 			if !ownerOrgIDFetched {
 				var err error
-				ownerOrgID, err = c.store.GetContractOwnerOrgID(ctx, addr)
+				ownerOrgID, err = orgCtx.OwnerOrgID(ctx, addr)
 				if err != nil {
 					return nil, fmt.Errorf("failed to check address ownership: %w", err)
 				}

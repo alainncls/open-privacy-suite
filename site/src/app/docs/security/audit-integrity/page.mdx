@@ -162,6 +162,22 @@ Then update the proxy's `DATABASE_URL` to use `privacy_proxy_app`. The admin rol
 
 ---
 
+## High-throughput async write path
+
+By default the access-log chain is written synchronously on each request. Set `AUDIT_BUFFER_DIR` to move the write off the request hot path: the request appends the entry to a durable, fsync'd local buffer and returns; a single background **sealer** drains the buffer in order, writes the chained rows to the database, and forwards to your SIEM. A single sealer per chain means the chain never forks, and the buffer's write-ahead log means an un-sealed entry survives a crash (the sealer resumes on restart).
+
+The trade-off: an entry is durable on the local volume the instant the request returns, but only reaches the (replicated, backed-up) database when the sealer next runs. Keep the buffer on a durable/replicated volume and the seal interval short so the un-sealed window stays small.
+
+---
+
+## Truncation detection (signed checkpoints)
+
+A plain hash walk catches inserts, modifications, and middle deletions — but **not tail truncation**, because deleting the most recent rows breaks no downstream hash. Set `AUDIT_CHECKPOINT_KEY` to close this gap: a worker periodically writes a **signed checkpoint** pinning each chain's head and row count. The scheduled verifier loads the latest signed checkpoint, verifies its signature, and reports `chain_truncated` if the chain head has regressed below it. A checkpoint whose signature does not verify is itself treated as a tamper signal.
+
+Source the checkpoint key from a secret **distinct from the database credential** (e.g. a separate Secrets Manager entry / KMS key via IRSA). A signature that the same identity which writes the database can also forge adds no protection. The signer is pluggable (HMAC today, KMS-ready) so the key can move to KMS without a code change.
+
+---
+
 ## Additional hardening options
 
 These are optional layers you can add on top of the hash chain:

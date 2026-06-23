@@ -24,6 +24,12 @@ type OrgContext struct {
 	user       *User           // The authenticated user
 	userOrgIDs map[string]bool // Pre-loaded: all orgs user belongs to
 	store      Store           // For additional lookups
+	// ownerOrgCache memoizes GetContractOwnerOrgID for the lifetime of this
+	// (request-scoped) context, keyed by normalized address. The construction
+	// path already resolves the target's owner org; later same-address lookups
+	// in CheckAccess reuse it instead of issuing a duplicate DB round-trip on
+	// the hot path (RD-1112). Request-scoped, so it cannot serve stale data.
+	ownerOrgCache map[string]string
 }
 
 // NewOrgContext creates an OrgContext from a target address.
@@ -65,6 +71,9 @@ func NewOrgContext(ctx context.Context, store Store, user *User, targetAddress s
 	if err != nil {
 		return nil, fmt.Errorf("failed to get contract owner: %w", err)
 	}
+	// Memoize the target's owner so the duplicate same-address lookups in
+	// CheckAccess become cache hits instead of extra DB round-trips (RD-1112).
+	oc.ownerOrgCache = map[string]string{addr: ownerOrgID}
 
 	if ownerOrgID == "" {
 		// Contract is public (not owned by any org)
@@ -124,6 +133,30 @@ func (oc *OrgContext) OrgID() string {
 // Org returns the organization, or nil if public context.
 func (oc *OrgContext) Org() *Organization {
 	return oc.org
+}
+
+// OwnerOrgID returns the org that owns addr, memoized for the lifetime of this
+// request-scoped context. The first lookup for a given (normalized) address
+// hits the store; subsequent lookups of the same address — including the
+// target address already resolved during construction — are served from the
+// memo, eliminating duplicate DB round-trips on the hot path (RD-1112).
+// It is always correct: a cache miss falls back to the store.
+func (oc *OrgContext) OwnerOrgID(ctx context.Context, addr string) (string, error) {
+	key := strings.ToLower(strings.TrimSpace(addr))
+	if oc.ownerOrgCache != nil {
+		if v, ok := oc.ownerOrgCache[key]; ok {
+			return v, nil
+		}
+	}
+	v, err := oc.store.GetContractOwnerOrgID(ctx, key)
+	if err != nil {
+		return "", err
+	}
+	if oc.ownerOrgCache == nil {
+		oc.ownerOrgCache = make(map[string]string, 2)
+	}
+	oc.ownerOrgCache[key] = v
+	return v, nil
 }
 
 // User returns the user.

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -62,6 +63,10 @@ const (
 	ReasonAnchorMismatch  = "anchor_mismatch"
 	ReasonUnknownFormat   = "unknown_hash_format_version"
 	ReasonContextCanceled = "context_canceled"
+	// RD-1112 #8 signed-checkpoint truncation guard:
+	ReasonCheckpointReadFailed = "checkpoint_read_failed"
+	ReasonCheckpointForged     = "checkpoint_signature_invalid"
+	ReasonChainTruncated       = "chain_truncated"
 )
 
 // SeedReader retrieves the chain seed for a given chain name. The
@@ -83,6 +88,60 @@ type SeedReader interface {
 type Verifier struct {
 	conn   *sql.DB
 	seedFn SeedReader
+	// RD-1112 #8: optional signed-checkpoint truncation guard. When both are
+	// set, Verify additionally checks the access_logs chain hasn't been
+	// tail-truncated below the latest signed checkpoint.
+	ckptReader CheckpointReader
+	ckptSigner Signer
+}
+
+// SetCheckpointVerification enables the signed-checkpoint truncation guard
+// (RD-1112 #8). reader supplies the latest checkpoint; signer verifies its
+// signature. Leaving both unset (the default) disables the guard.
+func (v *Verifier) SetCheckpointVerification(reader CheckpointReader, signer Signer) {
+	v.ckptReader = reader
+	v.ckptSigner = signer
+}
+
+// checkTruncation applies the signed-checkpoint truncation guard to res (a
+// no-op when the guard is not configured). It runs after the hash walk: the
+// walk catches insert / modify / middle-delete; this catches TAIL truncation,
+// which the walk cannot see (deleting the most recent rows breaks no
+// downstream hash). Only valid for the access_logs chain (the chain_name
+// column lives there).
+func (v *Verifier) checkTruncation(ctx context.Context, chain ChainName, res *Result) {
+	if v.ckptReader == nil || v.ckptSigner == nil {
+		return
+	}
+	c, err := v.ckptReader.LatestCheckpoint(ctx, string(chain))
+	if err != nil {
+		res.OK = false
+		res.FirstMismatchReason = ReasonCheckpointReadFailed
+		return
+	}
+	if c == nil {
+		return // no checkpoint yet — nothing to enforce
+	}
+	if err := VerifyCheckpoint(v.ckptSigner, *c); err != nil {
+		// A checkpoint the verifier cannot trust is itself a tamper signal.
+		res.OK = false
+		res.FirstMismatchReason = ReasonCheckpointForged
+		return
+	}
+	var curHead sql.NullInt64
+	if err := v.conn.QueryRowContext(ctx,
+		`SELECT max(id) FROM access_logs WHERE chain_name = $1`, string(chain),
+	).Scan(&curHead); err != nil {
+		res.OK = false
+		res.FirstMismatchReason = ReasonCheckpointReadFailed
+		return
+	}
+	if checkpointTruncated(c, curHead.Valid, curHead.Int64) {
+		res.OK = false
+		res.FirstMismatchReason = ReasonChainTruncated
+		res.FirstMismatchID = c.HeadID
+		res.FirstMismatchExpect = c.HeadHash
+	}
 }
 
 // NewVerifier constructs a Verifier. conn must point at a database
@@ -106,21 +165,14 @@ func (v *Verifier) Verify(ctx context.Context, chain ChainName) (*Result, error)
 	}
 }
 
-func (v *Verifier) verifyAccessLogs(ctx context.Context) (*Result, error) {
+// verifyOneAccessLogChain walks a single chain_name and returns its Result.
+// Each chain_name is an independent single-writer chain (RD-1112 #8), so it is
+// verified in isolation; verifyAccessLogs aggregates across chains.
+func (v *Verifier) verifyOneAccessLogChain(ctx context.Context, chainName string) (*Result, error) {
 	res := &Result{Chain: ChainAccessLogs, StartedAt: time.Now().UTC(), OK: true}
 	defer func() { res.FinishedAt = time.Now().UTC() }()
 
-	seed, err := v.seedFn.GetLatestAccessLogHash(ctx)
-	if err != nil {
-		res.OK = false
-		res.FirstMismatchReason = ReasonSeedReadFailed
-		return res, fmt.Errorf("seed: %w", err)
-	}
-	// Resolve the starting prev hash. If the access_logs table has any
-	// rows, the seed corresponds to the LAST entry — we don't want to
-	// re-verify backwards from the tail; instead start from the
-	// audit_chain_anchor (or empty) and walk forward.
-	startPrev, anchorID, err := v.startingPrev(ctx, ChainAccessLogs)
+	startPrev, anchorID, err := v.startingPrev(ctx, ChainName(chainName))
 	if err != nil {
 		res.OK = false
 		res.FirstMismatchReason = ReasonSeedReadFailed
@@ -132,9 +184,9 @@ func (v *Verifier) verifyAccessLogs(ctx context.Context) (*Result, error) {
 		`SELECT id, external_id, method, status_code, COALESCE(response_status, status_code), ip_address, COALESCE(correlation_id, ''),
 			COALESCE(request_params::text, ''), created_at, entry_hash, hash_format_version
 		 FROM access_logs
-		 WHERE id > $1
+		 WHERE chain_name = $1 AND id > $2
 		 ORDER BY id ASC`,
-		anchorID,
+		chainName, anchorID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query access_logs: %w", err)
@@ -206,18 +258,92 @@ func (v *Verifier) verifyAccessLogs(ctx context.Context) (*Result, error) {
 		return nil, fmt.Errorf("iterate access_logs: %w", err)
 	}
 	res.TailHash = prev
-	// Cross-check: the tail we computed must match what the seedFn
-	// returned (the writer's view of the chain head). A mismatch here
-	// means writer and verifier disagree on the chain state — usually a
-	// row written after our snapshot, which is fine; only flag when
-	// the seed hash is provably older than the rows we scanned (i.e.,
-	// seed != tail AND we scanned at least one row).
-	if res.OK && seed != "" && seed != prev {
-		res.FirstMismatchReason = ReasonAnchorMismatch
-		// Not necessarily a failure — seed lag is normal. Record but
-		// keep OK = true.
-	}
 	return res, nil
+}
+
+// verifyAccessLogs verifies every access_logs chain. Each chain_name is an
+// independent single-writer chain (RD-1112 #8); a global id-ordered walk would
+// mis-chain interleaved per-instance chains, so we verify each separately and
+// apply the signed-checkpoint truncation guard per chain. Chains that have a
+// signed checkpoint but no rows are included so a fully-truncated chain is
+// flagged (presence), not silently skipped. The first failing chain wins.
+func (v *Verifier) verifyAccessLogs(ctx context.Context) (*Result, error) {
+	agg := &Result{Chain: ChainAccessLogs, StartedAt: time.Now().UTC(), OK: true}
+	defer func() { agg.FinishedAt = time.Now().UTC() }()
+
+	chains, err := v.accessLogChainNames(ctx)
+	if err != nil {
+		agg.OK = false
+		agg.FirstMismatchReason = ReasonRowReadFailed
+		return agg, fmt.Errorf("enumerate access_log chains: %w", err)
+	}
+	for _, cn := range chains {
+		r, err := v.verifyOneAccessLogChain(ctx, cn)
+		if r != nil {
+			agg.ScannedRows += r.ScannedRows
+			agg.NullHashRows += r.NullHashRows
+			agg.TailHash = r.TailHash
+		}
+		if err != nil {
+			if r != nil {
+				agg.OK = false
+				agg.FirstMismatchReason = r.FirstMismatchReason
+				agg.FirstMismatchID = r.FirstMismatchID
+			}
+			return agg, err
+		}
+		if !r.OK {
+			agg.OK = false
+			agg.FirstMismatchReason = r.FirstMismatchReason
+			agg.FirstMismatchID = r.FirstMismatchID
+			agg.FirstMismatchHash = r.FirstMismatchHash
+			agg.FirstMismatchExpect = r.FirstMismatchExpect
+			agg.FirstMismatchTime = r.FirstMismatchTime
+			return agg, nil
+		}
+		// Per-chain signed-checkpoint truncation guard (no-op unless configured).
+		v.checkTruncation(ctx, ChainName(cn), agg)
+		if !agg.OK {
+			return agg, nil
+		}
+	}
+	return agg, nil
+}
+
+// accessLogChainNames returns the union of chain_names in access_logs and in
+// audit_chain_checkpoint (the latter so a fully-truncated chain — rows gone but
+// a signed checkpoint exists — is still checked and flagged as truncated).
+func (v *Verifier) accessLogChainNames(ctx context.Context) ([]string, error) {
+	set := make(map[string]struct{})
+	collect := func(q string) error {
+		rows, err := v.conn.QueryContext(ctx, q)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var n sql.NullString
+			if err := rows.Scan(&n); err != nil {
+				return err
+			}
+			if n.Valid && n.String != "" {
+				set[n.String] = struct{}{}
+			}
+		}
+		return rows.Err()
+	}
+	if err := collect(`SELECT DISTINCT chain_name FROM access_logs`); err != nil {
+		return nil, err
+	}
+	if err := collect(`SELECT DISTINCT chain_name FROM audit_chain_checkpoint`); err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(set))
+	for n := range set {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 func (v *Verifier) verifyRBACAuditLog(ctx context.Context) (*Result, error) {
@@ -261,12 +387,12 @@ func (v *Verifier) verifyRBACAuditLog(ctx context.Context) (*Result, error) {
 			return res, ctx.Err()
 		}
 		var (
-			id                                                                                 int64
+			id                                                                                int64
 			actorExternalID, action, resourceType, resourceID, resourceName, orgID, ipAddress string
-			createdAt                                                                          time.Time
-			oldValue, newValue                                                                 string
-			entryHash                                                                          sql.NullString
-			hashFormatVersion                                                                  int
+			createdAt                                                                         time.Time
+			oldValue, newValue                                                                string
+			entryHash                                                                         sql.NullString
+			hashFormatVersion                                                                 int
 		)
 		if err := rows.Scan(&id, &actorExternalID, &action, &resourceType, &resourceID,
 			&resourceName, &orgID, &ipAddress, &createdAt, &oldValue, &newValue,
