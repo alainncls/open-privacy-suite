@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"net/url"
 	"privacy-proxy/internal/audit"
+	"privacy-proxy/internal/audit/buffer"
+	"privacy-proxy/internal/audit/sealer"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/compliance"
 	"privacy-proxy/internal/config"
@@ -99,6 +101,10 @@ type Server struct {
 	auditIntegrityWorker *audit.IntegrityWorker
 	visibilityReconciler *VisibilityReconciler // M7 outbox drain
 	redisCloser          io.Closer
+	// RD-1112 async access-log auditing (nil when AUDIT_BUFFER_DIR unset).
+	auditBuffer       *buffer.Buffer
+	auditSealer       *sealer.Sealer
+	auditSealerCancel context.CancelFunc
 }
 
 // DB returns the database instance (for testing)
@@ -144,6 +150,19 @@ func (s *Server) Stop() {
 	}
 	if s.visibilityReconciler != nil {
 		s.visibilityReconciler.Stop()
+	}
+	// RD-1112: stop the audit sealer's drain loop and wait for the in-flight
+	// tick to finish before closing its buffer, so Close never races a tick.
+	if s.auditSealerCancel != nil {
+		s.auditSealerCancel()
+	}
+	if s.auditSealer != nil {
+		s.auditSealer.Wait()
+	}
+	if s.auditBuffer != nil {
+		if err := s.auditBuffer.Close(); err != nil {
+			slog.Warn("audit buffer close failed", "error", err)
+		}
 	}
 	if s.azureStateStore != nil {
 		s.azureStateStore.Stop()
@@ -542,6 +561,74 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 
 	// Wire enhanced audit into JSON-RPC processor
 	s.jsonrpcProcessor.SetEnhancedAudit(database, hashChain, siemForwarder, cfg.AuditLogParams)
+
+	// RD-1112: async access-log auditing. When AUDIT_BUFFER_DIR is set, the hot
+	// path appends each entry to a durable Pebble buffer and a single background
+	// sealer drains it into the access_logs chain off the request path — removing
+	// the per-request chain mutex + 2 PG round-trips that capped throughput. A
+	// single-writer sealer means no chain fork. Empty dir = synchronous legacy path.
+	if cfg.AuditBufferDir != "" {
+		auditBuf, bufErr := buffer.Open(cfg.AuditBufferDir)
+		if bufErr != nil {
+			return nil, fmt.Errorf("open audit buffer at %q: %w", cfg.AuditBufferDir, bufErr)
+		}
+		s.auditBuffer = auditBuf
+
+		sealFn := func(ctx context.Context, seq uint64, data []byte) error {
+			var rec db.AccessLogRecord
+			if err := json.Unmarshal(data, &rec); err != nil {
+				// A corrupt buffered record must not wedge the sealer. Log loudly
+				// and skip it; the high-water advances past it on the next drain.
+				slog.Error("audit sealer: corrupt buffered record skipped", "seq", seq, "error", err)
+				return nil
+			}
+			hash, err := database.SealBufferedAccessLog(ctx, hashChain, rec, seq)
+			if err != nil {
+				return err
+			}
+			// SIEM forwarding moved here from logAccess (off the hot path).
+			if siemForwarder != nil {
+				outcome := "success"
+				if rec.StatusCode >= 400 {
+					outcome = "denied"
+				}
+				if rec.StatusCode >= 500 {
+					outcome = "error"
+				}
+				respStatus := rec.StatusCode
+				if rec.ResponseStatus != nil {
+					respStatus = *rec.ResponseStatus
+				}
+				ev := audit.SIEMEvent{
+					Timestamp:     time.Now().UTC(),
+					EventType:     "access",
+					CorrelationID: rec.CorrelationID,
+					ActorID:       rec.ExternalID,
+					Action:        rec.Method,
+					Outcome:       outcome,
+					Details:       fmt.Sprintf("decision=%d response=%d", rec.StatusCode, respStatus),
+					SourceIP:      rec.IPAddress,
+					EntryHash:     hash,
+				}
+				if w := rbac.MatchWildcard(rec.Method); w != nil {
+					ev.MatchedVia = "wildcard"
+					ev.MatchedPrefix = w.Prefix
+				}
+				siemForwarder.Send(ev)
+			}
+			return nil
+		}
+		highWater := func(ctx context.Context) (uint64, error) {
+			return database.GetMaxAccessLogBufferSeq(ctx)
+		}
+		s.auditSealer = sealer.New(auditBuf, sealFn, highWater, sealer.Config{})
+		sealerCtx, sealerCancel := context.WithCancel(context.Background())
+		s.auditSealerCancel = sealerCancel
+		go s.auditSealer.Run(sealerCtx)
+
+		s.jsonrpcProcessor.SetAuditBuffer(auditBuf)
+		slog.Info("async access-log auditing enabled (RD-1112)", "buffer_dir", cfg.AuditBufferDir)
+	}
 
 	// Initialize retention cleaner
 	retentionCleaner := audit.NewRetentionCleaner(audit.RetentionConfig{

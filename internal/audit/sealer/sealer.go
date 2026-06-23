@@ -49,6 +49,7 @@ type Sealer struct {
 	seal      SealFunc
 	highWater HighWaterFunc
 	cfg       Config
+	done      chan struct{} // closed when Run returns
 }
 
 // New constructs a Sealer with defaults applied.
@@ -59,11 +60,16 @@ func New(buf Drainer, seal SealFunc, highWater HighWaterFunc, cfg Config) *Seale
 	if cfg.Interval <= 0 {
 		cfg.Interval = 1 * time.Second
 	}
-	return &Sealer{buf: buf, seal: seal, highWater: highWater, cfg: cfg}
+	return &Sealer{buf: buf, seal: seal, highWater: highWater, cfg: cfg, done: make(chan struct{})}
 }
+
+// Wait blocks until Run has returned (after ctx cancellation), so the caller
+// can safely close the buffer without racing an in-flight tick.
+func (s *Sealer) Wait() { <-s.done }
 
 // Run drives the seal loop until ctx is cancelled (sealing once immediately).
 func (s *Sealer) Run(ctx context.Context) {
+	defer close(s.done)
 	t := time.NewTicker(s.cfg.Interval)
 	defer t.Stop()
 	for {

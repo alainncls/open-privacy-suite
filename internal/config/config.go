@@ -231,7 +231,11 @@ type Config struct {
 	NodeMaxIdleConnsPerHost int
 	NodeMaxConnsPerHost     int
 	NodeIdleConnTimeout     time.Duration
-	ExplorerDatabaseURL     string
+	// AuditBufferDir, when set, enables async access-log auditing (RD-1112):
+	// the hot path appends to a durable Pebble buffer at this path and a
+	// background sealer drains it into the chain. Empty = synchronous (legacy).
+	AuditBufferDir      string
+	ExplorerDatabaseURL string
 	// IndexerURL, when non-empty, enables the gRPC chain-indexer backend for
 	// explorer reads. Methods not yet ported to gRPC fall back to direct
 	// SQL on the explorer postgres. Leave empty to use SQL exclusively.
@@ -623,6 +627,7 @@ func Load() *Config {
 		NodeMaxIdleConnsPerHost:             nodeMaxIdleConnsPerHost,
 		NodeMaxConnsPerHost:                 nodeMaxConnsPerHost,
 		NodeIdleConnTimeout:                 nodeIdleConnTimeout,
+		AuditBufferDir:                      getEnv("AUDIT_BUFFER_DIR", ""),
 		PrivadoRPCURL:                       getEnv("PRIVADO_RPC_URL", "https://rpc-mainnet.privado.id"),
 		IPFSGateway:                         getEnv("IPFS_GATEWAY", "https://ipfs-proxy-cache.privado.id"), // IPFS gateway for schema resolution
 		JWTSecret:                           getEnv("JWT_SECRET", ""),                                      // If empty, will be auto-generated (dev only)
