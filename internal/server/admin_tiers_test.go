@@ -1231,7 +1231,7 @@ func TestEscalation_JWTAdminCanBatchDeleteNonAdminGroups(t *testing.T) {
 
 func TestEscalation_SuperAdminCanBatchDeleteOrgAdminGroup(t *testing.T) {
 	srv, router := setupTieredAdminTestServer(t, "secret")
-	_, orgID, _, _, normalGID := setupOrgAdminGateFixture(t, srv)
+	_, orgID, _, _, _ := setupOrgAdminGateFixture(t, srv)
 	ctx := t.Context()
 
 	victimAdminGID := uuid.New().String()
@@ -1240,7 +1240,10 @@ func TestEscalation_SuperAdminCanBatchDeleteOrgAdminGroup(t *testing.T) {
 		Name: "Victim Admins 2", Path: "victim2", IsOrgAdmin: true,
 	}))
 
-	body := mustJSON(t, map[string]any{"group_ids": []string{normalGID, victimAdminGID}})
+	// Admin-only batch: super-admin manages the admin tier. (RD-1107 blocks a
+	// batch that also contains a REGULAR group — covered in the dedicated block
+	// test; mixing one in here would now correctly 403.)
+	body := mustJSON(t, map[string]any{"group_ids": []string{victimAdminGID}})
 	w := orgAdminGateReq(t, router, http.MethodPost, "/api/v1/admin/orgs/"+orgID+"/groups/batch-delete", "", "secret", body)
 	assert.Equal(t, http.StatusOK, w.Code)
 }

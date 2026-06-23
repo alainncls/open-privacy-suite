@@ -397,6 +397,11 @@ type Config struct {
 	AzureADClientID     string // AZURE_AD_CLIENT_ID
 	AzureADClientSecret string // AZURE_AD_CLIENT_SECRET
 	AzureADTenantID     string // AZURE_AD_TENANT_ID (default: "common" for multi-tenant)
+	// AzureADSPAudience is the expected `aud` for service-principal
+	// (client-credentials) access tokens at /api/v1/auth/azure/service-principal
+	// (RD-1120). Empty defaults to AzureADClientID. Set this when the client
+	// requests the token for a distinct API resource (e.g. api://<app-id>).
+	AzureADSPAudience string // AZURE_AD_SP_AUDIENCE
 
 	// Redis URL for shared state stores (e.g., "redis://localhost:6379").
 	// Empty means fall back to in-memory stores.
@@ -404,6 +409,13 @@ type Config struct {
 }
 
 func Load() *Config {
+	// Load the optional structured config file (CONFIG_FILE) before reading any
+	// setting, so its values are available as a fallback layer to every getEnv
+	// call below. A bad/unsupported file is recorded and surfaced by Validate()
+	// so startup fails fast rather than silently using environment defaults.
+	// No file configured => pure-environment mode (backwards compatible). (RD-1130)
+	fileConfigErr = loadConfigFile()
+
 	env := getEnv("ENVIRONMENT", "development")
 	// RequireProofOfHumanity is opt-in in every environment. Admin must explicitly
 	// set REQUIRE_PROOF_OF_HUMANITY=true AND fill the Path B config (issuer DID,
@@ -711,6 +723,7 @@ func Load() *Config {
 		AzureADClientID:                     getEnv("AZURE_AD_CLIENT_ID", ""),
 		AzureADClientSecret:                 getEnv("AZURE_AD_CLIENT_SECRET", ""),
 		AzureADTenantID:                     getEnv("AZURE_AD_TENANT_ID", "common"),
+		AzureADSPAudience:                   getEnv("AZURE_AD_SP_AUDIENCE", ""),
 		RedisURL:                            getEnv("REDIS_URL", ""),
 	}
 }
@@ -805,6 +818,12 @@ func (c *Config) AzureADEnabled() bool {
 // When RequireProofOfHumanity is enabled, Path B configuration is validated
 // regardless of environment — misconfiguring Path B breaks login for everyone.
 func (c *Config) Validate() error {
+	// A configured-but-unreadable CONFIG_FILE is a fatal misconfiguration: the
+	// operator intended to use it, so fail fast instead of silently ignoring it.
+	if fileConfigErr != nil {
+		return fileConfigErr
+	}
+
 	if c.RequireProofOfHumanity {
 		if err := c.validateProofOfHumanity(); err != nil {
 			return err
@@ -924,6 +943,14 @@ func isPrivateOrLocalhost(hostname string) bool {
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
+	}
+	// Fall back to the optional config file (CONFIG_FILE) before the built-in
+	// default. Environment variables always win (checked first above), so file
+	// values form a base layer the environment can override. (RD-1130)
+	if fileConfig != nil {
+		if value, ok := fileConfig[key]; ok && value != "" {
+			return value
+		}
 	}
 	return defaultValue
 }

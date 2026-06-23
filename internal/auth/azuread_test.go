@@ -377,3 +377,139 @@ func TestGetAuthorizationURL(t *testing.T) {
 	assert.Contains(t, url, "nonce=test-nonce")
 	assert.Contains(t, url, "scope=")
 }
+
+// ---------------------------------------------------------------------------
+// VerifyAccessToken tests (RD-1120 — service-principal / client-credentials)
+// ---------------------------------------------------------------------------
+
+func TestVerifyAccessToken_Success(t *testing.T) {
+	m := newMockOIDCServer(t)
+	defer m.Close()
+
+	authn, err := NewAzureADAuthenticatorFromIssuer("test-client-id", "test-client-secret", m.issuer)
+	require.NoError(t, err)
+
+	oid := "11111111-2222-3333-4444-555555555555"
+	tid := "aaaabbbb-cccc-dddd-eeee-ffffffffffff"
+	now := time.Now()
+	// A service-principal access token has no nonce; aud defaults to clientID.
+	raw := m.signIDToken(t, map[string]interface{}{
+		"iss":   m.issuer,
+		"aud":   "test-client-id",
+		"exp":   jwt.NewNumericDate(now.Add(1 * time.Hour)),
+		"iat":   jwt.NewNumericDate(now),
+		"oid":   oid,
+		"tid":   tid,
+		"appid": "99999999-0000-0000-0000-000000000000",
+	})
+
+	identity, err := authn.VerifyAccessToken(context.Background(), raw)
+	require.NoError(t, err)
+	assert.Equal(t, oid, identity.OID)
+	assert.Equal(t, tid, identity.TenantID)
+}
+
+func TestVerifyAccessToken_CustomAudience(t *testing.T) {
+	m := newMockOIDCServer(t)
+	defer m.Close()
+
+	authn, err := NewAzureADAuthenticatorFromIssuer("test-client-id", "test-client-secret", m.issuer)
+	require.NoError(t, err)
+	authn.SetServicePrincipalAudience("api://privacy-proxy")
+
+	now := time.Now()
+	mint := func(aud string) string {
+		return m.signIDToken(t, map[string]interface{}{
+			"iss": m.issuer, "aud": aud,
+			"exp": jwt.NewNumericDate(now.Add(time.Hour)), "iat": jwt.NewNumericDate(now),
+			"oid": "oid-1", "tid": "tid-1",
+		})
+	}
+
+	// The configured custom audience is accepted.
+	_, err = authn.VerifyAccessToken(context.Background(), mint("api://privacy-proxy"))
+	require.NoError(t, err)
+
+	// Once a custom SP audience is set, the bare clientID is NOT accepted —
+	// guards against a token minted for a different resource being replayed.
+	_, err = authn.VerifyAccessToken(context.Background(), mint("test-client-id"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "verification failed")
+}
+
+func TestVerifyAccessToken_Rejections(t *testing.T) {
+	m := newMockOIDCServer(t)
+	defer m.Close()
+
+	authn, err := NewAzureADAuthenticatorFromIssuer("test-client-id", "test-client-secret", m.issuer)
+	require.NoError(t, err)
+
+	now := time.Now()
+	valid := map[string]interface{}{
+		"iss": m.issuer, "aud": "test-client-id",
+		"exp": jwt.NewNumericDate(now.Add(time.Hour)), "iat": jwt.NewNumericDate(now),
+		"oid": "oid-1", "tid": "tid-1",
+	}
+	clone := func(mut func(map[string]interface{})) map[string]interface{} {
+		c := map[string]interface{}{}
+		for k, v := range valid {
+			c[k] = v
+		}
+		mut(c)
+		return c
+	}
+
+	t.Run("empty token", func(t *testing.T) {
+		_, err := authn.VerifyAccessToken(context.Background(), "")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "empty")
+	})
+
+	t.Run("expired", func(t *testing.T) {
+		raw := m.signIDToken(t, clone(func(c map[string]interface{}) {
+			c["exp"] = jwt.NewNumericDate(now.Add(-time.Hour))
+			c["iat"] = jwt.NewNumericDate(now.Add(-2 * time.Hour))
+		}))
+		_, err := authn.VerifyAccessToken(context.Background(), raw)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "verification failed")
+	})
+
+	t.Run("wrong audience", func(t *testing.T) {
+		raw := m.signIDToken(t, clone(func(c map[string]interface{}) { c["aud"] = "some-other-api" }))
+		_, err := authn.VerifyAccessToken(context.Background(), raw)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "verification failed")
+	})
+
+	t.Run("missing oid", func(t *testing.T) {
+		raw := m.signIDToken(t, clone(func(c map[string]interface{}) { delete(c, "oid") }))
+		_, err := authn.VerifyAccessToken(context.Background(), raw)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "oid claim missing")
+	})
+
+	t.Run("missing tid", func(t *testing.T) {
+		raw := m.signIDToken(t, clone(func(c map[string]interface{}) { delete(c, "tid") }))
+		_, err := authn.VerifyAccessToken(context.Background(), raw)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "tid claim missing")
+	})
+
+	t.Run("invalid signature", func(t *testing.T) {
+		wrongKey, kerr := rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, kerr)
+		signer, serr := jose.NewSigner(
+			jose.SigningKey{Algorithm: jose.RS256, Key: wrongKey},
+			(&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", m.keyID),
+		)
+		require.NoError(t, serr)
+		payload, _ := json.Marshal(valid)
+		jws, serr := signer.Sign(payload)
+		require.NoError(t, serr)
+		raw, _ := jws.CompactSerialize()
+		_, err := authn.VerifyAccessToken(context.Background(), raw)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "verification failed")
+	})
+}

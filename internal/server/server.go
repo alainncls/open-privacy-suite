@@ -441,6 +441,9 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 			// Log warning but don't fail — Azure AD is optional
 			slog.Warn("failed to initialize Azure AD authenticator", "error", err)
 		} else {
+			// RD-1120: expected audience for service-principal access tokens
+			// (empty → defaults to the client ID inside VerifyAccessToken).
+			azureAuthenticator.SetServicePrincipalAudience(cfg.AzureADSPAudience)
 			if redisClient != nil {
 				azureStateStore = privacyredis.NewAzureStateStore(redisClient, AzureStateTTL)
 			} else {
@@ -861,6 +864,9 @@ func (s *Server) setupRouter() *gin.Engine {
 	// Always registered; handlers return 404 when Azure AD is not configured.
 	router.GET("/api/v1/auth/azure/url", authRL, s.handleAzureAuthURL)
 	router.POST("/api/v1/auth/azure/callback", authRL, s.handleAzureCallback)
+	// RD-1120: service-principal (client-credentials) M2M login — exchange an
+	// Azure AD access token for our local tokens. Self-gates on nil authenticator.
+	router.POST("/api/v1/auth/azure/service-principal", authRL, s.handleAzureServicePrincipal)
 	router.GET("/api/v1/auth/providers", s.handleAuthProviders)
 
 	// Dev identity picker endpoint (development/testing only, mockauth builds)

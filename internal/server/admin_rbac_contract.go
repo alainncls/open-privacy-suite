@@ -40,6 +40,11 @@ func (s *Server) listContracts(c *gin.Context) {
 }
 
 func (s *Server) createContract(c *gin.Context) {
+	// RD-1107: per-org contract management is the org admin's job; the
+	// super-admin token is platform/bootstrap only.
+	if denySuperAdminOrgScoped(c) {
+		return
+	}
 	orgID := c.Param("org_id")
 
 	var input struct {
@@ -104,6 +109,10 @@ func (s *Server) getContract(c *gin.Context) {
 }
 
 func (s *Server) updateContract(c *gin.Context) {
+	// RD-1107: per-org contract management is the org admin's job.
+	if denySuperAdminOrgScoped(c) {
+		return
+	}
 	orgID := c.Param("org_id")
 	address := c.Param("address")
 
@@ -148,6 +157,10 @@ func (s *Server) updateContract(c *gin.Context) {
 }
 
 func (s *Server) deleteContract(c *gin.Context) {
+	// RD-1107: per-org contract management is the org admin's job.
+	if denySuperAdminOrgScoped(c) {
+		return
+	}
 	orgID := c.Param("org_id")
 	address := c.Param("address")
 
@@ -179,6 +192,10 @@ func (s *Server) deleteContract(c *gin.Context) {
 // updateContractABI updates the ABI for a contract.
 // PUT /orgs/:org_id/contracts/:address/abi
 func (s *Server) updateContractABI(c *gin.Context) {
+	// RD-1107: per-org contract management is the org admin's job.
+	if denySuperAdminOrgScoped(c) {
+		return
+	}
 	orgID := c.Param("org_id")
 	address := c.Param("address")
 
@@ -249,6 +266,10 @@ func (s *Server) updateContractABI(c *gin.Context) {
 // deny-when-no-ABI gate are all bypassed for unlocked viewers on the
 // matching tx). Operators should review their grants before flipping.
 func (s *Server) updateContractAllowVisibleToUnlock(c *gin.Context) {
+	// RD-1107: per-org contract management is the org admin's job.
+	if denySuperAdminOrgScoped(c) {
+		return
+	}
 	orgID := c.Param("org_id")
 	address := c.Param("address")
 
@@ -498,6 +519,10 @@ func (s *Server) checkContractsOnChain(c *gin.Context) {
 // deleteStaleContracts deletes contracts that are confirmed to be missing on-chain.
 // POST /orgs/:org_id/contracts/sync-delete
 func (s *Server) deleteStaleContracts(c *gin.Context) {
+	// RD-1107: per-org contract management is the org admin's job.
+	if denySuperAdminOrgScoped(c) {
+		return
+	}
 	orgID := c.Param("org_id")
 
 	var input struct {
@@ -965,6 +990,11 @@ func (s *Server) listContractGrants(c *gin.Context) {
 }
 
 func (s *Server) createContractGrant(c *gin.Context) {
+	// RD-1107: granting per-org contract access is the org admin's job; the
+	// super-admin token is platform/bootstrap only.
+	if denySuperAdminOrgScoped(c) {
+		return
+	}
 	orgID := c.Param("org_id")
 	address := c.Param("address")
 
@@ -1071,6 +1101,10 @@ func (s *Server) createContractGrant(c *gin.Context) {
 }
 
 func (s *Server) updateContractGrant(c *gin.Context) {
+	// RD-1107: per-org contract grants are the org admin's job.
+	if denySuperAdminOrgScoped(c) {
+		return
+	}
 	orgID := c.Param("org_id")
 	address := c.Param("address")
 	groupID := c.Param("group_id")
@@ -1301,6 +1335,10 @@ func (s *Server) getContractGrantSummary(c *gin.Context) {
 }
 
 func (s *Server) deleteContractGrant(c *gin.Context) {
+	// RD-1107: per-org contract grants are the org admin's job.
+	if denySuperAdminOrgScoped(c) {
+		return
+	}
 	orgID := c.Param("org_id")
 	address := c.Param("address")
 	groupID := c.Param("group_id")
@@ -1361,6 +1399,10 @@ func validateEventRules(rules []rbac.EventRule) string {
 // batchMoveContracts moves contracts from auto-created groups to a target group.
 // POST /orgs/:org_id/contracts/batch-move
 func (s *Server) batchMoveContracts(c *gin.Context) {
+	// RD-1107: per-org contract management is the org admin's job.
+	if denySuperAdminOrgScoped(c) {
+		return
+	}
 	orgID := c.Param("org_id")
 
 	var input struct {

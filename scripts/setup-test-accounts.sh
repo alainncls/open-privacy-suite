@@ -98,6 +98,27 @@ admin_put() {
         -d "$data" "${ADMIN_URL}${path}" 2>/dev/null || echo ""
 }
 
+# RD-1107: the super-admin token may only do platform/bootstrap work (create
+# orgs, mint is_org_admin groups, set KYC/notes). Per-org tenant management
+# (regular groups, group access, contracts, grants, regular memberships) is the
+# org admin's job and must go through an org-admin JWT. PROV_TOKEN is a
+# provisioner that createOrg-time bootstrap makes is_org_admin in every org
+# below; jwt_post/jwt_put authenticate as that org admin.
+PROV_TOKEN=""
+jwt_post() {
+    local path="$1"
+    local data="$2"
+    curl -sf -X POST -H "Authorization: Bearer $PROV_TOKEN" -H "Content-Type: application/json" \
+        -d "$data" "${ADMIN_URL}${path}" 2>/dev/null || echo ""
+}
+
+jwt_put() {
+    local path="$1"
+    local data="$2"
+    curl -sf -X PUT -H "Authorization: Bearer $PROV_TOKEN" -H "Content-Type: application/json" \
+        -d "$data" "${ADMIN_URL}${path}" 2>/dev/null || echo ""
+}
+
 # Mock login: creates a user with a specific DID and returns the access token
 mock_login() {
     local did="$1"
@@ -344,6 +365,44 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Step 4b: Bootstrap the provisioner org admin (RD-1107)
+# ---------------------------------------------------------------------------
+# Per-org tenant management must run as an org admin, not the super-admin
+# token. Mint a provisioner JWT and make it is_org_admin in both orgs (minting
+# is_org_admin groups + their members is a super-admin op). One token then
+# authorizes per-org mutations in both orgs (org-admin status is re-derived per
+# request, so the token minted here works once the memberships exist).
+
+step "Bootstrapping provisioner org admin"
+
+PROVISIONER_DID="did:privado:test_provisioner"
+PROV_TOKEN=$(mock_login "$PROVISIONER_DID")
+if [[ -z "$PROV_TOKEN" ]]; then
+    err "Failed to mint provisioner token"
+    exit 1
+fi
+PROV_USER_ID=$(find_user_by_did "$PROVISIONER_DID")
+if [[ -z "$PROV_USER_ID" ]]; then
+    err "Failed to resolve provisioner user id"
+    exit 1
+fi
+
+for _org in "$ALPHA_ORG_ID" "$BETA_ORG_ID"; do
+    _pg=$(find_group_by_slug "$_org" "provisioners")
+    if [[ -z "$_pg" ]]; then
+        _resp=$(admin_post "/orgs/${_org}/groups" '{"slug":"provisioners","name":"Provisioners","is_org_admin":true}')
+        _pg=$(echo "$_resp" | jq -r '.id // empty')
+    fi
+    if [[ -z "$_pg" ]]; then
+        err "Failed to create provisioner group in org $_org"
+        exit 1
+    fi
+    # Membership into an is_org_admin group is super-admin-only (RD-1099).
+    admin_post "/users/${PROV_USER_ID}/memberships" "{\"group_id\":\"$_pg\"}" > /dev/null
+done
+ok "Provisioner is org admin in Alpha + Beta"
+
+# ---------------------------------------------------------------------------
 # Step 5: Create groups with appropriate claims
 # ---------------------------------------------------------------------------
 
@@ -352,7 +411,7 @@ step "Creating groups"
 # Alpha Corp deployers group
 ALPHA_DEPLOYERS_ID=$(find_group_by_slug "$ALPHA_ORG_ID" "deployers")
 if [[ -z "$ALPHA_DEPLOYERS_ID" ]]; then
-    resp=$(admin_post "/orgs/${ALPHA_ORG_ID}/groups" '{"slug":"deployers","name":"Deployers","description":"Can deploy and manage contracts"}')
+    resp=$(jwt_post "/orgs/${ALPHA_ORG_ID}/groups" '{"slug":"deployers","name":"Deployers","description":"Can deploy and manage contracts"}')
     ALPHA_DEPLOYERS_ID=$(echo "$resp" | jq -r '.id // empty')
     ok "Created Alpha Corp deployers group ($ALPHA_DEPLOYERS_ID)"
 else
@@ -360,14 +419,14 @@ else
 fi
 
 # Set deployers access: deploy claim. Read/write is method-gated (allowlist).
-admin_put "/orgs/${ALPHA_ORG_ID}/groups/${ALPHA_DEPLOYERS_ID}/access" \
+jwt_put "/orgs/${ALPHA_ORG_ID}/groups/${ALPHA_DEPLOYERS_ID}/access" \
     '{"allowed_methods":["*"],"claims":["deploy"]}' > /dev/null
 ok "Set deployers access (deploy claim)"
 
 # Alpha Corp readers group
 ALPHA_READERS_ID=$(find_group_by_slug "$ALPHA_ORG_ID" "readers")
 if [[ -z "$ALPHA_READERS_ID" ]]; then
-    resp=$(admin_post "/orgs/${ALPHA_ORG_ID}/groups" '{"slug":"readers","name":"Readers","description":"Read-only access to org contracts"}')
+    resp=$(jwt_post "/orgs/${ALPHA_ORG_ID}/groups" '{"slug":"readers","name":"Readers","description":"Read-only access to org contracts"}')
     ALPHA_READERS_ID=$(echo "$resp" | jq -r '.id // empty')
     ok "Created Alpha Corp readers group ($ALPHA_READERS_ID)"
 else
@@ -375,14 +434,14 @@ else
 fi
 
 # Set readers access: no operational claims — read access is method-gated.
-admin_put "/orgs/${ALPHA_ORG_ID}/groups/${ALPHA_READERS_ID}/access" \
+jwt_put "/orgs/${ALPHA_ORG_ID}/groups/${ALPHA_READERS_ID}/access" \
     '{"allowed_methods":["eth_call","eth_getBalance","eth_getTransactionByHash","eth_getTransactionReceipt","eth_blockNumber","eth_getBlockByNumber","eth_getBlockByHash","eth_chainId","net_version","eth_getCode","eth_getStorageAt","eth_getLogs","eth_getTransactionCount"],"claims":[]}' > /dev/null
 ok "Set readers access (method-gated only)"
 
 # Beta Inc deployers group
 BETA_DEPLOYERS_ID=$(find_group_by_slug "$BETA_ORG_ID" "deployers")
 if [[ -z "$BETA_DEPLOYERS_ID" ]]; then
-    resp=$(admin_post "/orgs/${BETA_ORG_ID}/groups" '{"slug":"deployers","name":"Deployers","description":"Can deploy and manage contracts"}')
+    resp=$(jwt_post "/orgs/${BETA_ORG_ID}/groups" '{"slug":"deployers","name":"Deployers","description":"Can deploy and manage contracts"}')
     BETA_DEPLOYERS_ID=$(echo "$resp" | jq -r '.id // empty')
     ok "Created Beta Inc deployers group ($BETA_DEPLOYERS_ID)"
 else
@@ -390,7 +449,7 @@ else
 fi
 
 # Set Beta deployers access
-admin_put "/orgs/${BETA_ORG_ID}/groups/${BETA_DEPLOYERS_ID}/access" \
+jwt_put "/orgs/${BETA_ORG_ID}/groups/${BETA_DEPLOYERS_ID}/access" \
     '{"allowed_methods":["*"],"claims":["deploy"]}' > /dev/null
 ok "Set Beta deployers access (deploy claim)"
 
@@ -414,8 +473,10 @@ create_membership() {
         return 0
     fi
 
+    # Membership into a regular group is per-org tenant management (RD-1107) —
+    # go through the provisioner org-admin JWT, not the super-admin token.
     local resp
-    resp=$(admin_post "/users/${user_id}/memberships" "{\"group_id\":\"$group_id\"}")
+    resp=$(jwt_post "/users/${user_id}/memberships" "{\"group_id\":\"$group_id\"}")
     local mid
     mid=$(echo "$resp" | jq -r '.id // empty')
     if [[ -n "$mid" ]]; then
@@ -592,7 +653,7 @@ step "Creating External Auditors group in Alpha Corp"
 
 EXT_AUDITORS_ID=$(find_group_by_slug "$ALPHA_ORG_ID" "external-auditors")
 if [[ -z "$EXT_AUDITORS_ID" ]]; then
-    resp=$(admin_post "/orgs/${ALPHA_ORG_ID}/groups" '{"slug":"external-auditors","name":"External Auditors","description":"External users with scoped read access"}')
+    resp=$(jwt_post "/orgs/${ALPHA_ORG_ID}/groups" '{"slug":"external-auditors","name":"External Auditors","description":"External users with scoped read access"}')
     EXT_AUDITORS_ID=$(echo "$resp" | jq -r '.id // empty')
     ok "Created External Auditors group ($EXT_AUDITORS_ID)"
 else
@@ -600,7 +661,7 @@ else
 fi
 
 # Set access: standard read methods including eth_getLogs (method-gated, no operational claims)
-admin_put "/orgs/${ALPHA_ORG_ID}/groups/${EXT_AUDITORS_ID}/access" \
+jwt_put "/orgs/${ALPHA_ORG_ID}/groups/${EXT_AUDITORS_ID}/access" \
     '{"allowed_methods":["eth_getLogs","eth_call","eth_getBalance","eth_getTransactionByHash","eth_getTransactionReceipt","eth_blockNumber","eth_getBlockByNumber","eth_getBlockByHash","eth_chainId","net_version","eth_getCode"],"claims":[]}' > /dev/null
 ok "Set External Auditors access (method-gated only)"
 
@@ -611,9 +672,8 @@ create_membership "$DAVE_USER_ID"    "$EXT_AUDITORS_ID" "Dave -> Alpha External 
 # Create contract grant with self event rules for External Auditors on Alpha Treasury Token
 if [[ -n "$ALPHA_TOKEN1_ADDR" ]]; then
     TRANSFER_TOPIC="0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
-    GRANT_RESP=$(curl -sf -X POST "${ADMIN_CURL_HEADERS[@]}" -H "Content-Type: application/json" \
-        -d "{\"group_id\":\"$EXT_AUDITORS_ID\"}" \
-        "${ADMIN_URL}/orgs/${ALPHA_ORG_ID}/contracts/${ALPHA_TOKEN1_ADDR}/grants" 2>/dev/null || echo "")
+    GRANT_RESP=$(jwt_post "/orgs/${ALPHA_ORG_ID}/contracts/${ALPHA_TOKEN1_ADDR}/grants" \
+        "{\"group_id\":\"$EXT_AUDITORS_ID\"}")
     if [[ -n "$GRANT_RESP" ]]; then
         ok "External Auditors grant on Alpha Treasury Token (self event rules)"
     else

@@ -1,0 +1,90 @@
+# =============================================================================
+# Privacy Proxy — example configuration file
+# =============================================================================
+# Point the proxy at this file with the CONFIG_FILE environment variable:
+#
+#     CONFIG_FILE=/etc/privacy-proxy/config.toml
+#
+# Precedence (highest first):  environment variable  >  this file  >  built-in
+# default. Anything set in the environment overrides the value here, so 12-factor
+# / Kubernetes overrides and secret injection keep working unchanged.
+#
+# Keys are the canonical environment-variable names (DATABASE_URL, BASE_URL, …).
+# Values are typed — strings, booleans and numbers are all accepted; e.g.
+# `ENABLE_TRAVEL_RULE = true` and `ENABLE_TRAVEL_RULE = "true"` are equivalent.
+# Nested tables and arrays are not supported.
+#
+# SECRETS ARE NOT ALLOWED HERE. Keep JWT_SECRET, JWT_REFRESH_SECRET,
+# ADMIN_API_TOKEN, AZURE_AD_CLIENT_SECRET, DATABASE_URL, REDIS_URL /
+# REDIS_PASSWORD, RPC_API_KEY, OAUTH_FIRST_PARTY_CLIENTS and similar in the
+# environment or your secrets manager. The proxy REFUSES TO START if it finds
+# one of these in this file.
+#
+# Copy and trim:  cp config.example.toml config.toml
+# =============================================================================
+
+# Schema version. REQUIRED. The proxy refuses to start on a missing or
+# unsupported version, so a stale file fails loudly instead of being mis-read.
+version = 1
+
+# -----------------------------------------------------------------------------
+# Core
+# -----------------------------------------------------------------------------
+ENVIRONMENT = "production"                       # "production" or "development"
+BASE_URL = "https://proxy.example.com"           # public URL (OAuth callbacks, CORS)
+NODE_URL = "http://eth-node:8545"                # upstream Ethereum JSON-RPC node
+PORT = "8080"                                    # server listen port
+# CORS_ALLOWED_ORIGINS = "https://explorer.example.com"
+# TRUSTED_INTERNAL_CIDRS = "10.100.0.0/16"       # appended to the built-in list
+
+# Database / Redis — connection STRINGS are secrets; set them in the environment:
+#   DATABASE_URL, EXPLORER_DATABASE_URL, REDIS_URL
+
+# -----------------------------------------------------------------------------
+# Authentication (Privado ID / Billions)
+# -----------------------------------------------------------------------------
+VERIFIER_ID = "did:privado:verifier:your-network-name"
+REQUIRE_PROOF_OF_HUMANITY = true
+# PRIVADO_RPC_URL = "https://rpc-mainnet.privado.id"
+# BILLIONS_RPC_URL = "https://billions-rpc.example.com"
+# BILLIONS_STATE_CONTRACT = "0x3C9acB2205Aa72A05F6D77d708b5Cf85FCa3a896"
+# BILLIONS_ISSUER_DID = "did:polygonid:polygon:main:billions-issuer-did"
+# JWT_SECRET / JWT_REFRESH_SECRET / ADMIN_API_TOKEN are secrets — set via env.
+
+# -----------------------------------------------------------------------------
+# Azure AD / Microsoft Entra ID (optional SSO + service-principal M2M login)
+# -----------------------------------------------------------------------------
+# AZURE_AD_CLIENT_ID = ""
+# AZURE_AD_TENANT_ID = "common"
+# AZURE_AD_CLIENT_SECRET is a secret — set via env.
+
+# -----------------------------------------------------------------------------
+# Runtime tracing (cross-org isolation)
+# -----------------------------------------------------------------------------
+RUNTIME_TRACING_ETH_CALL_ENABLED = true
+ETH_CALL_TRACE_TIMEOUT = "5s"
+RUNTIME_TRACING_INTRA_ORG_GRANTS_ENABLED = false
+MAX_CONCURRENT_REQUESTS = 50
+# EXTRA_RPC_NAMESPACES_FILE = "./rpc-namespaces.json"
+
+# -----------------------------------------------------------------------------
+# Compliance & retention
+# -----------------------------------------------------------------------------
+ENABLE_TRAVEL_RULE = false
+COMPLIANCE_DEFAULT_MODE = "enforce"              # "enforce" or "monitor"
+RETENTION_ACCESS_LOGS = "2160h"                  # 90 days
+RETENTION_COMPLIANCE_LOGS = "61320h"             # ~7 years
+MAX_ACCESS_LOG_ROWS = 0                          # 0 = no FIFO cap
+ORG_ADMIN_VIEW_USER_TXS = false
+
+# -----------------------------------------------------------------------------
+# Upstream RPC API keys
+# -----------------------------------------------------------------------------
+RPC_API_KEY_HEADER = "Authorization"
+# RPC_API_KEY and RPC_API_KEY_ENCRYPTION_KEY are secrets — set via env.
+
+# -----------------------------------------------------------------------------
+# Audit log integrity
+# -----------------------------------------------------------------------------
+AUDIT_INTEGRITY_VERIFY_INTERVAL = "15m"          # 0 disables the scheduled verifier
+# AUDIT_TAMPER_WEBHOOK_URL — may carry a token; set via env.

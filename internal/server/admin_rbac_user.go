@@ -581,6 +581,11 @@ func (s *Server) createUserMembership(c *gin.Context) {
 	if denyJWTAdminTouchOrgAdminGroup(c, group) {
 		return
 	}
+	// RD-1107: super-admin manages org-admin-group membership only (minting);
+	// regular-group membership is per-org tenant management (the org admin's job).
+	if denySuperAdminRegularGroup(c, group) {
+		return
+	}
 
 	membership := &rbac.UserMembership{
 		ID:      uuid.New().String(),
@@ -739,6 +744,11 @@ func (s *Server) createMembershipByDID(c *gin.Context) {
 	if denyJWTAdminTouchOrgAdminGroup(c, group) {
 		return
 	}
+	// RD-1107: super-admin manages org-admin-group membership only (minting);
+	// regular-group membership is per-org tenant management (the org admin's job).
+	if denySuperAdminRegularGroup(c, group) {
+		return
+	}
 
 	// DID → user_id translation. If the DID is not yet in `users`, create the
 	// row (mirroring first-login behaviour). KYC starts false; KYC remains
@@ -848,6 +858,11 @@ func (s *Server) deleteUserMembership(c *gin.Context) {
 	// power the gate exists to prevent — so it is super-admin-only, symmetric
 	// with the add path. After the foreign-org check so probes stay opaque.
 	if denyJWTAdminTouchOrgAdminGroup(c, group) {
+		return
+	}
+	// RD-1107: super-admin manages org-admin-group membership only (minting);
+	// regular-group membership is per-org tenant management (the org admin's job).
+	if denySuperAdminRegularGroup(c, group) {
 		return
 	}
 
