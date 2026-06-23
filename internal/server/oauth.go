@@ -352,7 +352,8 @@ func (s *Server) handleOAuthSilentComplete(c *gin.Context) {
 
 	// Best-effort KYC lookup so the issued code carries the right KYC
 	// flag in the eventual token exchange. Same shape as mock-complete.
-	kyc := false
+	// RD-1131: new Privado users auto-KYC'd iff AUTO_KYC_PRIVADO (new rows only).
+	kyc := s.config.AutoKYCPrivado
 	if s.rbacAccessCtrl != nil {
 		if user, err := s.rbacAccessCtrl.EnsureUserExists(c.Request.Context(), callerDID, kyc, false); err == nil && user != nil {
 			kyc = user.KYC
@@ -714,7 +715,8 @@ func (s *Server) handleOAuthCallback(c *gin.Context) {
 	}
 
 	// Get user KYC status from RBAC
-	kyc := false
+	// RD-1131: new Privado users auto-KYC'd iff AUTO_KYC_PRIVADO (new rows only).
+	kyc := s.config.AutoKYCPrivado
 	if s.rbacAccessCtrl != nil {
 		user, err := s.rbacAccessCtrl.EnsureUserExists(c.Request.Context(), userDID, kyc, false)
 		if err == nil && user != nil {

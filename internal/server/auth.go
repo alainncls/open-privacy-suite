@@ -544,7 +544,11 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 	// no user to read KYC / ban state from, etc.). Treat persistence failure
 	// the same as any other create-then-issue error in this file: return 500,
 	// no token. The caller will retry.
-	kyc := false
+	//
+	// RD-1131: a NEW Privado user is created KYC-verified iff AUTO_KYC_PRIVADO is
+	// set. EnsureUserExists applies this only to newly-created rows; existing
+	// users keep their admin-managed KYC (re-read into `kyc` below).
+	kyc := s.config.AutoKYCPrivado
 	var user *rbac.User
 	if s.rbacAccessCtrl != nil {
 		var err error

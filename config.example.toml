@@ -78,6 +78,17 @@ MAX_ACCESS_LOG_ROWS = 0                          # 0 = no FIFO cap
 ORG_ADMIN_VIEW_USER_TXS = false
 
 # -----------------------------------------------------------------------------
+# Auto-KYC provisioning policy (RD-1131)
+# -----------------------------------------------------------------------------
+# When true, a NEWLY provisioned identity of that class is created already
+# KYC-verified, skipping the manual KYC gate. Default false everywhere.
+# RELAXES A COMPLIANCE CONTROL — enable only with Compliance/Legal sign-off.
+# Existing users are never affected (KYC stays admin-managed once a row exists).
+AUTO_KYC_PRIVADO = false                         # Privado ID (incl. OAuth redirect)
+AUTO_KYC_AZURE_USER = false                      # Azure AD interactive SSO users
+AUTO_KYC_AZURE_SERVICE_PRINCIPAL = false         # Azure AD M2M service principals
+
+# -----------------------------------------------------------------------------
 # Upstream RPC API keys
 # -----------------------------------------------------------------------------
 RPC_API_KEY_HEADER = "Authorization"

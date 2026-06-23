@@ -196,3 +196,43 @@ COMPLIANCE_DEFAULT_MODE = "monitor"
 		t.Errorf("ComplianceDefaultMode = %q, want enforce (env must override the file)", cfg.ComplianceDefaultMode)
 	}
 }
+
+// TestLoad_AutoKYC covers the RD-1131 per-identity-class auto-KYC config knobs:
+// off by default, independently settable per class, and (via RD-1130) sourced
+// from the config file as well as the environment.
+func TestLoad_AutoKYC(t *testing.T) {
+	resetFileConfig(t)
+
+	t.Run("defaults to false for every class", func(t *testing.T) {
+		cfg := Load()
+		if cfg.AutoKYCPrivado || cfg.AutoKYCAzureUser || cfg.AutoKYCAzureServicePrincipal {
+			t.Errorf("auto-KYC must default to false; got privado=%v azure_user=%v sp=%v",
+				cfg.AutoKYCPrivado, cfg.AutoKYCAzureUser, cfg.AutoKYCAzureServicePrincipal)
+		}
+	})
+
+	t.Run("enabled per class via env, independently", func(t *testing.T) {
+		t.Setenv("AUTO_KYC_PRIVADO", "true")
+		t.Setenv("AUTO_KYC_AZURE_SERVICE_PRINCIPAL", "true")
+		// AUTO_KYC_AZURE_USER intentionally left unset — must stay false.
+		cfg := Load()
+		if !cfg.AutoKYCPrivado {
+			t.Error("AUTO_KYC_PRIVADO=true should enable AutoKYCPrivado")
+		}
+		if !cfg.AutoKYCAzureServicePrincipal {
+			t.Error("AUTO_KYC_AZURE_SERVICE_PRINCIPAL=true should enable AutoKYCAzureServicePrincipal")
+		}
+		if cfg.AutoKYCAzureUser {
+			t.Error("AutoKYCAzureUser must stay false when its env var is unset")
+		}
+	})
+
+	t.Run("settable from the config file when env is unset", func(t *testing.T) {
+		path := writeConfigFile(t, "version = 1\nAUTO_KYC_AZURE_USER = true\n")
+		t.Setenv("CONFIG_FILE", path)
+		cfg := Load()
+		if !cfg.AutoKYCAzureUser {
+			t.Error("AUTO_KYC_AZURE_USER=true in the config file should enable AutoKYCAzureUser")
+		}
+	})
+}
