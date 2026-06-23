@@ -547,7 +547,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	}
 
 	// Initialize enhanced audit: hash chain, SIEM forwarder, retention cleaner
-	hashChainSeed, err := database.GetLatestAccessLogHash(context.Background())
+	hashChainSeed, err := database.GetLatestAccessLogHashForChain(context.Background(), cfg.AuditChainName)
 	if err != nil {
 		slog.Warn("failed to seed hash chain from DB, starting fresh", "error", err)
 	}
@@ -618,7 +618,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 				slog.Error("audit sealer: corrupt buffered record skipped", "seq", seq, "error", err)
 				return nil
 			}
-			hash, err := database.SealBufferedAccessLog(ctx, hashChain, rec, seq)
+			hash, err := database.SealBufferedAccessLog(ctx, hashChain, rec, seq, cfg.AuditChainName)
 			if err != nil {
 				return err
 			}
@@ -655,7 +655,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 			return nil
 		}
 		highWater := func(ctx context.Context) (uint64, error) {
-			return database.GetMaxAccessLogBufferSeq(ctx)
+			return database.GetMaxAccessLogBufferSeq(ctx, cfg.AuditChainName)
 		}
 		s.auditSealer = sealer.New(auditBuf, sealFn, highWater, sealer.Config{})
 		sealerCtx, sealerCancel := context.WithCancel(context.Background())
@@ -678,7 +678,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		adapter := checkpointAdapter{db: database}
 		checkpointReader = adapter
 		s.auditCheckpointWorker = audit.NewCheckpointWorker(adapter, checkpointSigner,
-			[]audit.ChainName{audit.ChainAccessLogs}, cfg.AuditCheckpointInterval)
+			[]audit.ChainName{audit.ChainName(cfg.AuditChainName)}, cfg.AuditCheckpointInterval)
 		ckptCtx, ckptCancel := context.WithCancel(context.Background())
 		s.auditCheckpointCancel = ckptCancel
 		go s.auditCheckpointWorker.Run(ckptCtx)

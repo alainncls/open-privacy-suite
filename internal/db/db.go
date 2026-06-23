@@ -690,9 +690,10 @@ type AccessLogRecord struct {
 // GetMaxAccessLogBufferSeq returns the highest buffer_seq already sealed into
 // access_logs (0 if none) — the sealer's crash-safe resume high-water
 // (RD-1112). Entries at or below it are already durably sealed.
-func (d *DB) GetMaxAccessLogBufferSeq(ctx context.Context) (uint64, error) {
+func (d *DB) GetMaxAccessLogBufferSeq(ctx context.Context, chainName string) (uint64, error) {
 	var seq sql.NullInt64
-	if err := d.conn.QueryRowContext(ctx, `SELECT MAX(buffer_seq) FROM access_logs`).Scan(&seq); err != nil {
+	if err := d.conn.QueryRowContext(ctx,
+		`SELECT MAX(buffer_seq) FROM access_logs WHERE chain_name = $1`, chainName).Scan(&seq); err != nil {
 		return 0, fmt.Errorf("max access_logs buffer_seq: %w", err)
 	}
 	if !seq.Valid || seq.Int64 < 0 {
@@ -708,7 +709,7 @@ func (d *DB) GetMaxAccessLogBufferSeq(ctx context.Context) (uint64, error) {
 // double-seal surfaces as a loud constraint error rather than a silent
 // duplicate; the sealer's high-water resume normally prevents that from ever
 // happening.
-func (d *DB) SealBufferedAccessLog(ctx context.Context, chain RBACAuditChain, rec AccessLogRecord, bufferSeq uint64) (string, error) {
+func (d *DB) SealBufferedAccessLog(ctx context.Context, chain RBACAuditChain, rec AccessLogRecord, bufferSeq uint64, chainName string) (string, error) {
 	if chain == nil {
 		return "", fmt.Errorf("seal access log: nil chain")
 	}
@@ -739,9 +740,9 @@ func (d *DB) SealBufferedAccessLog(ctx context.Context, chain RBACAuditChain, re
 		write := func(hash string) error {
 			res, execErr := d.conn.ExecContext(ctx,
 				`INSERT INTO access_logs
-					(id, external_id, method, status_code, ip_address, correlation_id, request_params, response_status, hash_format_version, created_at, entry_hash, buffer_seq)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 2, $9, $10, $11)`,
-				id, rec.ExternalID, rec.Method, rec.StatusCode, rec.IPAddress, corrID, rec.Params, rec.ResponseStatus, createdAt, hash, int64(bufferSeq),
+					(id, external_id, method, status_code, ip_address, correlation_id, request_params, response_status, hash_format_version, created_at, entry_hash, buffer_seq, chain_name)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 2, $9, $10, $11, $12)`,
+				id, rec.ExternalID, rec.Method, rec.StatusCode, rec.IPAddress, corrID, rec.Params, rec.ResponseStatus, createdAt, hash, int64(bufferSeq), chainName,
 			)
 			if execErr != nil {
 				return fmt.Errorf("insert access_logs (seal): %w", execErr)
@@ -869,6 +870,33 @@ func (d *DB) GetLatestAccessLogHash(ctx context.Context) (string, error) {
 	}
 	// Fallback: anchor table preserves the seed across pruning cuts.
 	anchor, err := d.GetAuditChainAnchor(ctx, ChainNameAccessLogs)
+	if err != nil {
+		return "", err
+	}
+	if anchor != nil {
+		return anchor.LastPrunedEntryHash, nil
+	}
+	return "", nil
+}
+
+// GetLatestAccessLogHashForChain is GetLatestAccessLogHash scoped to one
+// chain_name — the seed a per-instance sealer resumes from on restart, so it
+// continues ITS chain rather than linking to whichever instance wrote the
+// global tail (RD-1112 #8, prevents the multi-writer fork). For the default
+// chain_name ('access_logs') this is equivalent to the global query.
+func (d *DB) GetLatestAccessLogHashForChain(ctx context.Context, chainName string) (string, error) {
+	var hash sql.NullString
+	err := d.conn.QueryRowContext(ctx,
+		`SELECT entry_hash FROM access_logs WHERE chain_name = $1 AND entry_hash IS NOT NULL ORDER BY id DESC LIMIT 1`,
+		chainName,
+	).Scan(&hash)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("get latest access log hash for chain %q: %w", chainName, err)
+	}
+	if hash.Valid && hash.String != "" {
+		return hash.String, nil
+	}
+	anchor, err := d.GetAuditChainAnchor(ctx, chainName)
 	if err != nil {
 		return "", err
 	}

@@ -242,7 +242,12 @@ type Config struct {
 	// DB-writing identity can also forge is decorative). Empty = disabled.
 	AuditCheckpointKey      string
 	AuditCheckpointInterval time.Duration
-	ExplorerDatabaseURL     string
+	// AuditChainName is this instance's audit chain partition (RD-1112 #8).
+	// Default 'access_logs' (one global chain). For multi-instance, set a
+	// per-instance value (e.g. hostname / pod name) so each instance is the
+	// SOLE writer of its own chain — preventing the multi-writer chain fork.
+	AuditChainName      string
+	ExplorerDatabaseURL string
 	// IndexerURL, when non-empty, enables the gRPC chain-indexer backend for
 	// explorer reads. Methods not yet ported to gRPC fall back to direct
 	// SQL on the explorer postgres. Leave empty to use SQL exclusively.
@@ -637,6 +642,7 @@ func Load() *Config {
 		AuditBufferDir:                      getEnv("AUDIT_BUFFER_DIR", ""),
 		AuditCheckpointKey:                  getEnv("AUDIT_CHECKPOINT_KEY", ""),
 		AuditCheckpointInterval:             parseDurationEnv("AUDIT_CHECKPOINT_INTERVAL", time.Minute),
+		AuditChainName:                      getEnv("AUDIT_CHAIN_NAME", "access_logs"),
 		PrivadoRPCURL:                       getEnv("PRIVADO_RPC_URL", "https://rpc-mainnet.privado.id"),
 		IPFSGateway:                         getEnv("IPFS_GATEWAY", "https://ipfs-proxy-cache.privado.id"), // IPFS gateway for schema resolution
 		JWTSecret:                           getEnv("JWT_SECRET", ""),                                      // If empty, will be auto-generated (dev only)
