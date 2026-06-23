@@ -375,6 +375,13 @@ type Config struct {
 }
 
 func Load() *Config {
+	// Load the optional structured config file (CONFIG_FILE) before reading any
+	// setting, so its values are available as a fallback layer to every getEnv
+	// call below. A bad/unsupported file is recorded and surfaced by Validate()
+	// so startup fails fast rather than silently using environment defaults.
+	// No file configured => pure-environment mode (backwards compatible). (RD-1130)
+	fileConfigErr = loadConfigFile()
+
 	env := getEnv("ENVIRONMENT", "development")
 	// RequireProofOfHumanity is opt-in in every environment. Admin must explicitly
 	// set REQUIRE_PROOF_OF_HUMANITY=true AND fill the Path B config (issuer DID,
@@ -757,6 +764,12 @@ func (c *Config) AzureADEnabled() bool {
 // When RequireProofOfHumanity is enabled, Path B configuration is validated
 // regardless of environment — misconfiguring Path B breaks login for everyone.
 func (c *Config) Validate() error {
+	// A configured-but-unreadable CONFIG_FILE is a fatal misconfiguration: the
+	// operator intended to use it, so fail fast instead of silently ignoring it.
+	if fileConfigErr != nil {
+		return fileConfigErr
+	}
+
 	if c.RequireProofOfHumanity {
 		if err := c.validateProofOfHumanity(); err != nil {
 			return err
@@ -876,6 +889,14 @@ func isPrivateOrLocalhost(hostname string) bool {
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
+	}
+	// Fall back to the optional config file (CONFIG_FILE) before the built-in
+	// default. Environment variables always win (checked first above), so file
+	// values form a base layer the environment can override. (RD-1130)
+	if fileConfig != nil {
+		if value, ok := fileConfig[key]; ok && value != "" {
+			return value
+		}
 	}
 	return defaultValue
 }

@@ -1,0 +1,162 @@
+package config
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// writeConfigFile writes content to a temp TOML file and returns its path.
+func writeConfigFile(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write temp config: %v", err)
+	}
+	return path
+}
+
+// resetFileConfig clears the package-level config-file state after the test so
+// cases don't leak into each other or into other config tests that call Load/
+// Validate.
+func resetFileConfig(t *testing.T) {
+	t.Helper()
+	t.Cleanup(func() {
+		fileConfig = nil
+		fileConfigErr = nil
+	})
+}
+
+func TestLoadConfigFile_NoFileIsPureEnv(t *testing.T) {
+	resetFileConfig(t)
+	t.Setenv("CONFIG_FILE", "") // unset/empty => pure-environment mode
+	if err := loadConfigFile(); err != nil {
+		t.Fatalf("expected nil error with no CONFIG_FILE, got %v", err)
+	}
+	if fileConfig != nil {
+		t.Fatalf("expected nil fileConfig, got %v", fileConfig)
+	}
+	// getEnv must behave exactly as before: env, then default.
+	if got := getEnv("RD1130_UNSET_KEY", "fallback"); got != "fallback" {
+		t.Errorf("getEnv fallback = %q, want fallback", got)
+	}
+}
+
+func TestLoadConfigFile_PrecedenceAndCoercion(t *testing.T) {
+	resetFileConfig(t)
+	path := writeConfigFile(t, `
+version = 1
+RD1130_STRING = "from-file"
+RD1130_BOOL = true
+RD1130_INT = 42
+RD1130_FLOAT = 1.5
+RD1130_OVERRIDDEN = "file-value"
+`)
+	t.Setenv("CONFIG_FILE", path)
+	t.Setenv("RD1130_OVERRIDDEN", "env-value") // env must win over the file
+
+	if err := loadConfigFile(); err != nil {
+		t.Fatalf("loadConfigFile: %v", err)
+	}
+
+	tests := []struct {
+		key, def, want string
+	}{
+		{"RD1130_STRING", "dflt", "from-file"},     // file used (env unset)
+		{"RD1130_BOOL", "dflt", "true"},            // bool coerced to string
+		{"RD1130_INT", "dflt", "42"},               // integer coerced
+		{"RD1130_FLOAT", "dflt", "1.5"},            // float coerced
+		{"RD1130_OVERRIDDEN", "dflt", "env-value"}, // env > file
+		{"RD1130_ABSENT", "dflt", "dflt"},          // neither => default
+	}
+	for _, tc := range tests {
+		if got := getEnv(tc.key, tc.def); got != tc.want {
+			t.Errorf("getEnv(%q, %q) = %q, want %q", tc.key, tc.def, got, tc.want)
+		}
+	}
+}
+
+func TestLoadConfigFile_Errors(t *testing.T) {
+	cases := []struct {
+		name, content string
+	}{
+		{"missing version", `FOO = "bar"`},
+		{"unsupported version", "version = 2\nFOO = \"bar\"\n"},
+		{"version not an integer", "version = \"1\"\nFOO = \"bar\"\n"},
+		{"unparseable toml", "this is = = not [ valid"},
+		{"nested table unsupported", "version = 1\n[section]\nKEY = \"v\"\n"},
+		{"array value unsupported", "version = 1\nKEYS = [\"a\", \"b\"]\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resetFileConfig(t)
+			path := writeConfigFile(t, tc.content)
+			t.Setenv("CONFIG_FILE", path)
+			if err := loadConfigFile(); err == nil {
+				t.Fatalf("expected error, got nil (fileConfig=%v)", fileConfig)
+			}
+			// On any error the file layer must be inert (pure-env fallback).
+			if fileConfig != nil {
+				t.Errorf("expected fileConfig nil on error, got %v", fileConfig)
+			}
+		})
+	}
+}
+
+func TestLoadConfigFile_MissingFilePathErrors(t *testing.T) {
+	resetFileConfig(t)
+	t.Setenv("CONFIG_FILE", filepath.Join(t.TempDir(), "does-not-exist.toml"))
+	if err := loadConfigFile(); err == nil {
+		t.Fatal("expected error for missing file path, got nil")
+	}
+}
+
+func TestLoadConfigFile_SecretKeyRejected(t *testing.T) {
+	resetFileConfig(t)
+	// Secrets must never be sourced from the file — the proxy refuses to load a
+	// file containing one, naming the offending key, and stays in pure-env mode.
+	path := writeConfigFile(t, "version = 1\nBASE_URL = \"https://ok\"\nADMIN_API_TOKEN = \"nope\"\n")
+	t.Setenv("CONFIG_FILE", path)
+	err := loadConfigFile()
+	if err == nil {
+		t.Fatal("expected rejection when a secret key is in the config file, got nil")
+	}
+	if !strings.Contains(err.Error(), "ADMIN_API_TOKEN") {
+		t.Errorf("error should name the offending secret key, got: %v", err)
+	}
+	if fileConfig != nil {
+		t.Errorf("expected fileConfig nil when the file is rejected, got %v", fileConfig)
+	}
+}
+
+func TestValidate_SurfacesConfigFileError(t *testing.T) {
+	resetFileConfig(t)
+	// An unsupported version must make startup fail via Validate, even in
+	// development mode (where Validate otherwise short-circuits to nil).
+	path := writeConfigFile(t, "version = 99\n")
+	t.Setenv("CONFIG_FILE", path)
+	cfg := Load()
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected Validate to surface the config-file error, got nil")
+	}
+}
+
+func TestLoad_ConfigFileFeedsConfig(t *testing.T) {
+	resetFileConfig(t)
+	// End-to-end: a value present only in the file lands in the built Config,
+	// and an env var of the same name overrides it.
+	path := writeConfigFile(t, "version = 1\nBASE_URL = \"https://from-file.example\"\n")
+	t.Setenv("CONFIG_FILE", path)
+
+	cfg := Load()
+	if cfg.BaseURL != "https://from-file.example" {
+		t.Errorf("BaseURL from file = %q, want https://from-file.example", cfg.BaseURL)
+	}
+
+	t.Setenv("BASE_URL", "https://from-env.example")
+	cfg = Load()
+	if cfg.BaseURL != "https://from-env.example" {
+		t.Errorf("BaseURL with env override = %q, want https://from-env.example", cfg.BaseURL)
+	}
+}
