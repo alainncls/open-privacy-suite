@@ -674,6 +674,92 @@ func (d *DB) LogAccessChained(
 	return outID, outCreatedAt, hash, nil
 }
 
+// AccessLogRecord is the buffered form of an access-log entry (RD-1112). The
+// hot path serializes this into the durable audit buffer and returns; the
+// sealer deserializes it and seals it into the chain via SealBufferedAccessLog.
+type AccessLogRecord struct {
+	ExternalID     string `json:"e"`
+	Method         string `json:"m"`
+	StatusCode     int    `json:"s"`
+	IPAddress      string `json:"ip,omitempty"`
+	CorrelationID  string `json:"c,omitempty"`
+	Params         []byte `json:"p,omitempty"`
+	ResponseStatus *int   `json:"rs,omitempty"`
+}
+
+// GetMaxAccessLogBufferSeq returns the highest buffer_seq already sealed into
+// access_logs (0 if none) — the sealer's crash-safe resume high-water
+// (RD-1112). Entries at or below it are already durably sealed.
+func (d *DB) GetMaxAccessLogBufferSeq(ctx context.Context) (uint64, error) {
+	var seq sql.NullInt64
+	if err := d.conn.QueryRowContext(ctx, `SELECT MAX(buffer_seq) FROM access_logs`).Scan(&seq); err != nil {
+		return 0, fmt.Errorf("max access_logs buffer_seq: %w", err)
+	}
+	if !seq.Valid || seq.Int64 < 0 {
+		return 0, nil
+	}
+	return uint64(seq.Int64), nil
+}
+
+// SealBufferedAccessLog seals one buffered access-log record into the chain,
+// tagged with its buffer sequence. It mirrors LogAccessChained's canonical
+// content exactly (buffer_seq is NOT part of the hashed content), so the
+// verifier and existing rows are unaffected. buffer_seq is UNIQUE, so a
+// double-seal surfaces as a loud constraint error rather than a silent
+// duplicate; the sealer's high-water resume normally prevents that from ever
+// happening.
+func (d *DB) SealBufferedAccessLog(ctx context.Context, chain RBACAuditChain, rec AccessLogRecord, bufferSeq uint64) (string, error) {
+	if chain == nil {
+		return "", fmt.Errorf("seal access log: nil chain")
+	}
+
+	var corrID *string
+	if rec.CorrelationID != "" {
+		corrID = &rec.CorrelationID
+	}
+	respStatus := rec.StatusCode
+	if rec.ResponseStatus != nil {
+		respStatus = *rec.ResponseStatus
+	}
+
+	hash, err := chain.Append(func(prev string) (string, func(string) error, error) {
+		var id int64
+		if scanErr := d.conn.QueryRowContext(ctx,
+			`SELECT nextval('access_logs_id_seq')`,
+		).Scan(&id); scanErr != nil {
+			return "", nil, fmt.Errorf("reserve access_logs id: %w", scanErr)
+		}
+		createdAt := time.Now().UTC().Truncate(time.Microsecond)
+		paramsDigest := ""
+		if len(rec.Params) > 0 {
+			paramsDigest = string(rec.Params)
+		}
+		content := AccessLogChainContent(id, rec.ExternalID, rec.Method, rec.IPAddress, rec.StatusCode, respStatus, createdAt, rec.CorrelationID, paramsDigest)
+
+		write := func(hash string) error {
+			res, execErr := d.conn.ExecContext(ctx,
+				`INSERT INTO access_logs
+					(id, external_id, method, status_code, ip_address, correlation_id, request_params, response_status, hash_format_version, created_at, entry_hash, buffer_seq)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 2, $9, $10, $11)`,
+				id, rec.ExternalID, rec.Method, rec.StatusCode, rec.IPAddress, corrID, rec.Params, rec.ResponseStatus, createdAt, hash, int64(bufferSeq),
+			)
+			if execErr != nil {
+				return fmt.Errorf("insert access_logs (seal): %w", execErr)
+			}
+			if affected, _ := res.RowsAffected(); affected != 1 {
+				return fmt.Errorf("insert access_logs (seal): expected 1 row, got %d", affected)
+			}
+			return nil
+		}
+		_ = prev
+		return content, write, nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return hash, nil
+}
+
 // GetLatestRBACAuditLogHash returns the seed for the rbac_audit_log hash
 // chain (RD-858). Resolution order mirrors GetLatestAccessLogHash:
 //  1. The entry_hash of the most recent surviving rbac_audit_log row.

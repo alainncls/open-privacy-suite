@@ -104,12 +104,20 @@ func (s *Sealer) Tick(ctx context.Context) (int, error) {
 		sealed++
 	}
 
-	if lastSealed > 0 {
-		// Buffer cleanup only. Safe to lag or fail: the Postgres high-water,
-		// not buffer membership, is the source of truth for what's sealed.
-		if err := s.buf.DeleteThrough(lastSealed); err != nil {
+	// Clean up the buffer through the durable high-water OR what we just sealed,
+	// whichever is greater. Deleting through hw reclaims any orphans left by a
+	// prior crash between the chain commit and the buffer delete (those entries
+	// are already in Postgres and skipped by Drain, so they'd otherwise leak).
+	// Buffer cleanup is safe to lag or fail: the Postgres high-water, not buffer
+	// membership, is the source of truth for what's sealed.
+	cleanThrough := hw
+	if lastSealed > cleanThrough {
+		cleanThrough = lastSealed
+	}
+	if cleanThrough > 0 {
+		if err := s.buf.DeleteThrough(cleanThrough); err != nil {
 			slog.Warn("audit buffer delete-through failed (not a loss; retried next tick)",
-				"through", lastSealed, "error", err)
+				"through", cleanThrough, "error", err)
 		}
 	}
 	return sealed, nil
