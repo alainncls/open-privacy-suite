@@ -13,18 +13,19 @@
 // resumes from the last persisted sequence — nothing buffered is lost across a
 // restart of the proxy or the sealer.
 //
-// Ordering & gap-freedom: entries are keyed by a per-buffer monotonic uint64
-// sequence (big-endian, so byte order == numeric order). The sequence advances
-// only on a successful, durable write, so persisted sequences are contiguous
-// (gap-free) — the property the sealer's per-chain roll-up and the verifier's
-// gap check depend on (security review #1). Ordering is by this sequence, never
-// wall-clock, so a skewed host clock cannot reorder the chain (review #8).
+// Ordering: entries are keyed by a per-buffer monotonic uint64 sequence
+// (big-endian, so byte order == numeric order), allocated atomically. A failed
+// write leaves an unused sequence number (a harmless hole) — the sealer drains
+// the keys that actually exist, in order. Ordering is by this sequence, never
+// wall-clock, so a skewed host clock cannot reorder the chain. (The verifier's
+// gap/count check is on the SEALED Postgres chain via signed checkpoints, not
+// on this internal buffer sequence.)
 package buffer
 
 import (
 	"encoding/binary"
 	"fmt"
-	"sync"
+	"sync/atomic"
 
 	"github.com/cockroachdb/pebble"
 )
@@ -39,8 +40,7 @@ const (
 // Buffer is a durable, ordered, append-only staging buffer for audit entries.
 type Buffer struct {
 	db  *pebble.DB
-	mu  sync.Mutex // serializes sequence allocation + append
-	seq uint64     // last durably-allocated sequence (0 = empty)
+	seq atomic.Uint64 // last allocated sequence (0 = empty); monotonic
 }
 
 // Entry is a buffered audit record paired with its sequence number.
@@ -87,7 +87,7 @@ func (b *Buffer) recoverSeq() error {
 	}
 	defer it.Close()
 	if it.Last() && validEntryKey(it.Key()) {
-		b.seq = seqFromKey(it.Key())
+		b.seq.Store(seqFromKey(it.Key()))
 	}
 	return it.Error()
 }
@@ -96,14 +96,19 @@ func (b *Buffer) recoverSeq() error {
 // fsync'd before returning, so the entry survives a crash. The sequence
 // advances only on success, keeping persisted sequences contiguous.
 func (b *Buffer) Append(data []byte) (uint64, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	next := b.seq + 1
-	if err := b.db.Set(entryKey(next), data, pebble.Sync); err != nil {
+	// Atomic sequence allocation with NO lock held across the write, so
+	// concurrent appends are not serialized — this lets Pebble's WAL
+	// group-commit amortize the fsync across simultaneous writers. (A
+	// per-append mutex defeats group commit and collapses throughput to one
+	// F_FULLFSYNC per record — measured ~5x slower than the sync PG path it
+	// was meant to beat; RD-1112.) Pebble keys are sequence-ordered regardless
+	// of write order. A failed Set just leaves an unused sequence number,
+	// harmless: the sealer drains the keys that actually exist, in order.
+	seq := b.seq.Add(1)
+	if err := b.db.Set(entryKey(seq), data, pebble.Sync); err != nil {
 		return 0, fmt.Errorf("audit buffer append: %w", err)
 	}
-	b.seq = next
-	return next, nil
+	return seq, nil
 }
 
 // Drain returns up to max buffered entries in ascending sequence order, starting
