@@ -278,12 +278,26 @@ export function fns(...selectors: string[]): FunctionRule[] {
 // === API Client ===
 
 export class RBACApiClient {
-  private adminHeaders = {
-    'Content-Type': 'application/json',
-    'X-Admin-Token': ADMIN_TOKEN,
-  };
+  // RD-1107: when authToken is set, calls authenticate as that org-admin
+  // (Authorization: Bearer) instead of the super-admin token — the super-admin
+  // token can no longer perform per-org tenant management. Bootstrap/global
+  // operations keep using a super-admin client (authToken undefined).
+  constructor(
+    private request: APIRequestContext,
+    private authToken?: string,
+  ) {}
 
-  constructor(private request: APIRequestContext) {}
+  // Auth headers: org-admin JWT when set, else the super-admin token.
+  private get adminHeaders(): Record<string, string> {
+    return this.authToken
+      ? { 'Content-Type': 'application/json', Authorization: `Bearer ${this.authToken}` }
+      : { 'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN };
+  }
+
+  /** Returns a clone of this client that authenticates as the given org-admin JWT. */
+  asOrgAdmin(token: string): RBACApiClient {
+    return new RBACApiClient(this.request, token);
+  }
 
   // Helper: GET with admin auth headers
   private get(url: string) {

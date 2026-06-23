@@ -91,6 +91,34 @@ func putJSON(t *testing.T, router http.Handler, url string, body map[string]any)
 	return w
 }
 
+// putJSONAs is putJSON but as a tier-2 org admin (Authorization: Bearer)
+// rather than the super-admin token — used where RD-1107 reserves the
+// regular-group mutation to the org admin (super-admin token gets 403).
+func putJSONAs(t *testing.T, router http.Handler, url, bearer string, body map[string]any) *httptest.ResponseRecorder {
+	t.Helper()
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPut, url, bytes.NewReader(bodyBytes))
+	req.Header.Set("Authorization", "Bearer "+bearer)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	return w
+}
+
+// createNormalGroupInOrg adds a plain (non-admin) group to an existing org.
+func createNormalGroupInOrg(t *testing.T, srv *Server, orgID string) string {
+	t.Helper()
+	group := &rbac.Group{
+		ID:    uuid.New().String(),
+		OrgID: orgID,
+		Slug:  "normal-" + uuid.New().String()[:8],
+		Name:  "Normal",
+		Path:  "normal",
+	}
+	require.NoError(t, srv.db.CreateGroup(t.Context(), group))
+	return group.ID
+}
+
 // ── Gap 2: is_org_admin XOR is_org_readonly_admin ──────────────────────────────
 
 func TestOrgAdminInvariant_CreateRejectsBothAdminFlags(t *testing.T) {
@@ -136,11 +164,15 @@ func TestOrgAdminInvariant_UpdateRejectsResultingBothAdminFlags(t *testing.T) {
 
 func TestOrgAdminInvariant_UpdateReadonlyOnNormalGroupStillSucceeds(t *testing.T) {
 	// Guard against over-broad enforcement: a normal group (is_org_admin=false)
-	// can still be marked read-only admin.
+	// can still be marked read-only admin. Run as the tier-2 org admin — RD-1107
+	// reserves regular-group mutation to the org admin (super-admin token → 403).
 	srv, router := setupTieredAdminTestServer(t, "secret")
-	orgID, groupID := createOrgWithNormalGroup(t, srv)
+	userDID, orgID, _ := createOrgAndAdminUser(t, srv)
+	groupID := createNormalGroupInOrg(t, srv, orgID)
+	token, err := srv.jwtService.IssueAccessToken(userDID, true)
+	require.NoError(t, err)
 
-	w := putJSON(t, router, "/api/v1/admin/orgs/"+orgID+"/groups/"+groupID, map[string]any{
+	w := putJSONAs(t, router, "/api/v1/admin/orgs/"+orgID+"/groups/"+groupID, token, map[string]any{
 		"is_org_readonly_admin": true,
 	})
 
@@ -210,10 +242,14 @@ func TestOrgAdminInvariant_SetAccessAllowsDeployMethodWithoutStoredClaims(t *tes
 func TestOrgAdminInvariant_SetAccessOnNormalGroupStillValidatesMethodClaims(t *testing.T) {
 	// The carve-out above must NOT disable the validator globally: a normal group
 	// listing a deploy-tier method without the deploy claim is still rejected.
+	// Run as the tier-2 org admin — RD-1107 reserves this to the org admin.
 	srv, router := setupTieredAdminTestServer(t, "secret")
-	orgID, groupID := createOrgWithNormalGroup(t, srv)
+	userDID, orgID, _ := createOrgAndAdminUser(t, srv)
+	groupID := createNormalGroupInOrg(t, srv, orgID)
+	token, err := srv.jwtService.IssueAccessToken(userDID, true)
+	require.NoError(t, err)
 
-	w := putJSON(t, router, "/api/v1/admin/orgs/"+orgID+"/groups/"+groupID+"/access", map[string]any{
+	w := putJSONAs(t, router, "/api/v1/admin/orgs/"+orgID+"/groups/"+groupID+"/access", token, map[string]any{
 		"allowed_methods": []string{"debug_traceTransaction"},
 		"claims":          []string{},
 	})

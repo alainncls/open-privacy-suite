@@ -51,13 +51,18 @@ export class TestContext {
  */
 export class RBACTestContext {
   readonly testId: string;
-  readonly rbac: RBACApiClient;
   readonly fixture: RBACTestFixture;
 
   constructor(request: APIRequestContext) {
     this.fixture = new RBACTestFixture(request);
     this.testId = this.fixture.testId;
-    this.rbac = this.fixture.rbac;
+  }
+
+  // Live view of the fixture's client. RD-1107: the fixture swaps this from
+  // the super-admin client to an org-admin JWT on the first createOrg, so this
+  // must read through rather than capture a stale reference.
+  get rbac(): RBACApiClient {
+    return this.fixture.rbac;
   }
 
   /**

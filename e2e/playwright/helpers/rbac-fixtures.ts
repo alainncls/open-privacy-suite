@@ -22,6 +22,18 @@ async function tryGetMockAdminDID(): Promise<string | null> {
   }
 }
 
+// RD-1107 companion to tryGetMockAdminDID: the mock admin's access token, so
+// the fixture can perform per-org mutations as that org-admin (the super-admin
+// token can no longer manage per-org tenant data).
+async function tryGetMockAdminToken(): Promise<string | null> {
+  try {
+    const m = await import('./ui/auth-helpers.js');
+    return m.getCurrentMockAdminToken?.() ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Hierarchy definition for creating nested group structures.
  */
@@ -51,24 +63,58 @@ export interface CreateUserOptions {
   keepDefaultMembership?: boolean;
 }
 
+const DEFAULT_GROUP_ID = '00000000-0000-0000-0000-000000000001';
+
 /**
  * RBACTestFixture provides test data factories with automatic cleanup.
  * Each test should create its own fixture instance to ensure isolation.
+ *
+ * RD-1107: the super-admin token (X-Admin-Token) may only perform platform /
+ * bootstrap operations — create orgs, mint is_org_admin groups, and manage the
+ * system default org/group. Per-org tenant management (regular groups, group
+ * access, contracts, grants, regular memberships) is the org admin's job and
+ * must go through an org-admin JWT. This fixture therefore keeps two clients:
+ *   - `sa`   — super-admin (X-Admin-Token), for bootstrap/global ops.
+ *   - `rbac` — org-admin (Bearer JWT) once an org exists, for per-org ops.
+ * The JWT is the mock admin set up by mockLoginViaAPI; createOrg makes that
+ * user is_org_admin in every org it creates, so one JWT works across them.
  */
 export class RBACTestFixture {
   readonly testId: string;
-  readonly rbac: RBACApiClient;
+  /** Per-org client used by specs for per-org mutations (JWT once an org exists). */
+  rbac: RBACApiClient;
+  /** Super-admin client for bootstrap/global ops (org + is_org_admin group + default org). */
+  private sa: RBACApiClient;
+  private request: APIRequestContext;
+  private orgAdminToken: string | null = null;
 
-  // Tracked resources for cleanup
+  // Tracked resources for cleanup. viaSuper marks resources whose deletion
+  // must use the super-admin client (is_org_admin groups / their memberships /
+  // orgs); the rest are deleted as the org admin (JWT).
   private orgs: Organization[] = [];
-  private groups: { orgId: string; group: Group }[] = [];
+  private groups: { orgId: string; group: Group; viaSuper: boolean }[] = [];
   private users: User[] = [];
-  private memberships: { userId: string; membership: UserMembership }[] = [];
+  private memberships: { userId: string; membership: UserMembership; viaSuper: boolean }[] = [];
   private contracts: { orgId: string; address: string }[] = [];
 
   constructor(request: APIRequestContext) {
     this.testId = randomUUID().slice(0, 8);
-    this.rbac = new RBACApiClient(request);
+    this.request = request;
+    this.sa = new RBACApiClient(request);
+    // Starts as super-admin; swapped to the org-admin JWT on first createOrg.
+    this.rbac = this.sa;
+  }
+
+  // Resolve the mock-admin JWT (once) and switch `rbac` to an org-admin client.
+  // No-op when there is no mock admin (e.g. pure-API specs) — `rbac` then stays
+  // super-admin and per-org mutations would be rejected, which no spec does.
+  private async ensureOrgAdminClient(): Promise<void> {
+    if (this.orgAdminToken) return;
+    const token = await tryGetMockAdminToken();
+    if (token) {
+      this.orgAdminToken = token;
+      this.rbac = this.sa.asOrgAdmin(token);
+    }
   }
 
   /**
@@ -107,38 +153,43 @@ export class RBACTestFixture {
    */
   async createOrg(slugBase: string, name?: string): Promise<Organization> {
     const orgSlug = this.slug(slugBase);
-    const org = await this.rbac.createOrganization({
+    // Org lifecycle is a super-admin (platform) operation.
+    const org = await this.sa.createOrganization({
       slug: orgSlug,
       name: name ?? `Test Org ${orgSlug}`,
     });
     this.orgs.push(org);
 
-    // If a UI test has logged in via mockLoginViaAPI, auto-grant that user
-    // tier-2 admin in this newly-created org. The admin-auth middleware in
-    // server.go gates /api/v1/admin/orgs/:org_id/* on the JWT user being
-    // is_org_admin in the requested org — a JWT admin from another org
-    // gets a 403 otherwise. This keeps the API-only tests (which use
-    // X-Admin-Token and bypass JWT scoping) untouched.
+    // If a UI test has logged in via mockLoginViaAPI, grant that user tier-2
+    // admin in this newly-created org. The admin-auth middleware gates
+    // /api/v1/admin/orgs/:org_id/* on the JWT user being is_org_admin in the
+    // requested org. Minting an is_org_admin group + adding the member are
+    // super-admin operations (RD-1107). This is also what lets `rbac` (the
+    // org-admin JWT) perform the per-org mutations below.
     try {
       const adminDid = await tryGetMockAdminDID();
       if (adminDid) {
-        const users = await this.rbac.listUsers(1000);
+        const users = await this.sa.listUsers(1000);
         const u = users.find((x) => x.external_id === adminDid);
         if (u) {
-          const adminGroup = await this.rbac.createGroup(org.id, {
+          const adminGroup = await this.sa.createGroup(org.id, {
             slug: this.slug('mock-admin'),
             name: 'E2E_HIDDEN_MOCK_ADMIN',
             is_org_admin: true,
           });
-          this.groups.push({ orgId: org.id, group: adminGroup });
-          const m = await this.rbac.createMembership(u.id, { group_id: adminGroup.id });
-          this.memberships.push({ userId: u.id, membership: m });
+          this.groups.push({ orgId: org.id, group: adminGroup, viaSuper: true });
+          const m = await this.sa.createMembership(u.id, { group_id: adminGroup.id });
+          this.memberships.push({ userId: u.id, membership: m, viaSuper: true });
         }
       }
     } catch {
       // Best-effort: API-only tests don't import the UI helpers and should
       // continue to work. Failures here are non-fatal.
     }
+
+    // Now that the mock admin is is_org_admin in this org, route per-org
+    // mutations through their JWT.
+    await this.ensureOrgAdminClient();
 
     return org;
   }
@@ -148,24 +199,23 @@ export class RBACTestFixture {
    */
   async createOrgWithAdmin(slugBase: string, userDid: string, name?: string): Promise<Organization> {
     const org = await this.createOrg(slugBase, name);
-    
-    // Find user
-    const users = await this.rbac.listUsers(1000);
+
+    // Find user (global lookup → super-admin)
+    const users = await this.sa.listUsers(1000);
     const user = users.find((u) => u.external_id === userDid);
     if (!user) throw new Error(`User with DID ${userDid} not found`);
 
-    // Create admin group
+    // Create admin group + membership (minting an org admin → super-admin).
     const groupSlug = this.slug('admin');
-    const group = await this.rbac.createGroup(org.id, {
+    const group = await this.sa.createGroup(org.id, {
       slug: groupSlug,
       name: `E2E_HIDDEN_ADMIN`,
       is_org_admin: true,
     });
-    this.groups.push({ orgId: org.id, group });
+    this.groups.push({ orgId: org.id, group, viaSuper: true });
 
-    // Create membership
-    const membership = await this.rbac.createMembership(user.id, { group_id: group.id });
-    this.memberships.push({ userId: user.id, membership });
+    const membership = await this.sa.createMembership(user.id, { group_id: group.id });
+    this.memberships.push({ userId: user.id, membership, viaSuper: true });
 
     return org;
   }
@@ -173,7 +223,7 @@ export class RBACTestFixture {
   // === Group Methods ===
 
   /**
-   * Create a group and track for cleanup.
+   * Create a (regular) group and track for cleanup. Per-org → org-admin JWT.
    */
   async createGroup(orgId: string, slugBase: string, opts?: {
     name?: string;
@@ -187,7 +237,7 @@ export class RBACTestFixture {
       description: opts?.description ?? '',
       parent_id: opts?.parentId,
     });
-    this.groups.push({ orgId, group });
+    this.groups.push({ orgId, group, viaSuper: false });
     return group;
   }
 
@@ -205,7 +255,7 @@ export class RBACTestFixture {
     // auto_created is not accepted on create — set via update
     await this.rbac.updateGroup(orgId, group.id, { auto_created: true } as any);
     group.auto_created = true;
-    this.groups.push({ orgId, group });
+    this.groups.push({ orgId, group, viaSuper: false });
     return group;
   }
 
@@ -223,7 +273,7 @@ export class RBACTestFixture {
       });
       result.set(node.slug, group);
 
-      // Set access settings if provided
+      // Set access settings if provided (per-org → org-admin JWT)
       if (node.access) {
         await this.rbac.setGroupAccess(orgId, group.id, node.access);
       }
@@ -259,17 +309,18 @@ export class RBACTestFixture {
     // Authenticate to create the user via EnsureUserExists
     const token = await getJWTToken(request, userDID);
 
-    // Find the created user
-    const user = await this.rbac.findUserByExternalId(userDID);
+    // Find the created user (global lookup → super-admin)
+    const user = await this.sa.findUserByExternalId(userDID);
     if (!user) {
       throw new Error(`User not found after auth: ${userDID}`);
     }
 
     this.users.push(user);
 
-    // Update KYC and banned status if specified
+    // Update KYC and banned status if specified. KYC/ban are global user
+    // flags (not gated by RD-1107); keep on the super-admin client.
     if (opts?.kyc !== undefined || opts?.banned !== undefined) {
-      const updated = await this.rbac.updateUser(user.id, {
+      const updated = await this.sa.updateUser(user.id, {
         kyc: opts?.kyc,
         banned: opts?.banned,
       });
@@ -298,29 +349,29 @@ export class RBACTestFixture {
       banned: opts?.banned ?? false,
     });
 
-    // Remove default membership unless explicitly kept
-    // Default group ID is 00000000-0000-0000-0000-000000000001
-    const DEFAULT_GROUP_ID = '00000000-0000-0000-0000-000000000001';
+    // Remove default membership unless explicitly kept. The default group is
+    // system infrastructure in the default org — removing the membership is a
+    // super-admin op (RD-1107 exempts the default org/group).
     if (!opts?.keepDefaultMembership) {
-      const memberships = await this.rbac.listUserMemberships(user.id);
+      const memberships = await this.sa.listUserMemberships(user.id);
       for (const m of memberships) {
         if (m.membership.group_id === DEFAULT_GROUP_ID) {
-          await this.rbac.deleteMembership(user.id, m.membership.id);
+          await this.sa.deleteMembership(user.id, m.membership.id);
         }
       }
     }
 
-    // Create membership
+    // Create membership in the (regular) test group → org-admin JWT.
     const membership = await this.rbac.createMembership(user.id, {
       group_id: groupId,
     });
-    this.memberships.push({ userId: user.id, membership });
+    this.memberships.push({ userId: user.id, membership, viaSuper: false });
 
     return { user, did, token, membership };
   }
 
   /**
-   * Add an additional membership for an existing user.
+   * Add an additional membership for an existing user (regular group → JWT).
    */
   async addMembership(
     userId: string,
@@ -329,14 +380,14 @@ export class RBACTestFixture {
     const membership = await this.rbac.createMembership(userId, {
       group_id: groupId,
     });
-    this.memberships.push({ userId, membership });
+    this.memberships.push({ userId, membership, viaSuper: false });
     return membership;
   }
 
   // === Contract Methods ===
 
   /**
-   * Create a contract and track for cleanup.
+   * Create a contract and track for cleanup (per-org → org-admin JWT).
    */
   async createContract(
     orgId: string,
@@ -395,10 +446,11 @@ export class RBACTestFixture {
 
   /**
    * Clean up all tracked resources in reverse order of creation.
-   * This ensures proper deletion order (children before parents).
+   * Routing mirrors RD-1107: regular per-org resources delete as the org admin
+   * (JWT); is_org_admin groups / their memberships / orgs delete as super-admin.
    */
   async cleanup(): Promise<void> {
-    // Delete contracts first
+    // Delete contracts first (per-org → org-admin JWT)
     for (const { orgId, address } of [...this.contracts].reverse()) {
       try {
         await this.rbac.deleteContract(orgId, address);
@@ -408,9 +460,9 @@ export class RBACTestFixture {
     }
 
     // Delete memberships
-    for (const { userId, membership } of [...this.memberships].reverse()) {
+    for (const { userId, membership, viaSuper } of [...this.memberships].reverse()) {
       try {
-        await this.rbac.deleteMembership(userId, membership.id);
+        await (viaSuper ? this.sa : this.rbac).deleteMembership(userId, membership.id);
       } catch {
         // Ignore cleanup errors
       }
@@ -420,18 +472,18 @@ export class RBACTestFixture {
     // but are isolated by unique DIDs
 
     // Delete groups (children first due to reverse order)
-    for (const { orgId, group } of [...this.groups].reverse()) {
+    for (const { orgId, group, viaSuper } of [...this.groups].reverse()) {
       try {
-        await this.rbac.deleteGroup(orgId, group.id);
+        await (viaSuper ? this.sa : this.rbac).deleteGroup(orgId, group.id);
       } catch {
         // Ignore cleanup errors
       }
     }
 
-    // Delete organizations last
+    // Delete organizations last (super-admin)
     for (const org of [...this.orgs].reverse()) {
       try {
-        await this.rbac.deleteOrganization(org.id);
+        await this.sa.deleteOrganization(org.id);
       } catch {
         // Ignore cleanup errors
       }

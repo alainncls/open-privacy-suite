@@ -46,6 +46,12 @@ const (
 // per-group is_org_admin gate that deleteGroup enforces (RD-1099).
 var errBatchContainsOrgAdminGroup = errors.New("batch contains org admin group")
 
+// errBatchContainsRegularGroup is the RD-1107 super-admin counterpart to
+// errBatchContainsOrgAdminGroup: a super-admin (admin_token) batch that
+// includes any REGULAR group is per-org tenant management (the org admin's
+// job), so the whole batch is aborted and translated to a 403 outside the tx.
+var errBatchContainsRegularGroup = errors.New("batch contains regular group")
+
 // denyJWTAdminTouchOrgAdminGroup enforces the is_org_admin escalation gate on
 // the membership and group-access surfaces, mirroring the gate already on
 // group create/update/delete (errCreateOrgAdminGroupSuperOnly et al.).
@@ -153,6 +159,16 @@ func (s *Server) createGroup(c *gin.Context) {
 	// (RD-917 §2 — see PR description).
 	if c.GetString("auth_method") == "jwt_admin" && input.IsOrgAdmin {
 		c.JSON(http.StatusForbidden, gin.H{"error": errCreateOrgAdminGroupSuperOnly})
+		return
+	}
+
+	// RD-1107: the super-admin token is platform/bootstrap only. Minting
+	// is_org_admin / is_org_readonly_admin groups stays super-admin (those
+	// are the admin tier), but creating a REGULAR group is per-org tenant
+	// management — the org admin's job. Block the super-admin token here.
+	if c.GetString("auth_method") == "admin_token" && !input.IsOrgAdmin && !input.IsOrgReadonlyAdmin &&
+		orgID != rbac.DefaultOrgID {
+		c.JSON(http.StatusForbidden, gin.H{"error": errSuperAdminNoTenantMgmt})
 		return
 	}
 
@@ -320,6 +336,20 @@ func (s *Server) updateGroup(c *gin.Context) {
 		return
 	}
 
+	// RD-1107: the super-admin token manages the admin tier (org-admin /
+	// readonly-admin groups) but not regular groups. Allow when the group is
+	// already an admin group OR this update promotes it to one (minting);
+	// block a plain regular-group edit. (is_system was rejected above.)
+	if c.GetString("auth_method") == "admin_token" {
+		currentlyAdminTier := group.IsOrgAdmin || group.IsOrgReadonlyAdmin
+		promoting := (input.IsOrgAdmin != nil && *input.IsOrgAdmin) ||
+			(input.IsOrgReadonlyAdmin != nil && *input.IsOrgReadonlyAdmin)
+		if !currentlyAdminTier && !promoting {
+			c.JSON(http.StatusForbidden, gin.H{"error": errSuperAdminNoTenantMgmt})
+			return
+		}
+	}
+
 	oldValue := map[string]any{
 		"name":                  group.Name,
 		"description":           group.Description,
@@ -395,6 +425,10 @@ func (s *Server) deleteGroup(c *gin.Context) {
 	}
 	if group != nil && group.IsOrgAdmin && c.GetString("auth_method") == "jwt_admin" {
 		c.JSON(http.StatusForbidden, gin.H{"error": errDeleteOrgAdminGroupSuperOnly})
+		return
+	}
+	// RD-1107: super-admin manages admin-tier groups, not regular ones.
+	if denySuperAdminRegularGroup(c, group) {
 		return
 	}
 
@@ -493,6 +527,11 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 	// is super-admin-only — mirrors the membership and group-CRUD gates. Placed
 	// after verifyGroupBelongsToPathOrg so foreign-org probes stay opaque.
 	if denyJWTAdminTouchOrgAdminGroup(c, group) {
+		return
+	}
+	// RD-1107: reshaping a REGULAR group's access is per-org tenant management
+	// (org admin's job); super-admin keeps is_org_admin/system access (above).
+	if denySuperAdminRegularGroup(c, group) {
 		return
 	}
 
@@ -803,6 +842,18 @@ func (s *Server) batchDeleteGroups(c *gin.Context) {
 			}
 		}
 
+		// RD-1107: super-admin manages admin-tier groups only. A batch that
+		// includes any REGULAR (non-admin, non-system) group is per-org tenant
+		// management — abort the whole batch. is_org_admin/system groups are
+		// still deletable by super-admin.
+		if c.GetString("auth_method") == "admin_token" {
+			for _, g := range groups {
+				if !g.IsOrgAdmin && !g.IsOrgReadonlyAdmin && !g.IsSystem {
+					return errBatchContainsRegularGroup
+				}
+			}
+		}
+
 		// Delete each group with dependencies
 		for _, gid := range input.GroupIDs {
 			if err := tx.DeleteGroupWithDependenciesTx(ctx, gid); err != nil {
@@ -824,6 +875,11 @@ func (s *Server) batchDeleteGroups(c *gin.Context) {
 			// Tier-2 tried to batch-delete an org-admin group. Reuse the
 			// deleteGroup gate's message (this is a deletion). RD-1099.
 			c.JSON(http.StatusForbidden, gin.H{"error": errDeleteOrgAdminGroupSuperOnly})
+			return
+		}
+		if errors.Is(err, errBatchContainsRegularGroup) {
+			// Super-admin tried to batch-delete a regular group (RD-1107).
+			c.JSON(http.StatusForbidden, gin.H{"error": errSuperAdminNoTenantMgmt})
 			return
 		}
 		if strings.Contains(err.Error(), "not found") {

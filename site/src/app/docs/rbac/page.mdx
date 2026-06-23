@@ -56,7 +56,15 @@ The system uses three tiers of administrative access, each scoped to a different
 
 ### Tier 1: Super Admin
 
-Configured via the `ADMIN_API_TOKEN` environment variable. This is not a user account -- it is a shared secret for cross-org access used by scripts and initial setup. Super admins can access the admin API for any organization.
+Configured via the `ADMIN_API_TOKEN` environment variable. This is not a user account -- it is a shared secret held by the platform operator, used for **bootstrap and platform-level** operations, not day-to-day tenant management.
+
+Super admin is scoped to:
+
+- **Organization lifecycle** — create, update, and delete organizations (tenants).
+- **Minting org admins** — create `is_org_admin` / `is_org_readonly_admin` groups, set their access, and add the first members. This is how a brand-new org gets its first tier-2 admin; from there the org admin runs day-to-day onboarding themselves.
+- **Fleet / cluster-wide settings** — shared-infrastructure allowlist, base currency, Azure-tenant allowlist, global sanctions, system runtime toggles, and the system default / anonymous groups.
+
+Super admin **cannot** perform per-org tenant management — creating or editing regular groups, setting regular-group access, registering contracts, creating contract grants, or onboarding members into regular groups all return `403 Forbidden` for the `X-Admin-Token`. Those are the org admin's job (tier-2, below), so that a platform operator who is **not** a member of a tenant org cannot silently reshape that org's access. (The system default org/group are exempt — they are platform infrastructure, not a tenant.)
 
 ### Tier 2: Org Admin
 

@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import { selectors } from '../../helpers/ui/selectors';
 import { mockLoginViaAPI } from '../../helpers/ui/auth-helpers';
 import { RBACTestFixture } from '../../helpers/rbac-fixtures';
+import { getJWTToken } from '../../helpers/auth';
 
 // Minimal ERC20 ABI with Transfer and Approval events + a transfer function.
 // The backend parses this to extract event signatures for the event picker.
@@ -924,15 +925,18 @@ test.describe('Event rules — persistence and validation', () => {
     });
     const address = contract.address || contract.contract_address || '';
 
-    // Try creating a grant with invalid topic0 directly via API — should fail
+    // Try creating a grant with invalid topic0 directly via API — should fail.
+    // RD-1107: contract grants are per-org tenant management, so this must go
+    // through the org admin's JWT — the super-admin X-Admin-Token would be
+    // 403'd before the topic0 validation runs. currentDid is is_org_admin here.
     const adminUrl = process.env.ADMIN_URL || process.env.PROXY_URL || 'http://localhost:8080';
-    const adminToken = process.env.ADMIN_API_TOKEN || 'e2e-test-admin-token';
+    const orgAdminToken = await getJWTToken(request, currentDid);
     const response = await request.post(
       `${adminUrl}/api/v1/admin/orgs/${org.id}/contracts/${address}/grants`,
       {
         headers: {
           'Content-Type': 'application/json',
-          'X-Admin-Token': adminToken,
+          Authorization: `Bearer ${orgAdminToken}`,
         },
         data: {
           group_id: group.id,

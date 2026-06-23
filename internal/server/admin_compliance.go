@@ -107,6 +107,11 @@ func (s *Server) getComplianceConfig(c *gin.Context) {
 }
 
 func (s *Server) updateComplianceConfig(c *gin.Context) {
+	// RD-1107: per-org compliance management is the org admin's job; the
+	// super-admin token is platform/bootstrap only.
+	if denySuperAdminOrgScoped(c) {
+		return
+	}
 	orgID := c.Param("org_id")
 
 	var input struct {
@@ -214,6 +219,10 @@ func (s *Server) listTokenPrices(c *gin.Context) {
 }
 
 func (s *Server) upsertTokenPrice(c *gin.Context) {
+	// RD-1107: per-org compliance management is the org admin's job.
+	if denySuperAdminOrgScoped(c) {
+		return
+	}
 	orgID := c.Param("org_id")
 	tokenAddress := strings.ToLower(c.Param("token_address"))
 
@@ -352,6 +361,10 @@ func (s *Server) upsertTokenPrice(c *gin.Context) {
 }
 
 func (s *Server) deleteTokenPrice(c *gin.Context) {
+	// RD-1107: per-org compliance management is the org admin's job.
+	if denySuperAdminOrgScoped(c) {
+		return
+	}
 	orgID := c.Param("org_id")
 	tokenAddress := strings.ToLower(c.Param("token_address"))
 
@@ -428,6 +441,10 @@ func (s *Server) listSystemTokenPrices(c *gin.Context) {
 // before production deployment.
 
 func (s *Server) createTravelRuleRecord(c *gin.Context) {
+	// RD-1107: per-org compliance management is the org admin's job.
+	if denySuperAdminOrgScoped(c) {
+		return
+	}
 	orgID := c.Param("org_id")
 
 	// C3: amount_fiat is NOT accepted from input — it is computed server-side from
@@ -578,6 +595,10 @@ func (s *Server) listTravelRuleRecords(c *gin.Context) {
 }
 
 func (s *Server) deleteTravelRuleRecord(c *gin.Context) {
+	// RD-1107: per-org compliance management is the org admin's job.
+	if denySuperAdminOrgScoped(c) {
+		return
+	}
 	orgID := c.Param("org_id")
 	id := c.Param("id")
 
@@ -682,6 +703,12 @@ func (s *Server) addSanctionedAddress(c *gin.Context) {
 			return
 		}
 	}
+	// RD-1107: a PER-ORG sanction (org_id set) is the org admin's job; the
+	// super-admin token may only manage GLOBAL sanctions (org_id nil).
+	if c.GetString("auth_method") == "admin_token" && input.OrgID != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": errSuperAdminNoTenantMgmt})
+		return
+	}
 
 	sanction := &compliance.SanctionedAddress{
 		ID:      uuid.New().String(),
@@ -743,6 +770,12 @@ func (s *Server) removeSanctionedAddress(c *gin.Context) {
 			return
 		}
 	}
+	// RD-1107: removing a PER-ORG sanction (org_id set) is the org admin's job;
+	// the super-admin token may only manage GLOBAL sanctions (org_id nil).
+	if c.GetString("auth_method") == "admin_token" && existing.OrgID != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": errSuperAdminNoTenantMgmt})
+		return
+	}
 
 	if err := s.db.RemoveSanctionedAddress(c.Request.Context(), id); err != nil {
 		internalError(c, "failed to remove sanctioned address", err)
@@ -780,6 +813,10 @@ func (s *Server) listAddressThresholdOverrides(c *gin.Context) {
 }
 
 func (s *Server) upsertAddressThresholdOverride(c *gin.Context) {
+	// RD-1107: per-org compliance management is the org admin's job.
+	if denySuperAdminOrgScoped(c) {
+		return
+	}
 	orgID := c.Param("org_id")
 	address := strings.ToLower(c.Param("address"))
 
@@ -835,6 +872,10 @@ func (s *Server) upsertAddressThresholdOverride(c *gin.Context) {
 }
 
 func (s *Server) deleteAddressThresholdOverride(c *gin.Context) {
+	// RD-1107: per-org compliance management is the org admin's job.
+	if denySuperAdminOrgScoped(c) {
+		return
+	}
 	orgID := c.Param("org_id")
 	address := strings.ToLower(c.Param("address"))
 

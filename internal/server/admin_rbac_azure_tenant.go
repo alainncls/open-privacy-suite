@@ -74,6 +74,12 @@ func (s *Server) createAzureTenant(c *gin.Context) {
 			respondBadRequest(c, "default_group_id does not belong to default_org_id")
 			return
 		}
+		// RD-1107: SSO auto-provisioning must not land users in an admin-tier
+		// group — that would auto-mint org admins without explicit onboarding.
+		if group.IsOrgAdmin || group.IsOrgReadonlyAdmin {
+			respondBadRequest(c, "default_group_id must not be an org-admin or readonly-admin group")
+			return
+		}
 	}
 
 	autoProvision := true
@@ -205,6 +211,12 @@ func (s *Server) updateAzureTenant(c *gin.Context) {
 		}
 		if group.OrgID != *tenant.DefaultOrgID {
 			respondBadRequest(c, "default_group_id does not belong to default_org_id")
+			return
+		}
+		// RD-1107: SSO auto-provisioning must not land users in an admin-tier
+		// group — that would auto-mint org admins without explicit onboarding.
+		if group.IsOrgAdmin || group.IsOrgReadonlyAdmin {
+			respondBadRequest(c, "default_group_id must not be an org-admin or readonly-admin group")
 			return
 		}
 	}

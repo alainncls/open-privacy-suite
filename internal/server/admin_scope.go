@@ -5,6 +5,8 @@ import (
 	"slices"
 
 	"github.com/gin-gonic/gin"
+
+	"privacy-proxy/internal/rbac"
 )
 
 // errTargetForeignOrg is the opaque deny string used by every admin
@@ -99,4 +101,61 @@ func requireSuperAdmin(c *gin.Context) bool {
 	}
 	c.JSON(http.StatusForbidden, gin.H{"error": "super-admin required"})
 	return false
+}
+
+// errSuperAdminNoTenantMgmt is the opaque deny for RD-1107: the super-admin
+// token (X-Admin-Token) is a platform / bootstrap / fleet credential and must
+// NOT perform per-org tenant management. Per-org RBAC and compliance are the
+// org admin's job (Authorization: Bearer JWT). Super-admin keeps org lifecycle,
+// is_org_admin / system group ops (incl. minting org admins), and the global /
+// fleet endpoints (requireSuperAdmin paths).
+const errSuperAdminNoTenantMgmt = "per-org management is the org admin's job; the super-admin token is for platform/bootstrap only"
+
+// denySuperAdminOrgScoped rejects the super-admin token on a mutation of
+// org_id-scoped tenant data (contracts, grants, per-org compliance, …). It is
+// the RD-1107 counterpart to requireSuperAdmin: where requireSuperAdmin guards
+// genuinely-global mutations, this guards genuinely-per-org ones. jwt_admin
+// (tier-2 — already org-scoped by orgScopingMiddleware) and dev ("") pass
+// through. Returns true and writes the 403 when the caller must be stopped.
+//
+// Call AFTER the org-scope / foreign-org checks so a cross-tenant probe still
+// gets the opaque foreign-org error first.
+func denySuperAdminOrgScoped(c *gin.Context) bool {
+	if c.GetString("auth_method") != "admin_token" {
+		return false
+	}
+	// The default org is system infrastructure (the global landing org that
+	// every self-onboarding user lands in), not a tenant — super-admin still
+	// manages it, like is_system resources. All these routes carry :org_id.
+	if c.Param("org_id") == rbac.DefaultOrgID {
+		return false
+	}
+	c.JSON(http.StatusForbidden, gin.H{"error": errSuperAdminNoTenantMgmt})
+	return true
+}
+
+// denySuperAdminRegularGroup is the group-bound variant of
+// denySuperAdminOrgScoped: it rejects the super-admin token only when the
+// target group is a REGULAR group (not is_org_admin / is_org_readonly_admin /
+// is_system). Super-admin keeps full control of org-admin and system groups
+// (minting org admins, anonymous-group config) — the exact inverse of
+// denyJWTAdminTouchOrgAdminGroup, which reserves those same groups TO
+// super-admin. A nil group is treated as regular (fail-closed). Returns true
+// and writes the 403 when stopped; the handler must then return. Call AFTER
+// the group load + nil/404 check and the foreign-org check.
+func denySuperAdminRegularGroup(c *gin.Context, group *rbac.Group) bool {
+	if c.GetString("auth_method") != "admin_token" {
+		return false
+	}
+	// Admin-tier and system groups stay super-admin-managed: is_org_admin /
+	// is_org_readonly_admin (minting/managing org admins), is_system (e.g. the
+	// anonymous group), and the global default group — system infrastructure
+	// that predates the is_system flag. Everything else is a tenant's regular
+	// group and is the org admin's job. A nil group falls through to deny
+	// (fail-closed).
+	if group != nil && (group.IsOrgAdmin || group.IsOrgReadonlyAdmin || group.IsSystem || group.ID == rbac.DefaultGroupID) {
+		return false
+	}
+	c.JSON(http.StatusForbidden, gin.H{"error": errSuperAdminNoTenantMgmt})
+	return true
 }
