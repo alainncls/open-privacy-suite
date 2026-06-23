@@ -192,6 +192,17 @@ func (s *Server) handleAzureCallback(c *gin.Context) {
 		return
 	}
 
+	s.completeAzureLogin(c, identity, "azure_ad")
+}
+
+// completeAzureLogin runs the shared post-identity flow for both Azure AD login
+// paths — the interactive authorization-code flow (handleAzureCallback) and the
+// service-principal client-credentials flow (handleAzureServicePrincipal). It
+// enforces the tenant allowlist, auto-provisions the RBAC user, issues our
+// local access + refresh tokens, and writes the HTTP response. Both paths share
+// this so the security gates (allowlist, ban, tenant-pinning, group assignment)
+// can never drift apart. providerMetric is the recordAuthAttempt provider label.
+func (s *Server) completeAzureLogin(c *gin.Context, identity *auth.AzureIdentity, providerMetric string) {
 	// Validate tid is a valid UUID before using it for lookups
 	if _, parseErr := uuid.Parse(identity.TenantID); parseErr != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid tenant ID in token"})
@@ -327,7 +338,7 @@ func (s *Server) handleAzureCallback(c *gin.Context) {
 		return
 	}
 
-	s.recordAuthAttempt("azure_ad", "success")
+	s.recordAuthAttempt(providerMetric, "success")
 
 	c.JSON(http.StatusOK, AuthResponse{
 		AccessToken:  accessToken,
@@ -335,6 +346,48 @@ func (s *Server) handleAzureCallback(c *gin.Context) {
 		TokenType:    "Bearer",
 		ExpiresIn:    int(AccessTokenTTL.Seconds()),
 	})
+}
+
+// AzureServicePrincipalRequest is the body for
+// POST /api/v1/auth/azure/service-principal. The client obtains the Azure AD
+// access token out-of-band via the OAuth2 client-credentials grant
+// (`scope=<resource>/.default`) against its own tenant, then exchanges it here
+// for our local tokens.
+type AzureServicePrincipalRequest struct {
+	AccessToken string `json:"access_token" binding:"required"`
+}
+
+// handleAzureServicePrincipal handles POST /api/v1/auth/azure/service-principal.
+//
+// Machine-to-machine (M2M) login for Azure AD service principals (RD-1120). The
+// client authenticates non-interactively via the client-credentials grant and
+// posts the resulting Azure AD access token. We verify it (signature/JWKS,
+// expiry, audience), then run the same tenant-allowlist + provisioning +
+// token-issuance flow as the interactive path so the SP can call /rpc with our
+// standard Bearer access token.
+func (s *Server) handleAzureServicePrincipal(c *gin.Context) {
+	if s.azureAuthenticator == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Azure AD authentication not configured"})
+		return
+	}
+
+	var req AzureServicePrincipalRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request format"})
+		return
+	}
+
+	identity, err := s.azureAuthenticator.VerifyAccessToken(c.Request.Context(), req.AccessToken)
+	if err != nil {
+		s.recordAuthAttempt("azure_ad_sp", "error")
+		// Keep the verbose reason in slog only; never echo token-validation
+		// detail to the client.
+		slog.Warn("Azure AD service-principal token verification failed", "error", err)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Azure AD authentication failed"})
+		return
+	}
+
+	s.completeAzureLogin(c, identity, "azure_ad_sp")
 }
 
 // handleAuthProviders handles GET /api/v1/auth/providers.
