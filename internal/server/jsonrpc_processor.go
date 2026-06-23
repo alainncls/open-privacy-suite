@@ -137,8 +137,9 @@ type EnhancedAccessLogger interface {
 		ipAddress, correlationID string,
 		params []byte,
 		responseStatus *int,
+		orgID string,
 	) (int64, time.Time, string, error)
-	LogAccessEnhanced(ctx context.Context, externalID, method string, statusCode int, ipAddress, correlationID string, params []byte, responseStatus *int) (int64, time.Time, error)
+	LogAccessEnhanced(ctx context.Context, externalID, method string, statusCode int, ipAddress, correlationID string, params []byte, responseStatus *int, orgID string) (int64, time.Time, error)
 	UpdateAccessLogHash(ctx context.Context, id int64, hash string) error
 }
 
@@ -157,6 +158,16 @@ type ProcessRequest struct {
 	// the cache picked up before X's last mutation. Threaded through to
 	// rbac.AccessCheckRequest.BypassCache.
 	BypassPermsCache bool
+
+	// resolvedOrgID is the organization the access decision resolved against,
+	// stamped onto access-log rows for RD-1135 org-scoped reads. It is set by
+	// the processor AFTER CheckAccess (write-once) and read only by logAccess.
+	// Distinct from OrgID, which is the request-supplied org SELECTOR fed INTO
+	// CheckAccess — never mutate OrgID post-resolution (it changes the
+	// CheckAccess resolution branch on any re-check). Empty => the row is
+	// written with NULL org_id (anonymous / org-free metadata / pre-auth),
+	// visible only to super-admin.
+	resolvedOrgID string
 }
 
 // ProcessResult represents the result of processing a JSON-RPC request.
@@ -443,6 +454,7 @@ func (p *JSONRPCProcessor) logAccess(ctx context.Context, req *ProcessRequest, s
 			CorrelationID:  req.CorrelationID,
 			Params:         params,
 			ResponseStatus: rsp,
+			OrgID:          req.resolvedOrgID, // RD-1135
 		}
 		if data, mErr := json.Marshal(rec); mErr != nil {
 			slog.Error("audit record marshal failed; basic logging fallback", "error", mErr)
@@ -474,7 +486,7 @@ func (p *JSONRPCProcessor) logAccess(ctx context.Context, req *ProcessRequest, s
 			ctx,
 			p.hashChain,
 			req.UserID, req.Method, statusCode, req.ClientIP, req.CorrelationID,
-			params, respStatusPtr,
+			params, respStatusPtr, req.resolvedOrgID,
 		)
 		if err != nil {
 			// Fallback to basic logging
@@ -626,6 +638,11 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 			},
 		}
 	}
+
+	// RD-1135: stamp the resolved org onto subsequent access-log rows (RBAC
+	// denial, concurrency/rate-limit, trace denials, success). Write-once;
+	// empty stays NULL (anonymous / org-free metadata) → super-admin-only.
+	req.resolvedOrgID = result.OrgID
 
 	if !result.Allowed {
 		realStatus := http.StatusForbidden
@@ -1852,6 +1869,11 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 		}
 	}
 
+	// RD-1135: stamp the resolved org onto subsequent access-log rows (RBAC
+	// denial, concurrency/rate-limit, trace denials, success). Write-once;
+	// empty stays NULL (anonymous / org-free metadata) → super-admin-only.
+	req.resolvedOrgID = result.OrgID
+
 	if !result.Allowed {
 		realStatus := http.StatusForbidden
 		if result.AuthRequired {
@@ -2184,6 +2206,26 @@ func (p *JSONRPCProcessor) processDebugTrace(ctx context.Context, req *ProcessRe
 	if err != nil {
 		p.logAccess(ctx, req, http.StatusInternalServerError)
 		return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusInternalServerError, Message: "failed to get memberships"}}
+	}
+
+	// RD-1135: this path never calls CheckAccess (it has its own deploy-claim
+	// gate), so attribute access-log rows to the caller's org when it is
+	// unambiguous (exactly one membership-org). A multi-org tracer's rows stay
+	// NULL (super-admin-only): a replayed/mined trace can span orgs and has no
+	// single owning org to attribute to. Set before the deploy-claim check so
+	// that denial is attributed too.
+	{
+		orgSet := make(map[string]struct{})
+		for _, m := range memberships {
+			if m.Group != nil {
+				orgSet[m.Group.OrgID] = struct{}{}
+			}
+		}
+		if len(orgSet) == 1 {
+			for id := range orgSet {
+				req.resolvedOrgID = id
+			}
+		}
 	}
 
 	if !p.userHasDeployClaim(ctx, memberships) {

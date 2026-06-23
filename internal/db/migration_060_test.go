@@ -41,13 +41,21 @@ func TestMigration060_OrgAdminCleanup(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, migrator.LoadMigrations(migrations.FS))
 
-	// 060 is the highest-numbered migration, so it is last in tern's sorted order.
-	total := int32(len(migrator.Migrations))
-	require.GreaterOrEqual(t, total, int32(60), "migration 060 should be loaded")
+	// Find migration 060's 1-based sequence (its position in tern's sorted
+	// order) so the test applies 060 in isolation and stays correct as later
+	// migrations (061+) are added — it must NOT assume 060 is the last one.
+	var seq060 int32
+	for i, m := range migrator.Migrations {
+		if strings.HasPrefix(m.Name, "060_") {
+			seq060 = int32(i + 1) // tern migration versions are 1-based
+			break
+		}
+	}
+	require.NotZero(t, seq060, "migration 060 should be loaded")
 
 	// Migrate up to the migration just before 060 so we can seed offending rows
 	// before the cleanup + CHECK constraint land.
-	require.NoError(t, migrator.MigrateTo(ctx, 59))
+	require.NoError(t, migrator.MigrateTo(ctx, seq060-1))
 
 	sqlDB, err := sql.Open("pgx", connStr)
 	require.NoError(t, err)
@@ -88,8 +96,8 @@ func TestMigration060_OrgAdminCleanup(t *testing.T) {
 	insertAccess(groupAdminNoMethods, `ARRAY[]::text[]`, `ARRAY['deploy','upgrade']::text[]`)
 	insertAccess(groupNormal, `ARRAY['eth_call']::text[]`, `ARRAY['deploy']::text[]`)
 
-	// Apply migration 060.
-	require.NoError(t, migrator.MigrateTo(ctx, 60))
+	// Apply migration 060 (only — not anything stacked after it).
+	require.NoError(t, migrator.MigrateTo(ctx, seq060))
 
 	// 1) Mutual exclusion: read-only flag cleared where is_org_admin was also set.
 	var roStillSet bool

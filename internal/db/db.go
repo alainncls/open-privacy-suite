@@ -340,6 +340,11 @@ type AccessLog struct {
 	EntryHash         *string          `json:"entry_hash,omitempty"`
 	HashFormatVersion int              `json:"hash_format_version"`
 	CreatedAt         string           `json:"created_at"`
+	// OrgID is the organization the entry-point access decision resolved
+	// against (RD-1135). NULL for pre-migration rows and for requests with
+	// no resolved org (anonymous / org-free metadata methods); such rows are
+	// visible only to super-admin callers.
+	OrgID *string `json:"org_id,omitempty"`
 }
 
 // AccessLogFilter narrows GetAccessLogs / CountAccessLogs results. Every field
@@ -355,6 +360,16 @@ type AccessLogFilter struct {
 	To            time.Time // zero = unset
 	Limit         int       // <=0 = default 100; clamped to 1000
 	Offset        int
+	// OrgIDs scopes results to these organizations (RD-1135). The nil-vs-empty
+	// distinction is load-bearing and mirrors ListAuditLogsScoped:
+	//   - nil          → no org constraint (super-admin / dev: fleet-wide).
+	//   - non-nil empty → caller is a JWT org admin with zero orgs → ZERO rows
+	//                      (fail closed). buildAccessLogWhere emits an
+	//                      always-false predicate so every consumer
+	//                      (GetAccessLogs AND CountAccessLogs) agrees.
+	//   - non-empty     → org_id = ANY(OrgIDs). NULL org_id never matches, so
+	//                      unattributed rows stay super-admin-only.
+	OrgIDs []string
 }
 
 // statusClassRange returns the [low, high] inclusive bounds for a status class
@@ -421,6 +436,18 @@ func buildAccessLogWhere(f AccessLogFilter) (string, []any) {
 		args = append(args, f.To)
 		idx++
 	}
+	// RD-1135 cross-org scoping. Applied here (not in the handler) so both
+	// GetAccessLogs and CountAccessLogs fail closed identically. See
+	// AccessLogFilter.OrgIDs for the nil-vs-empty contract.
+	if f.OrgIDs != nil {
+		if len(f.OrgIDs) == 0 {
+			clauses = append(clauses, "1=0")
+		} else {
+			clauses = append(clauses, fmt.Sprintf("org_id = ANY($%d)", idx))
+			args = append(args, f.OrgIDs)
+			idx++
+		}
+	}
 	if len(clauses) == 0 {
 		return "", nil
 	}
@@ -444,7 +471,7 @@ func (d *DB) GetAccessLogs(ctx context.Context, f AccessLogFilter) ([]*AccessLog
 
 	where, args := buildAccessLogWhere(f)
 	query := `SELECT id, external_id, method, status_code, response_status, ip_address,
-	          correlation_id, request_params, entry_hash, hash_format_version, created_at
+	          correlation_id, request_params, entry_hash, hash_format_version, created_at, org_id
 	          FROM access_logs`
 	if where != "" {
 		query += " WHERE " + where
@@ -462,7 +489,7 @@ func (d *DB) GetAccessLogs(ctx context.Context, f AccessLogFilter) ([]*AccessLog
 
 	for rows.Next() {
 		var log AccessLog
-		var correlationID, entryHash sql.NullString
+		var correlationID, entryHash, orgID sql.NullString
 		var responseStatus sql.NullInt32
 		var requestParams []byte
 
@@ -478,6 +505,7 @@ func (d *DB) GetAccessLogs(ctx context.Context, f AccessLogFilter) ([]*AccessLog
 			&entryHash,
 			&log.HashFormatVersion,
 			&log.CreatedAt,
+			&orgID,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan log: %w", err)
 		}
@@ -495,6 +523,9 @@ func (d *DB) GetAccessLogs(ctx context.Context, f AccessLogFilter) ([]*AccessLog
 		}
 		if entryHash.Valid {
 			log.EntryHash = &entryHash.String
+		}
+		if orgID.Valid {
+			log.OrgID = &orgID.String
 		}
 
 		logs = append(logs, &log)
@@ -523,9 +554,11 @@ func (d *DB) CountAccessLogs(ctx context.Context, f AccessLogFilter) (int64, err
 
 // LogAccessEnhanced inserts an access log entry with correlation ID, optional request params, and returns the ID and created_at for hash chain computation.
 // responseStatus is the HTTP status returned to the client (may differ from statusCode for opaque denials).
-func (d *DB) LogAccessEnhanced(ctx context.Context, externalID, method string, statusCode int, ipAddress, correlationID string, params []byte, responseStatus *int) (int64, time.Time, error) {
-	query := `INSERT INTO access_logs (external_id, method, status_code, ip_address, correlation_id, request_params, response_status, hash_format_version)
-	          VALUES ($1, $2, $3, $4, $5, $6, $7, 2)
+// orgID is the resolved organization for RD-1135 scoping; "" stores NULL
+// (unattributed → super-admin-only on read).
+func (d *DB) LogAccessEnhanced(ctx context.Context, externalID, method string, statusCode int, ipAddress, correlationID string, params []byte, responseStatus *int, orgID string) (int64, time.Time, error) {
+	query := `INSERT INTO access_logs (external_id, method, status_code, ip_address, correlation_id, request_params, response_status, hash_format_version, org_id)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7, 2, $8)
 	          RETURNING id, created_at`
 
 	var id int64
@@ -535,11 +568,20 @@ func (d *DB) LogAccessEnhanced(ctx context.Context, externalID, method string, s
 		corrID = &correlationID
 	}
 
-	err := d.conn.QueryRowContext(ctx, query, externalID, method, statusCode, ipAddress, corrID, params, responseStatus).Scan(&id, &createdAt)
+	err := d.conn.QueryRowContext(ctx, query, externalID, method, statusCode, ipAddress, corrID, params, responseStatus, nullableText(orgID)).Scan(&id, &createdAt)
 	if err != nil {
 		return 0, time.Time{}, fmt.Errorf("failed to log enhanced access: %w", err)
 	}
 	return id, createdAt, nil
+}
+
+// nullableText maps "" to a nil *string so an empty value is stored as SQL
+// NULL rather than an empty string.
+func nullableText(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 // UpdateAccessLogHash sets the entry_hash for an access log entry after hash chain computation.
@@ -609,9 +651,10 @@ func (d *DB) LogAccessChained(
 	ipAddress, correlationID string,
 	params []byte,
 	responseStatus *int,
+	orgID string,
 ) (int64, time.Time, string, error) {
 	if chain == nil {
-		id, createdAt, err := d.LogAccessEnhanced(ctx, externalID, method, statusCode, ipAddress, correlationID, params, responseStatus)
+		id, createdAt, err := d.LogAccessEnhanced(ctx, externalID, method, statusCode, ipAddress, correlationID, params, responseStatus, orgID)
 		return id, createdAt, "", err
 	}
 
@@ -649,11 +692,15 @@ func (d *DB) LogAccessChained(
 		content := AccessLogChainContent(id, externalID, method, ipAddress, statusCode, respStatus, createdAt, correlationID, paramsDigest)
 
 		write := func(hash string) error {
+			// org_id (RD-1135) is appended to the row but is deliberately
+			// absent from `content` above — it is a confidentiality-scoping
+			// attribute for reads, not part of the tamper-evident hash. The
+			// chain content + verifier therefore stay at format v2.
 			res, execErr := d.conn.ExecContext(ctx,
 				`INSERT INTO access_logs
-					(id, external_id, method, status_code, ip_address, correlation_id, request_params, response_status, hash_format_version, created_at, entry_hash)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 2, $9, $10)`,
-				id, externalID, method, statusCode, ipAddress, corrID, params, responseStatus, createdAt, hash,
+					(id, external_id, method, status_code, ip_address, correlation_id, request_params, response_status, hash_format_version, created_at, entry_hash, org_id)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 2, $9, $10, $11)`,
+				id, externalID, method, statusCode, ipAddress, corrID, params, responseStatus, createdAt, hash, nullableText(orgID),
 			)
 			if execErr != nil {
 				return fmt.Errorf("insert access_logs: %w", execErr)
@@ -685,6 +732,10 @@ type AccessLogRecord struct {
 	CorrelationID  string `json:"c,omitempty"`
 	Params         []byte `json:"p,omitempty"`
 	ResponseStatus *int   `json:"rs,omitempty"`
+	// OrgID is the resolved org for RD-1135 scoping; "" → NULL on seal
+	// (unattributed → super-admin-only on read). Not part of the hashed chain
+	// content. (RD-1137 adds DenialReason alongside.)
+	OrgID string `json:"o,omitempty"`
 }
 
 // GetMaxAccessLogBufferSeq returns the highest buffer_seq already sealed into
@@ -740,9 +791,9 @@ func (d *DB) SealBufferedAccessLog(ctx context.Context, chain RBACAuditChain, re
 		write := func(hash string) error {
 			res, execErr := d.conn.ExecContext(ctx,
 				`INSERT INTO access_logs
-					(id, external_id, method, status_code, ip_address, correlation_id, request_params, response_status, hash_format_version, created_at, entry_hash, buffer_seq, chain_name)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 2, $9, $10, $11, $12)`,
-				id, rec.ExternalID, rec.Method, rec.StatusCode, rec.IPAddress, corrID, rec.Params, rec.ResponseStatus, createdAt, hash, int64(bufferSeq), chainName,
+					(id, external_id, method, status_code, ip_address, correlation_id, request_params, response_status, hash_format_version, created_at, entry_hash, buffer_seq, chain_name, org_id)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 2, $9, $10, $11, $12, $13)`,
+				id, rec.ExternalID, rec.Method, rec.StatusCode, rec.IPAddress, corrID, rec.Params, rec.ResponseStatus, createdAt, hash, int64(bufferSeq), chainName, nullableText(rec.OrgID),
 			)
 			if execErr != nil {
 				return fmt.Errorf("insert access_logs (seal): %w", execErr)

@@ -1101,6 +1101,13 @@ func (s *Server) getLogs(c *gin.Context) {
 		ExternalID:    strings.TrimSpace(c.Query("external_id")),
 		Method:        strings.TrimSpace(c.Query("method")),
 		CorrelationID: strings.TrimSpace(c.Query("correlation_id")),
+		// RD-1135: scope to the caller's org(s). nil for super-admin
+		// (X-Admin-Token) / dev → fleet-wide; non-nil (possibly empty) for a
+		// JWT org admin → only their orgs, empty → zero rows (fail closed).
+		// Enforced in buildAccessLogWhere so GetAccessLogs and CountAccessLogs
+		// agree. The external_id query param is ANDed with this, so it can
+		// never widen scope across orgs.
+		OrgIDs: callerOrgScope(c),
 	}
 
 	statusStr := strings.TrimSpace(c.Query("status_code"))
