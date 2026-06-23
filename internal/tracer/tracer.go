@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/sha3"
+
+	"privacy-proxy/internal/nodehttp"
 )
 
 // keccak256 computes the Ethereum keccak256 hash (NOT NIST SHA3-256).
@@ -49,16 +51,21 @@ type Tracer struct {
 	timeout time.Duration
 }
 
-// NewTracer creates a new Tracer instance.
+// NewTracer creates a new Tracer instance with a tuned upstream transport
+// (default connection-pool sizing for a single high-throughput node host).
 func NewTracer(nodeURL string, timeout time.Duration) *Tracer {
+	return NewTracerWithTransport(nodeURL, timeout, nodehttp.DefaultTransportConfig())
+}
+
+// NewTracerWithTransport creates a Tracer with an explicit upstream transport
+// configuration, letting operators tune the node connection pool.
+func NewTracerWithTransport(nodeURL string, timeout time.Duration, tc nodehttp.TransportConfig) *Tracer {
 	if timeout == 0 {
 		timeout = DefaultTimeout
 	}
 	return &Tracer{
 		nodeURL: nodeURL,
-		client: &http.Client{
-			Timeout: timeout,
-		},
+		client:  nodehttp.NewClient(timeout, tc),
 		timeout: timeout,
 	}
 }

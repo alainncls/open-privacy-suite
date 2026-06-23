@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"privacy-proxy/internal/nodehttp"
 )
 
 // DefaultAPIKeyHeader is the header name used to attach the upstream RPC API
@@ -71,11 +73,16 @@ const DefaultTimeout = 30 * time.Second
 const maxRPCResponseSize = 128 << 20 // 128 MiB
 
 func New(targetURL string) *Proxy {
+	return NewWithTransport(targetURL, nodehttp.DefaultTransportConfig())
+}
+
+// NewWithTransport builds a Proxy with an explicit upstream transport
+// configuration. Use this to apply operator-tuned connection-pool sizes; New
+// applies sane defaults tuned for a single high-throughput node host.
+func NewWithTransport(targetURL string, tc nodehttp.TransportConfig) *Proxy {
 	return &Proxy{
 		targetURL: targetURL,
-		client: &http.Client{
-			Timeout: DefaultTimeout,
-		},
+		client:    nodehttp.NewClient(DefaultTimeout, tc),
 	}
 }
 
