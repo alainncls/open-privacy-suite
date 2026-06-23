@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"time"
+
+	"privacy-proxy/internal/nodehttp"
 )
 
 // RuntimeTracer provides integrated runtime tracing with caching.
@@ -22,6 +24,9 @@ type RuntimeTracerConfig struct {
 	CacheTTL      time.Duration
 	Timeout       time.Duration
 	TieredEnabled bool
+	// Transport tunes the upstream node connection pool (RD-1112). Zero fields
+	// fall back to nodehttp defaults.
+	Transport nodehttp.TransportConfig
 }
 
 // NewRuntimeTracer creates a new RuntimeTracer.

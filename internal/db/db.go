@@ -125,16 +125,57 @@ func (d *DB) connectPgxUTC(ctx context.Context) (*pgx.Conn, error) {
 	return pgx.ConnectConfig(ctx, cfg)
 }
 
-func New(databaseURL string) (*DB, error) {
+// poolConfig holds connection-pool sizing for a database handle.
+type poolConfig struct {
+	maxOpenConns    int
+	maxIdleConns    int
+	connMaxLifetime time.Duration
+}
+
+// defaultPoolConfig returns the default pool sizing. MaxIdle equals MaxOpen so
+// idle connections are retained rather than churned under bursty load
+// (RD-1112). Size MaxOpen so N replicas stay under Postgres max_connections.
+func defaultPoolConfig() poolConfig {
+	return poolConfig{maxOpenConns: 50, maxIdleConns: 50, connMaxLifetime: 5 * time.Minute}
+}
+
+// Option configures a database handle (currently connection-pool sizing).
+type Option func(*poolConfig)
+
+// WithPool sets the connection-pool sizing. maxIdle should normally equal
+// maxOpen to avoid connection churn; non-positive values keep the default.
+func WithPool(maxOpen, maxIdle int, connMaxLifetime time.Duration) Option {
+	return func(p *poolConfig) {
+		if maxOpen > 0 {
+			p.maxOpenConns = maxOpen
+		}
+		if maxIdle > 0 {
+			p.maxIdleConns = maxIdle
+		}
+		if connMaxLifetime > 0 {
+			p.connMaxLifetime = connMaxLifetime
+		}
+	}
+}
+
+func applyPool(conn *sql.DB, opts ...Option) {
+	p := defaultPoolConfig()
+	for _, o := range opts {
+		o(&p)
+	}
+	conn.SetMaxOpenConns(p.maxOpenConns)
+	conn.SetMaxIdleConns(p.maxIdleConns)
+	conn.SetConnMaxLifetime(p.connMaxLifetime)
+}
+
+func New(databaseURL string, opts ...Option) (*DB, error) {
 	conn, err := openPostgres(databaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	// Configure connection pool
-	conn.SetMaxOpenConns(50)
-	conn.SetMaxIdleConns(25)
-	conn.SetConnMaxLifetime(5 * time.Minute)
+	// Configure connection pool (RD-1112: env-tunable, MaxIdle defaults to MaxOpen).
+	applyPool(conn, opts...)
 
 	// Retry initial connection — Postgres may not be ready at startup
 	// (e.g. external database still booting, or built-in Postgres starting in parallel).
@@ -173,16 +214,14 @@ func New(databaseURL string) (*DB, error) {
 
 // NewWithoutMigrate creates a database connection without running migrations.
 // Use this when you need to check migration status or run migrations manually.
-func NewWithoutMigrate(databaseURL string) (*DB, error) {
+func NewWithoutMigrate(databaseURL string, opts ...Option) (*DB, error) {
 	conn, err := sql.Open("pgx", databaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	// Configure connection pool
-	conn.SetMaxOpenConns(50)
-	conn.SetMaxIdleConns(25)
-	conn.SetConnMaxLifetime(5 * time.Minute)
+	// Configure connection pool (RD-1112: env-tunable, MaxIdle defaults to MaxOpen).
+	applyPool(conn, opts...)
 
 	// Test connection
 	ctx := context.Background()
@@ -290,17 +329,17 @@ func (d *DB) LogAccess(ctx context.Context, externalID, method string, statusCod
 }
 
 type AccessLog struct {
-	ID               int              `json:"id"`
-	ExternalID       string           `json:"external_id"`
-	Method           string           `json:"method"`
-	StatusCode       int              `json:"status_code"`
-	ResponseStatus   *int             `json:"response_status,omitempty"`
-	IPAddress        string           `json:"ip_address"`
-	CorrelationID    *string          `json:"correlation_id,omitempty"`
-	RequestParams    *json.RawMessage `json:"request_params,omitempty"`
-	EntryHash        *string          `json:"entry_hash,omitempty"`
-	HashFormatVersion int             `json:"hash_format_version"`
-	CreatedAt        string           `json:"created_at"`
+	ID                int              `json:"id"`
+	ExternalID        string           `json:"external_id"`
+	Method            string           `json:"method"`
+	StatusCode        int              `json:"status_code"`
+	ResponseStatus    *int             `json:"response_status,omitempty"`
+	IPAddress         string           `json:"ip_address"`
+	CorrelationID     *string          `json:"correlation_id,omitempty"`
+	RequestParams     *json.RawMessage `json:"request_params,omitempty"`
+	EntryHash         *string          `json:"entry_hash,omitempty"`
+	HashFormatVersion int              `json:"hash_format_version"`
+	CreatedAt         string           `json:"created_at"`
 }
 
 // AccessLogFilter narrows GetAccessLogs / CountAccessLogs results. Every field

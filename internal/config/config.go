@@ -215,10 +215,23 @@ func (e *ExtraRPCNamespaces) Wildcards() map[string]*WildcardConfig {
 }
 
 type Config struct {
-	Version             string // Set by cmd/server/main.go from build-time constant
-	NodeURL             string
-	DatabaseURL         string
-	ExplorerDatabaseURL string
+	Version     string // Set by cmd/server/main.go from build-time constant
+	NodeURL     string
+	DatabaseURL string
+	// DB connection pool sizing (RD-1112). DBMaxIdleConns defaults to
+	// DBMaxOpenConns to avoid connection churn; size DBMaxOpenConns so N
+	// replicas stay under Postgres max_connections.
+	DBMaxOpenConns    int
+	DBMaxIdleConns    int
+	DBConnMaxLifetime time.Duration
+	// Upstream node HTTP transport pool (RD-1112). proxy + tracer talk to one
+	// node host at high concurrency; Go's default caps idle keep-alive at 2
+	// per host, churning TCP connections. These tune the pool.
+	NodeMaxIdleConns        int
+	NodeMaxIdleConnsPerHost int
+	NodeMaxConnsPerHost     int
+	NodeIdleConnTimeout     time.Duration
+	ExplorerDatabaseURL     string
 	// IndexerURL, when non-empty, enables the gRPC chain-indexer backend for
 	// explorer reads. Methods not yet ported to gRPC fall back to direct
 	// SQL on the explorer postgres. Leave empty to use SQL exclusively.
@@ -592,9 +605,24 @@ func Load() *Config {
 		panic(fmt.Sprintf("RPC_API_KEY_HEADER %q is invalid: must match ^[A-Za-z0-9-]+$", rpcAPIKeyHeader))
 	}
 
+	dbMaxOpen := getEnvInt("DB_MAX_OPEN_CONNS", 50)
+	dbMaxIdle := getEnvInt("DB_MAX_IDLE_CONNS", dbMaxOpen) // default = MaxOpen to avoid connection churn
+	dbConnMaxLifetime := parseDurationEnv("DB_CONN_MAX_LIFETIME", 5*time.Minute)
+	nodeMaxIdleConns := getEnvInt("NODE_HTTP_MAX_IDLE_CONNS", 512)
+	nodeMaxIdleConnsPerHost := getEnvInt("NODE_HTTP_MAX_IDLE_CONNS_PER_HOST", 256)
+	nodeMaxConnsPerHost := getEnvInt("NODE_HTTP_MAX_CONNS_PER_HOST", 0)
+	nodeIdleConnTimeout := parseDurationEnv("NODE_HTTP_IDLE_CONN_TIMEOUT", 90*time.Second)
+
 	return &Config{
 		NodeURL:                             getEnv("NODE_URL", "http://localhost:8545"),
 		DatabaseURL:                         getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/privacy_proxy?sslmode=disable"),
+		DBMaxOpenConns:                      dbMaxOpen,
+		DBMaxIdleConns:                      dbMaxIdle,
+		DBConnMaxLifetime:                   dbConnMaxLifetime,
+		NodeMaxIdleConns:                    nodeMaxIdleConns,
+		NodeMaxIdleConnsPerHost:             nodeMaxIdleConnsPerHost,
+		NodeMaxConnsPerHost:                 nodeMaxConnsPerHost,
+		NodeIdleConnTimeout:                 nodeIdleConnTimeout,
 		PrivadoRPCURL:                       getEnv("PRIVADO_RPC_URL", "https://rpc-mainnet.privado.id"),
 		IPFSGateway:                         getEnv("IPFS_GATEWAY", "https://ipfs-proxy-cache.privado.id"), // IPFS gateway for schema resolution
 		JWTSecret:                           getEnv("JWT_SECRET", ""),                                      // If empty, will be auto-generated (dev only)
@@ -876,6 +904,17 @@ func isPrivateOrLocalhost(hostname string) bool {
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
+	}
+	return defaultValue
+}
+
+// getEnvInt reads an environment variable as an int, returning defaultValue if
+// the variable is unset or not a valid integer.
+func getEnvInt(key string, defaultValue int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
 	}
 	return defaultValue
 }

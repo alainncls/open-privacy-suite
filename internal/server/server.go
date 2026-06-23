@@ -20,6 +20,7 @@ import (
 	"privacy-proxy/internal/explorer"
 	"privacy-proxy/internal/explorer/indexerclient"
 	"privacy-proxy/internal/metrics"
+	"privacy-proxy/internal/nodehttp"
 	"privacy-proxy/internal/pricing"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
@@ -217,7 +218,7 @@ func New(cfg *config.Config) (*Server, error) {
 // If verifier is nil, creates a real PrivadoVerifier from config
 // This allows injecting a mock verifier for testing
 func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, error) {
-	database, err := db.New(cfg.DatabaseURL)
+	database, err := db.New(cfg.DatabaseURL, db.WithPool(cfg.DBMaxOpenConns, cfg.DBMaxIdleConns, cfg.DBConnMaxLifetime))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create database: %w", err)
 	}
@@ -273,7 +274,15 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		return nil, fmt.Errorf("failed to create JWT service: %w", err)
 	}
 
-	proxySvc := proxy.New(cfg.NodeURL)
+	// Upstream node connection-pool sizing (RD-1112), shared by the forwarder
+	// and the runtime tracer (both talk to the single node host).
+	nodeTransport := nodehttp.TransportConfig{
+		MaxIdleConns:        cfg.NodeMaxIdleConns,
+		MaxIdleConnsPerHost: cfg.NodeMaxIdleConnsPerHost,
+		MaxConnsPerHost:     cfg.NodeMaxConnsPerHost,
+		IdleConnTimeout:     cfg.NodeIdleConnTimeout,
+	}
+	proxySvc := proxy.NewWithTransport(cfg.NodeURL, nodeTransport)
 
 	// Initialize state stores: Redis-backed when REDIS_URL is set, in-memory otherwise.
 	var sessionStore SessionManager
@@ -387,6 +396,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		CacheTTL:      cfg.TraceCacheTTL,
 		Timeout:       cfg.TraceTimeout,
 		TieredEnabled: cfg.TraceTieredValidation,
+		Transport:     nodeTransport,
 	})
 	traceValidator := rbac.NewTraceValidator(database)
 	// M5 (security audit follow-up to RD-915): wire the runtime tracer
