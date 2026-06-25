@@ -47,6 +47,7 @@ export default function GroupAccessForm({
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
   const [selectedClaims, setSelectedClaims] = useState<Claim[]>([]);
   const [rpcApiKey, setRpcApiKey] = useState<string>('');
+  const [verboseErrors, setVerboseErrors] = useState(false); // RD-1137 Part A
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Track whether the last method change came from a preset click (skip auto-detect)
@@ -92,6 +93,7 @@ export default function GroupAccessForm({
         const methods = (access.allowed_methods || []).filter((m: string) => m !== '*');
         setAllowedMethods(methods);
         setRpcApiKey(access.rpc_api_key || '');
+        setVerboseErrors(access.verbose_errors ?? false);
         setSelectedClaims(access.claims || []);
       }
     } catch {
@@ -166,6 +168,7 @@ export default function GroupAccessForm({
         // applicable and the backend rejects a non-empty list (RD-968 Gap 1).
         claims: isOrgAdmin ? [] : ExpandClaims(selectedClaims),
         rpc_api_key: rpcApiKey || null,
+        verbose_errors: verboseErrors,
       };
 
       await rbacApi.groups.setAccess(orgId, groupId, input);
@@ -544,6 +547,26 @@ export default function GroupAccessForm({
         />
         <p className="text-xs text-neutral-400">
           Sent to the upstream RPC proxy. Leave empty to use the global default.
+        </p>
+      </div>
+
+      {/* RD-1137 Part A: verbose errors opt-in */}
+      <div className="space-y-2">
+        <label className="flex items-center gap-2 text-sm font-medium text-neutral-700">
+          <input
+            type="checkbox"
+            checked={verboseErrors}
+            onChange={e => setVerboseErrors(e.target.checked)}
+            className="rounded border-neutral-300"
+          />
+          Verbose error reasons
+        </label>
+        <p className="text-xs text-neutral-400">
+          When enabled, denied requests from this group's members include a
+          stable machine-readable <code>reason</code> code (e.g.
+          <code>sender_not_linked</code>) for client automation. Cross-org and
+          trace causes always collapse to <code>access_denied</code>. Off by
+          default — the error message stays opaque.
         </p>
       </div>
 

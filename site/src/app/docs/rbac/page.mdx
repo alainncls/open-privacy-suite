@@ -379,6 +379,26 @@ See [Configuration](/docs/configuration) for setup.
 
 ---
 
+## Per-Group Verbose Errors
+
+By default every denied JSON-RPC request returns an **opaque** error message — the real cause is recorded only in the admin Access Logs (scoped to your org). This protects against information leakage but makes client-side automation hard: an integration can't tell *why* a call was rejected.
+
+Enable **Verbose error reasons** on a group's access settings (admin dashboard, or `verbose_errors: true` on the group-access API) and members of that group additionally receive a stable, machine-readable `reason` code alongside the (still opaque) `error` message on denials — for example:
+
+```json
+{ "error": "call denied: invalid request shape", "reason": "sender_not_linked" }
+```
+
+- **Default off.** With the flag off, responses are byte-for-byte identical to today (opaque).
+- **Stable codes** for automation to switch on: `sender_not_linked`, `method_not_allowed`, `auth_required`, `invalid_request_shape`, `rate_limited`, `concurrency_limited`, `upstream_error`.
+- **Cross-org and trace-related causes always collapse to `access_denied`** — verbose mode never reveals another tenant's contracts, ownership, or whether an address exists. Only facts about the caller's own request are exposed.
+- The raw internal error is **never** sent on the wire, flag or not — it stays in server logs.
+- Toggling the flag is recorded in the admin audit log.
+
+Use it for trusted first-party integrations that need programmatic error handling; leave it off for general access.
+
+---
+
 ## API Endpoints
 
 For full request/response details, see the [API Reference](/docs/api).

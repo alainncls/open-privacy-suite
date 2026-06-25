@@ -541,6 +541,7 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 		RateLimitRPS   *int         `json:"rate_limit_rps"`
 		RateLimitDaily *int         `json:"rate_limit_daily"`
 		RPCAPIKey      *string      `json:"rpc_api_key"`
+		VerboseErrors  bool         `json:"verbose_errors"` // RD-1137 Part A
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		respondBadRequestAndLog(c, "invalid request body",
@@ -611,6 +612,7 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 		RateLimitRPS:   input.RateLimitRPS,
 		RateLimitDaily: input.RateLimitDaily,
 		RPCAPIKey:      input.RPCAPIKey,
+		VerboseErrors:  input.VerboseErrors,
 	}
 
 	if existing != nil {
@@ -630,6 +632,26 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 			return
 		}
 	}
+
+	// RD-1137 M1: audit the access change. setGroupAccess previously wrote no
+	// audit row at all; verbose_errors re-opens the opaque-error surface, so the
+	// toggle (and the rest of the access payload) must be traceable. Never
+	// record the rpc_api_key value.
+	var oldAccess map[string]any
+	if existing != nil {
+		oldAccess = map[string]any{
+			"allowed_methods": existing.AllowedMethods,
+			"claims":          existing.Claims,
+			"verbose_errors":  existing.VerboseErrors,
+		}
+	}
+	s.recordAuditActionScoped(c, rbac.AuditActionUpdate, rbac.ResourceTypeAccess, groupID, group.Name, group.OrgID,
+		oldAccess,
+		map[string]any{
+			"allowed_methods": access.AllowedMethods,
+			"claims":          access.Claims,
+			"verbose_errors":  access.VerboseErrors,
+		})
 
 	// Invalidate cache for group members
 	s.rbacAccessCtrl.InvalidateGroup(c.Request.Context(), groupID)

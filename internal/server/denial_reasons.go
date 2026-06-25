@@ -53,4 +53,43 @@ const (
 	ReasonUpstreamError = "upstream_error"
 	// ReasonInternalError: an internal failure (500) — generic by construction.
 	ReasonInternalError = "internal_error"
+
+	// ReasonWireGenericDenied is the single value oracle-sensitive (and any
+	// unrecognized) reason codes collapse to on the wire (RD-1137 Part A). It
+	// carries no tenant state — it only tells the caller "denied."
+	ReasonWireGenericDenied = "access_denied"
 )
+
+// wireReason maps a curated denial-reason code to the value safe to return to
+// an opt-in verbose caller ON THE WIRE (RD-1137 Part A). It is a CLOSED
+// ALLOWLIST: only codes that describe a fact about the caller's OWN request —
+// which they could already infer — pass through; EVERYTHING else, including
+// any code added in the future and any unknown value, collapses to
+// ReasonWireGenericDenied (fail-safe).
+//
+// Collapsed on purpose (do NOT add to the allowlist without a security review):
+//   - cross_org, tracing_unavailable, trace_depth_exceeded: the trace runs
+//     AFTER the entry-point access check on the top-level target, then walks
+//     internal frames the caller can steer via calldata. Distinguishing these
+//     on the wire turns the verbose channel into a cross-org reachability /
+//     existence oracle (the exact RD-915/RD-934 class). They stay precise in
+//     the access-log column (org-scoped admin view), generic on the wire.
+//   - deploy_claim_required, compliance_blocked, internal_error: not currently
+//     exposed; collapsed conservatively until individually reviewed.
+//
+// The access-log row always stores the precise code; only this wire path
+// collapses.
+func wireReason(code string) string {
+	switch code {
+	case ReasonAuthRequired,
+		ReasonMethodNotAllowed, // safe only while RBAC denials stay a uniform 404 (see TestWireReason… / RBAC deny site)
+		ReasonSenderNotLinked,
+		ReasonInvalidRequestShape,
+		ReasonRateLimited,
+		ReasonConcurrencyLimited,
+		ReasonUpstreamError:
+		return code
+	default:
+		return ReasonWireGenericDenied
+	}
+}
