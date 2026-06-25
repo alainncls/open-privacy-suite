@@ -68,7 +68,7 @@ func TestAuditIntegrity_WriterVerifierSymmetry_AccessLogs(t *testing.T) {
 			ctx,
 			chain,
 			"did:test:auditor", "eth_blockNumber", 200,
-			"203.0.113.42", "corr-xyz", nil, nil, "org-audit",
+			"203.0.113.42", "corr-xyz", nil, nil, "org-audit", "",
 		)
 		if err != nil {
 			t.Fatalf("LogAccessChained #%d: %v", i, err)
@@ -110,7 +110,7 @@ func TestAuditIntegrity_TamperedAccessLogRow_DetectedAsHashMismatch(t *testing.T
 		if _, _, _, err := database.LogAccessChained(
 			ctx, chain,
 			"did:test:auditor", "eth_chainId", 200,
-			"203.0.113.42", "", nil, nil, "",
+			"203.0.113.42", "", nil, nil, "", "",
 		); err != nil {
 			t.Fatalf("seed write %d: %v", i, err)
 		}

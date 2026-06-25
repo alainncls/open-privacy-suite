@@ -12,6 +12,10 @@ export interface AccessLog {
   ip_address: string;
   correlation_id?: string | null;
   created_at: string;
+  org_id?: string | null;
+  // Curated denial-reason code for denied requests (RD-1137), e.g.
+  // "sender_not_linked". Null for successful or unclassified requests.
+  denial_reason?: string | null;
 }
 
 // Outcome buckets sent to the backend as the `outcome` query param. "all" =

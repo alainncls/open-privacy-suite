@@ -63,7 +63,7 @@ func seedAccessLogs(t *testing.T, ctx context.Context, d *DB, n int, prev string
 	ids := make([]int64, 0, n)
 	hashes := make([]string, 0, n)
 	for i := 0; i < n; i++ {
-		id, createdAt, err := d.LogAccessEnhanced(ctx, "did:test:user", "eth_call", 200, "127.0.0.1", "", nil, nil, "")
+		id, createdAt, err := d.LogAccessEnhanced(ctx, "did:test:user", "eth_call", 200, "127.0.0.1", "", nil, nil, "", "")
 		if err != nil {
 			t.Fatalf("seed insert %d: %v", i, err)
 		}
@@ -412,7 +412,7 @@ func seedFilterRows(t *testing.T, ctx context.Context, d *DB, baseTime time.Time
 	t.Helper()
 	ids := make([]int64, 0, len(rows))
 	for i, r := range rows {
-		id, _, err := d.LogAccessEnhanced(ctx, r.externalID, r.method, r.statusCode, "127.0.0.1", r.correlationID, nil, nil, "")
+		id, _, err := d.LogAccessEnhanced(ctx, r.externalID, r.method, r.statusCode, "127.0.0.1", r.correlationID, nil, nil, "", "")
 		if err != nil {
 			t.Fatalf("seed row %d: %v", i, err)
 		}

@@ -47,7 +47,7 @@ func BenchmarkAuditWriteSyncChain(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			if _, _, _, err := d.LogAccessChained(ctx, chain,
-				"did:bench:user", "eth_sendRawTransaction", 200, "127.0.0.1", "", benchParams, nil, ""); err != nil {
+				"did:bench:user", "eth_sendRawTransaction", 200, "127.0.0.1", "", benchParams, nil, "", ""); err != nil {
 				b.Error(err)
 				return
 			}
