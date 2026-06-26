@@ -2241,7 +2241,7 @@ func (p *JSONRPCProcessor) processDebugTrace(ctx context.Context, req *ProcessRe
 		}
 	}
 
-	// 1. Must have Deploy or Admin claim globally
+	// 1. The trace method must be in the caller's group method allowlist.
 	user, err := p.rbacAccessCtrl.Store().GetUserByExternalID(ctx, req.UserID)
 	if err != nil || user == nil {
 		p.logAccess(ctx, req, http.StatusUnauthorized)
@@ -2254,12 +2254,12 @@ func (p *JSONRPCProcessor) processDebugTrace(ctx context.Context, req *ProcessRe
 		return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusInternalServerError, Message: "failed to get memberships"}}
 	}
 
-	// RD-1135: this path never calls CheckAccess (it has its own deploy-claim
-	// gate), so attribute access-log rows to the caller's org when it is
-	// unambiguous (exactly one membership-org). A multi-org tracer's rows stay
-	// NULL (super-admin-only): a replayed/mined trace can span orgs and has no
-	// single owning org to attribute to. Set before the deploy-claim check so
-	// that denial is attributed too.
+	// RD-1135: this path never calls CheckAccess (it has its own gate below), so
+	// attribute access-log rows to the caller's org when it is unambiguous
+	// (exactly one membership-org). A multi-org tracer's rows stay NULL
+	// (super-admin-only): a replayed/mined trace can span orgs and has no single
+	// owning org to attribute to. Set before the allowlist check so that denial
+	// is attributed too.
 	{
 		orgSet := make(map[string]struct{})
 		for _, m := range memberships {
@@ -2274,9 +2274,23 @@ func (p *JSONRPCProcessor) processDebugTrace(ctx context.Context, req *ProcessRe
 		}
 	}
 
-	if !p.userHasDeployClaim(ctx, memberships) {
-		p.logAccess(ctx, req, http.StatusForbidden)
-		return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusForbidden, Message: "tracing requires deploy or admin claims"}}
+	// RD-1121: gate debug_trace* by the group method allowlist, exactly like
+	// every other named RPC method. Historically this path checked ONLY the
+	// deploy/admin claim and skipped the allowlist, so an operator who curated
+	// allowed_methods to exclude tracing was silently ignored for any group that
+	// had the deploy claim. Tracing is not deploying; a distinctly-named method
+	// belongs on the allowlist surface (Option B). The cross-org ValidateTrace
+	// content gate below is retained regardless — it is independent of any claim.
+	// Fail-closed: missing/empty perms or any resolution error => denied.
+	if !p.userCanTraceMethod(ctx, user.ID, memberships, req.Method) {
+		req.denialReason = ReasonMethodNotAllowed
+		slog.Info("RBAC trace denied: method not in allowlist", "method", req.Method, "user", req.UserID, "ip", req.ClientIP)
+		// Mirror the normal RBAC deny site (Process / processRawTransaction):
+		// uniform opaque 404 on the wire, real status recorded in the access log.
+		// Keeping a uniform 404 is what lets ReasonMethodNotAllowed stay on the
+		// verbose-wire allowlist (see denial_reasons.go).
+		p.logAccess(ctx, req, http.StatusForbidden, http.StatusNotFound)
+		return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusNotFound, Message: "method not found"}}
 	}
 
 	userOrgIDs := make(map[string]bool)
@@ -2512,6 +2526,43 @@ func (p *JSONRPCProcessor) userHasDeployClaim(ctx context.Context, memberships [
 			if c == rbac.ClaimDeploy || c == rbac.ClaimAdmin {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// userCanTraceMethod reports whether the trace method is permitted by the
+// method allowlist of at least one of the user's membership orgs (RD-1121).
+//
+// It mirrors userHasDeployClaim's "any org grants" multi-org semantics, but
+// checks EffectivePermissions.HasMethod — the exact same allowlist matcher
+// (glob expansion + global-wildcard deny floor) every other RPC method is
+// gated by in CheckAccess. The cross-org ValidateTrace content gate runs after
+// this and is independent of it.
+//
+// Fail-closed by construction: a resolve error, a nil perms object, or an org
+// whose allowlist omits the method all contribute "denied" for that org; the
+// function returns true only on an explicit HasMethod == true. A user with no
+// memberships (empty loop) is denied.
+func (p *JSONRPCProcessor) userCanTraceMethod(ctx context.Context, userID string, memberships []*rbac.MembershipWithDetails, method string) bool {
+	checked := make(map[string]struct{})
+	for _, m := range memberships {
+		if m.Group == nil {
+			continue
+		}
+		orgID := m.Group.OrgID
+		if _, seen := checked[orgID]; seen {
+			continue
+		}
+		checked[orgID] = struct{}{}
+
+		perms, err := p.rbacAccessCtrl.GetEffectivePermissionsByIDs(ctx, userID, orgID)
+		if err != nil || perms == nil {
+			// Fail-closed for this org; another org may still grant.
+			continue
+		}
+		if perms.HasMethod(method) {
+			return true
 		}
 	}
 	return false

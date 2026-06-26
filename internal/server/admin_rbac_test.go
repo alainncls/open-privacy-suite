@@ -523,8 +523,11 @@ func TestGroupAccessValidation(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
 
-	t.Run("RejectsDeployMethodsWithoutDeployClaim", func(t *testing.T) {
-		// Deploy methods still require the deploy claim
+	t.Run("AcceptsTraceMethodWithoutDeployClaim", func(t *testing.T) {
+		// RD-1121: debug_trace* is gated by the method allowlist, not a claim.
+		// A group may list debug_traceTransaction with no claims — config-time
+		// validation no longer forces the deploy claim (runtime allowlist gate +
+		// ValidateTrace enforce access).
 		body := map[string]any{
 			"allowed_methods": []string{"debug_traceTransaction"},
 			"claims":  []string{},
@@ -537,15 +540,7 @@ func TestGroupAccessValidation(t *testing.T) {
 
 		server.router.ServeHTTP(w, req)
 
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-
-		var response map[string]any
-		err := json.Unmarshal(w.Body.Bytes(), &response)
-		require.NoError(t, err)
-
-		// RD-934: response is opaque ("method/claim mismatch"). The specific
-		// "<method> requires <claim>" reason is logged server-side via slog.
-		assert.Contains(t, response["error"], "method/claim mismatch")
+		assert.Equal(t, http.StatusOK, w.Code)
 	})
 
 	t.Run("AcceptsMethodsWithNoClaims", func(t *testing.T) {
