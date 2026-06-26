@@ -114,20 +114,32 @@ func TestLoadConfigFile_MissingFilePathErrors(t *testing.T) {
 }
 
 func TestLoadConfigFile_SecretKeyRejected(t *testing.T) {
-	resetFileConfig(t)
 	// Secrets must never be sourced from the file — the proxy refuses to load a
-	// file containing one, naming the offending key, and stays in pure-env mode.
-	path := writeConfigFile(t, "version = 1\nBASE_URL = \"https://ok\"\nADMIN_API_TOKEN = \"nope\"\n")
-	t.Setenv("CONFIG_FILE", path)
-	err := loadConfigFile()
-	if err == nil {
-		t.Fatal("expected rejection when a secret key is in the config file, got nil")
-	}
-	if !strings.Contains(err.Error(), "ADMIN_API_TOKEN") {
-		t.Errorf("error should name the offending secret key, got: %v", err)
-	}
-	if fileConfig != nil {
-		t.Errorf("expected fileConfig nil when the file is rejected, got %v", fileConfig)
+	// file containing one, naming the offending key (but NOT its value), and
+	// stays in pure-env mode. Cover both admin bearer tokens: the full-power
+	// ADMIN_API_TOKEN and the restricted OPERATOR_API_TOKEN (RD-1132/RD-1140),
+	// both sent as X-Admin-Token and therefore secret-class.
+	const secretValue = "super-secret-token-value-DO-NOT-LEAK"
+	for _, key := range []string{"ADMIN_API_TOKEN", "OPERATOR_API_TOKEN"} {
+		t.Run(key, func(t *testing.T) {
+			resetFileConfig(t)
+			path := writeConfigFile(t, "version = 1\nBASE_URL = \"https://ok\"\n"+key+" = \""+secretValue+"\"\n")
+			t.Setenv("CONFIG_FILE", path)
+			err := loadConfigFile()
+			if err == nil {
+				t.Fatal("expected rejection when a secret key is in the config file, got nil")
+			}
+			if !strings.Contains(err.Error(), key) {
+				t.Errorf("error should name the offending secret key %q, got: %v", key, err)
+			}
+			// Fail-closed: the loader must not leak the secret VALUE in the error.
+			if strings.Contains(err.Error(), secretValue) {
+				t.Errorf("error must NOT echo the secret value, got: %v", err)
+			}
+			if fileConfig != nil {
+				t.Errorf("expected fileConfig nil when the file is rejected, got %v", fileConfig)
+			}
+		})
 	}
 }
 

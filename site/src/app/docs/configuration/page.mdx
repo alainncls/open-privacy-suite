@@ -39,7 +39,7 @@ COMPLIANCE_DEFAULT_MODE = "enforce"
 **`version` is required.** The file must declare a top-level `version` (currently `1`). The proxy refuses to start on a missing or unsupported version, so a file written for a future schema fails loudly instead of being silently mis-read.
 
 <Callout variant="danger" title="Secrets are not allowed in the config file">
-Secrets — `JWT_SECRET`, `JWT_REFRESH_SECRET`, `ADMIN_API_TOKEN`, `AZURE_AD_CLIENT_SECRET`, `DATABASE_URL`, `EXPLORER_DATABASE_URL`, `REDIS_URL` / `REDIS_PASSWORD`, `RPC_API_KEY`, `RPC_API_KEY_ENCRYPTION_KEY`, `OAUTH_FIRST_PARTY_CLIENTS` — must live in your environment or secrets manager, never in a plaintext config file. **The proxy refuses to start if it finds one of these in the file**, naming the offending key. Inject secrets via the environment, which overrides the file anyway.
+Secrets — `JWT_SECRET`, `JWT_REFRESH_SECRET`, `ADMIN_API_TOKEN`, `OPERATOR_API_TOKEN`, `AZURE_AD_CLIENT_SECRET`, `DATABASE_URL`, `EXPLORER_DATABASE_URL`, `REDIS_URL` / `REDIS_PASSWORD`, `RPC_API_KEY`, `RPC_API_KEY_ENCRYPTION_KEY`, `OAUTH_FIRST_PARTY_CLIENTS` — must live in your environment or secrets manager, never in a plaintext config file. **The proxy refuses to start if it finds one of these in the file**, naming the offending key. Inject secrets via the environment, which overrides the file anyway.
 </Callout>
 
 A fully-commented template lives at `config.example.toml` in the repository root — copy and trim it:
