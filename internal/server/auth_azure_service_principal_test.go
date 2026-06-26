@@ -144,6 +144,8 @@ func TestHandleAzureServicePrincipal(t *testing.T) {
 		require.NotNil(t, user, "service principal should be auto-provisioned")
 		require.NotNil(t, user.AuthTenantID)
 		assert.Equal(t, allowedTID, *user.AuthTenantID)
+		// RD-1131: SPs are NOT auto-KYC'd by default.
+		assert.False(t, user.KYC, "service principal must not be KYC-verified by default")
 	})
 
 	t.Run("tenant not in allowlist is rejected", func(t *testing.T) {
@@ -159,6 +161,29 @@ func TestHandleAzureServicePrincipal(t *testing.T) {
 	t.Run("missing access_token is a bad request", func(t *testing.T) {
 		w := post(map[string]interface{}{})
 		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("auto-KYC provisions SP as KYC-verified when enabled (RD-1131)", func(t *testing.T) {
+		ts.config.AutoKYCAzureServicePrincipal = true
+		defer func() { ts.config.AutoKYCAzureServicePrincipal = false }()
+
+		// Fresh allowed tenant + distinct oid so this is a brand-new provision.
+		const autoKYCTID = "11112222-3333-4444-5555-666677778888"
+		_, err := ts.db.CreateAllowedAzureTenant(context.Background(), &db.AllowedAzureTenant{
+			ID:            uuid.New().String(),
+			TenantID:      autoKYCTID,
+			Label:         "Auto-KYC SP Tenant",
+			AutoProvision: true,
+		})
+		require.NoError(t, err)
+
+		w := post(map[string]interface{}{"access_token": mintToken("sp-autokyc-oid", autoKYCTID)})
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		user, err := ts.db.GetUserByExternalID(context.Background(), auth.AzureSubject("sp-autokyc-oid"))
+		require.NoError(t, err)
+		require.NotNil(t, user)
+		assert.True(t, user.KYC, "SP should be auto-KYC'd when AUTO_KYC_AZURE_SERVICE_PRINCIPAL is enabled")
 	})
 
 	t.Run("not configured returns 404", func(t *testing.T) {

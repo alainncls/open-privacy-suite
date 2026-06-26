@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/url"
 	"os"
@@ -330,6 +331,15 @@ type Config struct {
 	// in /status. (RD-1044)
 	ComplianceDefaultMode string
 
+	// Auto-KYC provisioning policy (RD-1131). When true, a NEWLY provisioned
+	// identity of the given class is created KYC-verified, skipping the manual
+	// KYC gate. Default false (fail-safe). RELAXES A COMPLIANCE CONTROL — enabling
+	// requires Compliance/Legal sign-off. Never affects existing users: KYC stays
+	// admin-managed once a row exists (see rbac.EnsureUserExists).
+	AutoKYCPrivado               bool // AUTO_KYC_PRIVADO
+	AutoKYCAzureUser             bool // AUTO_KYC_AZURE_USER
+	AutoKYCAzureServicePrincipal bool // AUTO_KYC_AZURE_SERVICE_PRINCIPAL
+
 	// Token price fetching configuration
 	PriceFetchInterval      time.Duration // How often to fetch prices from CoinGecko (default: 5m)
 	PriceStalenessThreshold time.Duration // After this duration, prices are considered stale (default: 15m)
@@ -526,6 +536,18 @@ func Load() *Config {
 		complianceDefaultMode = "enforce"
 	}
 
+	// Auto-KYC provisioning policy (RD-1131). Default false everywhere — a newly
+	// provisioned identity is created KYC-verified ONLY if its class is explicitly
+	// opted in. This relaxes the KYC compliance gate, so warn loudly at startup
+	// when any class is enabled (change-management / Compliance visibility).
+	autoKYCPrivado := getEnv("AUTO_KYC_PRIVADO", "false") == "true"
+	autoKYCAzureUser := getEnv("AUTO_KYC_AZURE_USER", "false") == "true"
+	autoKYCAzureSP := getEnv("AUTO_KYC_AZURE_SERVICE_PRINCIPAL", "false") == "true"
+	if autoKYCPrivado || autoKYCAzureUser || autoKYCAzureSP {
+		slog.Warn("auto-KYC is ENABLED — newly provisioned identities of the selected classes are created KYC-verified, bypassing the manual KYC gate; ensure this is covered by Compliance/Legal sign-off",
+			"privado", autoKYCPrivado, "azure_user", autoKYCAzureUser, "azure_service_principal", autoKYCAzureSP)
+	}
+
 	// Token price fetching configuration
 	priceFetchInterval := 5 * time.Minute
 	if intervalStr := getEnv("PRICE_FETCH_INTERVAL", ""); intervalStr != "" {
@@ -693,6 +715,9 @@ func Load() *Config {
 		EnableTravelRule:                    enableTravelRule,
 		TravelRecordExpiry:                  travelRecordExpiry,
 		ComplianceDefaultMode:               complianceDefaultMode,
+		AutoKYCPrivado:                      autoKYCPrivado,
+		AutoKYCAzureUser:                    autoKYCAzureUser,
+		AutoKYCAzureServicePrincipal:        autoKYCAzureSP,
 		PriceFetchInterval:                  priceFetchInterval,
 		PriceStalenessThreshold:             priceStalenessThreshold,
 		DisableCoinGecko:                    disableCoinGecko,

@@ -192,7 +192,7 @@ func (s *Server) handleAzureCallback(c *gin.Context) {
 		return
 	}
 
-	s.completeAzureLogin(c, identity, "azure_ad")
+	s.completeAzureLogin(c, identity, "azure_ad", s.config.AutoKYCAzureUser)
 }
 
 // completeAzureLogin runs the shared post-identity flow for both Azure AD login
@@ -202,7 +202,7 @@ func (s *Server) handleAzureCallback(c *gin.Context) {
 // local access + refresh tokens, and writes the HTTP response. Both paths share
 // this so the security gates (allowlist, ban, tenant-pinning, group assignment)
 // can never drift apart. providerMetric is the recordAuthAttempt provider label.
-func (s *Server) completeAzureLogin(c *gin.Context, identity *auth.AzureIdentity, providerMetric string) {
+func (s *Server) completeAzureLogin(c *gin.Context, identity *auth.AzureIdentity, providerMetric string, autoKYCNewUser bool) {
 	// Validate tid is a valid UUID before using it for lookups
 	if _, parseErr := uuid.Parse(identity.TenantID); parseErr != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid tenant ID in token"})
@@ -224,8 +224,11 @@ func (s *Server) completeAzureLogin(c *gin.Context, identity *auth.AzureIdentity
 
 	subject := auth.AzureSubject(identity.OID)
 
-	// Ensure user exists in RBAC system and retrieve their KYC status
-	kyc := false
+	// Ensure user exists in RBAC system and retrieve their KYC status.
+	// RD-1131: a NEW user is created KYC-verified iff its class opted in via
+	// auto-KYC config (azure_user vs azure_service_principal — set by the caller);
+	// existing users keep their admin-managed KYC (re-read below).
+	kyc := autoKYCNewUser
 	if s.rbacAccessCtrl != nil {
 		if !tenantConfig.AutoProvision {
 			// Auto-provision disabled: only allow login if user already exists
@@ -387,7 +390,7 @@ func (s *Server) handleAzureServicePrincipal(c *gin.Context) {
 		return
 	}
 
-	s.completeAzureLogin(c, identity, "azure_ad_sp")
+	s.completeAzureLogin(c, identity, "azure_ad_sp", s.config.AutoKYCAzureServicePrincipal)
 }
 
 // handleAuthProviders handles GET /api/v1/auth/providers.
