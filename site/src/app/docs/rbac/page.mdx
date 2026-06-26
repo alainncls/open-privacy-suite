@@ -76,6 +76,7 @@ Groups with `is_org_admin` enabled. Scoped to their organization:
 - Can create groups with any claims but **cannot create other org admin groups**
 - Sees all contracts in their org in the block explorer
 - Bypasses event rules for org contracts
+- **Access Logs are scoped to their organization** — a tier-2 admin sees only their own org's request log, never other tenants'. Super admins see the full log across all organizations.
 
 <Callout variant="info" title="Org-admin group configuration rules">
 

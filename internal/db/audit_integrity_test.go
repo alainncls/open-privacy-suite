@@ -59,13 +59,16 @@ func TestAuditIntegrity_WriterVerifierSymmetry_AccessLogs(t *testing.T) {
 	ctx := context.Background()
 	chain := audit.NewHashChain("")
 
-	// Write three rows through the production path.
+	// Write three rows through the production path. A non-empty org_id is
+	// passed deliberately (RD-1135): org_id is NOT part of the hash content,
+	// so the verifier must still report OK — this row doubles as the
+	// regression guard that the new column stays out of the chain.
 	for i := 0; i < 3; i++ {
 		_, _, _, err := database.LogAccessChained(
 			ctx,
 			chain,
 			"did:test:auditor", "eth_blockNumber", 200,
-			"203.0.113.42", "corr-xyz", nil, nil,
+			"203.0.113.42", "corr-xyz", nil, nil, "org-audit",
 		)
 		if err != nil {
 			t.Fatalf("LogAccessChained #%d: %v", i, err)
@@ -107,7 +110,7 @@ func TestAuditIntegrity_TamperedAccessLogRow_DetectedAsHashMismatch(t *testing.T
 		if _, _, _, err := database.LogAccessChained(
 			ctx, chain,
 			"did:test:auditor", "eth_chainId", 200,
-			"203.0.113.42", "", nil, nil,
+			"203.0.113.42", "", nil, nil, "",
 		); err != nil {
 			t.Fatalf("seed write %d: %v", i, err)
 		}

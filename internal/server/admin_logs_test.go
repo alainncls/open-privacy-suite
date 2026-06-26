@@ -113,7 +113,7 @@ func TestGetLogsHandler(t *testing.T) {
 	}
 	insertedIDs := make([]int64, 0, len(seed))
 	for _, r := range seed {
-		id, _, err := srv.db.LogAccessEnhanced(ctx, r.externalID, r.method, r.statusCode, "127.0.0.1", r.correlationID, nil, nil)
+		id, _, err := srv.db.LogAccessEnhanced(ctx, r.externalID, r.method, r.statusCode, "127.0.0.1", r.correlationID, nil, nil, "")
 		require.NoError(t, err)
 		insertedIDs = append(insertedIDs, id)
 	}
@@ -346,5 +346,118 @@ func TestGetLogsHandler(t *testing.T) {
 		var body map[string]any
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 		assert.Contains(t, body["error"], "invalid outcome")
+	})
+}
+
+// logsBody is the decoded /logs response shape used by the scoping tests.
+type logsBody struct {
+	Data  []map[string]any `json:"data"`
+	Total int64            `json:"total"`
+}
+
+// TestGetLogsOrgScoping is the RD-1135 regression: a tier-2 (JWT) org admin
+// must see ONLY their own org(s)' rows, super-admin sees everything (incl.
+// unattributed NULL-org rows), and a JWT admin with no orgs sees nothing.
+// The pre-fix bug returned the fleet-wide log to any admin.
+//
+// callerOrgScope reads auth_method + admin_org_ids/admin_readonly_org_ids from
+// the gin context (set by adminAuthMiddleware in production). These tests inject
+// that context directly so the focus stays on getLogs → callerOrgScope →
+// buildAccessLogWhere scoping, not on JWT minting (covered elsewhere).
+func TestGetLogsOrgScoping(t *testing.T) {
+	srv, _, _ := setupGetLogsTestServer(t)
+	ctx := context.Background()
+
+	const orgA = "11111111-1111-1111-1111-111111111111"
+	const orgB = "22222222-2222-2222-2222-222222222222"
+
+	seed := []struct {
+		ext    string
+		method string
+		status int
+		org    string
+	}{
+		{"did:a:1", "eth_call", 200, orgA},
+		{"did:a:2", "eth_sendTransaction", 200, orgA},
+		{"did:b:1", "eth_call", 200, orgB},
+		{"did:anon", "eth_blockNumber", 200, ""}, // unattributed → NULL org_id
+	}
+	for _, r := range seed {
+		_, _, err := srv.db.LogAccessEnhanced(ctx, r.ext, r.method, r.status, "127.0.0.1", "", nil, nil, r.org)
+		require.NoError(t, err)
+	}
+
+	// get issues GET /logs with an injected auth context. orgIDs==nil leaves
+	// admin_org_ids unset (mirrors a JWT admin with no orgs when authMethod is
+	// jwt_admin, or "no scoping" when authMethod is admin_token).
+	get := func(authMethod string, setOrgIDs bool, orgIDs []string, query url.Values) logsBody {
+		t.Helper()
+		r := gin.New()
+		r.GET("/api/v1/admin/logs", func(c *gin.Context) {
+			c.Set("auth_method", authMethod)
+			if setOrgIDs {
+				c.Set("admin_org_ids", orgIDs)
+			}
+			srv.getLogs(c)
+		})
+		target := "/api/v1/admin/logs"
+		if enc := query.Encode(); enc != "" {
+			target += "?" + enc
+		}
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+		require.Equal(t, http.StatusOK, rec.Code)
+		var body logsBody
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		return body
+	}
+
+	t.Run("jwt admin of orgA sees only orgA rows", func(t *testing.T) {
+		body := get("jwt_admin", true, []string{orgA}, url.Values{})
+		assert.Equal(t, int64(2), body.Total, "count must be the scoped count, not fleet total")
+		require.Len(t, body.Data, 2)
+		for _, row := range body.Data {
+			assert.Equal(t, orgA, row["org_id"], "leaked a non-orgA row")
+		}
+	})
+
+	t.Run("jwt admin of orgB sees only orgB rows", func(t *testing.T) {
+		body := get("jwt_admin", true, []string{orgB}, url.Values{})
+		assert.Equal(t, int64(1), body.Total)
+		require.Len(t, body.Data, 1)
+		assert.Equal(t, "did:b:1", body.Data[0]["external_id"])
+	})
+
+	t.Run("jwt admin with zero orgs sees nothing (fail closed)", func(t *testing.T) {
+		body := get("jwt_admin", true, []string{}, url.Values{})
+		assert.Equal(t, int64(0), body.Total)
+		assert.Empty(t, body.Data)
+	})
+
+	t.Run("jwt admin with no admin_org_ids set sees nothing", func(t *testing.T) {
+		body := get("jwt_admin", false, nil, url.Values{})
+		assert.Equal(t, int64(0), body.Total)
+		assert.Empty(t, body.Data)
+	})
+
+	t.Run("super-admin sees all rows including NULL-org", func(t *testing.T) {
+		body := get("admin_token", false, nil, url.Values{})
+		assert.Equal(t, int64(len(seed)), body.Total)
+		assert.Len(t, body.Data, len(seed))
+	})
+
+	t.Run("external_id filter cannot cross orgs (no enumeration oracle)", func(t *testing.T) {
+		// orgA admin asks for orgB's user — org predicate is ANDed, so empty.
+		body := get("jwt_admin", true, []string{orgA}, url.Values{"external_id": []string{"did:b:1"}})
+		assert.Equal(t, int64(0), body.Total)
+		assert.Empty(t, body.Data)
+	})
+
+	t.Run("NULL-org rows are invisible to tenant admins", func(t *testing.T) {
+		// Neither orgA nor orgB admin should ever see the unattributed row.
+		for _, org := range []string{orgA, orgB} {
+			body := get("jwt_admin", true, []string{org}, url.Values{"external_id": []string{"did:anon"}})
+			assert.Equal(t, int64(0), body.Total, "tenant admin saw an unattributed row")
+		}
 	})
 }
