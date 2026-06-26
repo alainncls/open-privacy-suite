@@ -142,7 +142,7 @@ func TestDryRun_RejectsSuperAdminToken(t *testing.T) {
 	}
 	w := dryRunPost(t, f.srv, f.orgID, "admin_token", "" /* DID irrelevant */, body)
 	assert.Equal(t, http.StatusForbidden, w.Code)
-	assert.Contains(t, w.Body.String(), "super-admin tokens are not authorised")
+	assert.Contains(t, w.Body.String(), "X-Admin-Token credentials are not authorised")
 }
 
 func TestDryRun_RejectsUnauthenticated(t *testing.T) {

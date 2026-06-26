@@ -25,6 +25,10 @@ type sessionInfoResponse struct {
 // JWT admin in Org A has no legitimate need to enumerate them
 // (audit H7). Restrict to super-admin.
 func (s *Server) listSessions(c *gin.Context) {
+	// RD-1132: tenant-confidential read — not readable with the operator token.
+	if denyOperatorTenantRead(c) {
+		return
+	}
 	if !requireSuperAdmin(c) {
 		return
 	}

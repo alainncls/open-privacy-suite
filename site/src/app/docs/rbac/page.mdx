@@ -54,17 +54,18 @@ The RBAC system uses a **two-layer permission model**: a method allowlist contro
 
 The system uses three tiers of administrative access, each scoped to a different level of the hierarchy.
 
-### Tier 1: Super Admin
+### Tier 1: Token credentials (admin + operator)
 
-Configured via the `ADMIN_API_TOKEN` environment variable. This is not a user account -- it is a shared secret held by the platform operator, used for **bootstrap and platform-level** operations, not day-to-day tenant management.
+Tier 1 is not a user account — it is a shared secret sent in the `X-Admin-Token` header. There are **two** Tier-1 credentials, distinguished by which configured value the header matches:
 
-Super admin is scoped to:
+**Full admin token** (`ADMIN_API_TOKEN`) — unrestricted: reads, writes, per-org tenant data, and all platform/fleet settings, in any org. Intended for **trusted operations** held inside the deployment's own trust boundary (Gateway-run automation, the bundled MCP admin tool). Use this only where the holder is already trusted with the database.
+
+**Operator token** (`OPERATOR_API_TOKEN`, optional) — a **restricted onboarder** credential for a party that should run the platform but not see or touch tenant data (e.g. a 3rd-party that onboards client orgs and reaches the system only through the API, with no database access). It is scoped to:
 
 - **Organization lifecycle** — create, update, and delete organizations (tenants).
 - **Minting org admins** — create `is_org_admin` / `is_org_readonly_admin` groups, set their access, and add the first members. This is how a brand-new org gets its first tier-2 admin; from there the org admin runs day-to-day onboarding themselves.
-- **Fleet / cluster-wide settings** — shared-infrastructure allowlist, base currency, Azure-tenant allowlist, global sanctions, system runtime toggles, and the system default / anonymous groups.
 
-Super admin **cannot** perform per-org tenant management — creating or editing regular groups, setting regular-group access, registering contracts, creating contract grants, or onboarding members into regular groups all return `403 Forbidden` for the `X-Admin-Token`. Those are the org admin's job (tier-2, below), so that a platform operator who is **not** a member of a tenant org cannot silently reshape that org's access. (The system default org/group are exempt — they are platform infrastructure, not a tenant.)
+The operator token **cannot** perform per-org tenant management or read tenant data — creating/editing regular groups, setting regular-group access, registering contracts, creating grants, onboarding members into regular groups, **and reading** members / groups / contracts / grants / audit logs / per-org compliance all return `403 Forbidden`. It also cannot impersonate or dry-run as a user. Those are the org admin's job (tier-2, below), so an operator who is **not** a member of a tenant org cannot silently reshape *or inspect* that org. For an operator with no database access this is a genuine confidentiality boundary, not just accountability. The org list + org metadata stay readable (lifecycle), and the system default org/group are exempt (platform infrastructure, not a tenant). Fleet/cluster-wide settings (shared-infrastructure, base currency, Azure-tenant allowlist, global sanctions, system toggles) remain **full-admin-token only**.
 
 ### Tier 2: Org Admin
 

@@ -21,6 +21,10 @@ import (
 // Contract handlers
 
 func (s *Server) listContracts(c *gin.Context) {
+	// RD-1132: tenant-confidential read — not readable with the operator token.
+	if denyOperatorTenantRead(c) {
+		return
+	}
 	orgID := c.Param("org_id")
 	limit, offset := parsePaginationParams(c, 50)
 
@@ -42,7 +46,7 @@ func (s *Server) listContracts(c *gin.Context) {
 func (s *Server) createContract(c *gin.Context) {
 	// RD-1107: per-org contract management is the org admin's job; the
 	// super-admin token is platform/bootstrap only.
-	if denySuperAdminOrgScoped(c) {
+	if denyOperatorOrgScoped(c) {
 		return
 	}
 	orgID := c.Param("org_id")
@@ -91,6 +95,10 @@ func (s *Server) createContract(c *gin.Context) {
 }
 
 func (s *Server) getContract(c *gin.Context) {
+	// RD-1132: tenant-confidential read — not readable with the operator token.
+	if denyOperatorTenantRead(c) {
+		return
+	}
 	orgID := c.Param("org_id")
 	address := c.Param("address")
 
@@ -110,7 +118,7 @@ func (s *Server) getContract(c *gin.Context) {
 
 func (s *Server) updateContract(c *gin.Context) {
 	// RD-1107: per-org contract management is the org admin's job.
-	if denySuperAdminOrgScoped(c) {
+	if denyOperatorOrgScoped(c) {
 		return
 	}
 	orgID := c.Param("org_id")
@@ -158,7 +166,7 @@ func (s *Server) updateContract(c *gin.Context) {
 
 func (s *Server) deleteContract(c *gin.Context) {
 	// RD-1107: per-org contract management is the org admin's job.
-	if denySuperAdminOrgScoped(c) {
+	if denyOperatorOrgScoped(c) {
 		return
 	}
 	orgID := c.Param("org_id")
@@ -193,7 +201,7 @@ func (s *Server) deleteContract(c *gin.Context) {
 // PUT /orgs/:org_id/contracts/:address/abi
 func (s *Server) updateContractABI(c *gin.Context) {
 	// RD-1107: per-org contract management is the org admin's job.
-	if denySuperAdminOrgScoped(c) {
+	if denyOperatorOrgScoped(c) {
 		return
 	}
 	orgID := c.Param("org_id")
@@ -267,7 +275,7 @@ func (s *Server) updateContractABI(c *gin.Context) {
 // matching tx). Operators should review their grants before flipping.
 func (s *Server) updateContractAllowVisibleToUnlock(c *gin.Context) {
 	// RD-1107: per-org contract management is the org admin's job.
-	if denySuperAdminOrgScoped(c) {
+	if denyOperatorOrgScoped(c) {
 		return
 	}
 	orgID := c.Param("org_id")
@@ -414,6 +422,10 @@ func (s *Server) updateContractEventsAllowDynamicPayload(c *gin.Context) {
 // event picker for configuring event rules.
 // GET /orgs/:org_id/contracts/:address/events
 func (s *Server) listContractEvents(c *gin.Context) {
+	// RD-1132: tenant-confidential read — not readable with the operator token.
+	if denyOperatorTenantRead(c) {
+		return
+	}
 	orgID := c.Param("org_id")
 	address := c.Param("address")
 
@@ -520,7 +532,7 @@ func (s *Server) checkContractsOnChain(c *gin.Context) {
 // POST /orgs/:org_id/contracts/sync-delete
 func (s *Server) deleteStaleContracts(c *gin.Context) {
 	// RD-1107: per-org contract management is the org admin's job.
-	if denySuperAdminOrgScoped(c) {
+	if denyOperatorOrgScoped(c) {
 		return
 	}
 	orgID := c.Param("org_id")
@@ -964,6 +976,10 @@ func autoAddSelfConstraints(rules []rbac.EventRule, abiJSON string) []rbac.Event
 // Contract Grant handlers
 
 func (s *Server) listContractGrants(c *gin.Context) {
+	// RD-1132: tenant-confidential read — not readable with the operator token.
+	if denyOperatorTenantRead(c) {
+		return
+	}
 	orgID := c.Param("org_id")
 	address := c.Param("address")
 
@@ -992,7 +1008,7 @@ func (s *Server) listContractGrants(c *gin.Context) {
 func (s *Server) createContractGrant(c *gin.Context) {
 	// RD-1107: granting per-org contract access is the org admin's job; the
 	// super-admin token is platform/bootstrap only.
-	if denySuperAdminOrgScoped(c) {
+	if denyOperatorOrgScoped(c) {
 		return
 	}
 	orgID := c.Param("org_id")
@@ -1102,7 +1118,7 @@ func (s *Server) createContractGrant(c *gin.Context) {
 
 func (s *Server) updateContractGrant(c *gin.Context) {
 	// RD-1107: per-org contract grants are the org admin's job.
-	if denySuperAdminOrgScoped(c) {
+	if denyOperatorOrgScoped(c) {
 		return
 	}
 	orgID := c.Param("org_id")
@@ -1250,6 +1266,10 @@ func (s *Server) updateContractGrant(c *gin.Context) {
 // full payload.
 // GET /contracts/by-address/:address
 func (s *Server) lookupContractByAddress(c *gin.Context) {
+	// RD-1132: tenant-confidential read — not readable with the operator token.
+	if denyOperatorTenantRead(c) {
+		return
+	}
 	address := c.Param("address")
 
 	contract, err := s.db.GetContractByAddressGlobal(c.Request.Context(), address)
@@ -1323,6 +1343,10 @@ func (s *Server) lookupContractByAddress(c *gin.Context) {
 // getContractGrantSummary returns grant counts and group names for all contracts in an org.
 // GET /orgs/:org_id/contracts/grant-summary
 func (s *Server) getContractGrantSummary(c *gin.Context) {
+	// RD-1132: tenant-confidential read — not readable with the operator token.
+	if denyOperatorTenantRead(c) {
+		return
+	}
 	orgID := c.Param("org_id")
 	summary, err := s.db.GetContractGrantSummary(c.Request.Context(), orgID)
 	if err != nil {
@@ -1336,7 +1360,7 @@ func (s *Server) getContractGrantSummary(c *gin.Context) {
 
 func (s *Server) deleteContractGrant(c *gin.Context) {
 	// RD-1107: per-org contract grants are the org admin's job.
-	if denySuperAdminOrgScoped(c) {
+	if denyOperatorOrgScoped(c) {
 		return
 	}
 	orgID := c.Param("org_id")
@@ -1400,7 +1424,7 @@ func validateEventRules(rules []rbac.EventRule) string {
 // POST /orgs/:org_id/contracts/batch-move
 func (s *Server) batchMoveContracts(c *gin.Context) {
 	// RD-1107: per-org contract management is the org admin's job.
-	if denySuperAdminOrgScoped(c) {
+	if denyOperatorOrgScoped(c) {
 		return
 	}
 	orgID := c.Param("org_id")

@@ -195,14 +195,14 @@ func (s *Server) bindImpersonationBareReject(g *gin.RouterGroup, reject gin.Hand
 // package-level doc on this file for the full enforcement matrix.
 func (s *Server) impersonationGateMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Super-admin token bypasses orgScopingMiddleware on regular admin
-		// routes; for impersonation it must NOT — super-admin has no
-		// data-layer reach today and this would be the path that gives it
-		// to them. Reject explicitly with the same 403 surface as
+		// X-Admin-Token credentials (admin_token full / operator_token) bypass
+		// orgScopingMiddleware on regular admin routes; for impersonation they
+		// must NOT — impersonation reads tenant data as a user, which neither
+		// token may do. Reject explicitly with the same 403 surface as
 		// handleDryRun.
-		if c.GetString("auth_method") == "admin_token" {
+		if am := c.GetString("auth_method"); am == "admin_token" || am == "operator_token" {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-				"error": "impersonation requires a tier-2 admin JWT; super-admin tokens are not authorised",
+				"error": "impersonation requires a tier-2 admin JWT; X-Admin-Token credentials are not authorised",
 			})
 			return
 		}

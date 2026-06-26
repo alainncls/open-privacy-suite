@@ -215,6 +215,10 @@ func resolveListUsersScope(c *gin.Context) ([]string, error) {
 }
 
 func (s *Server) listRBACUsers(c *gin.Context) {
+	// RD-1132: tenant-confidential read — not readable with the operator token.
+	if denyOperatorTenantRead(c) {
+		return
+	}
 	limit, offset := parsePaginationParams(c, 50)
 
 	scopedOrgIDs, err := resolveListUsersScope(c)
@@ -272,6 +276,10 @@ func (s *Server) listRBACUsers(c *gin.Context) {
 }
 
 func (s *Server) getRBACUser(c *gin.Context) {
+	// RD-1132: tenant-confidential read — not readable with the operator token.
+	if denyOperatorTenantRead(c) {
+		return
+	}
 	userID := c.Param("user_id")
 	if !s.requireUserInCallerScope(c, userID) {
 		return
@@ -372,6 +380,10 @@ func (s *Server) updateRBACUser(c *gin.Context) {
 }
 
 func (s *Server) getUserLinkedAddresses(c *gin.Context) {
+	// RD-1132: tenant-confidential read — not readable with the operator token.
+	if denyOperatorTenantRead(c) {
+		return
+	}
 	userID := c.Param("user_id")
 	if !s.requireUserInCallerScope(c, userID) {
 		return
@@ -470,6 +482,10 @@ func (s *Server) deleteRBACUser(c *gin.Context) {
 // Membership handlers
 
 func (s *Server) listUserMemberships(c *gin.Context) {
+	// RD-1132: tenant-confidential read — not readable with the operator token.
+	if denyOperatorTenantRead(c) {
+		return
+	}
 	userID := c.Param("user_id")
 	// Caller must share at least one org with the user — prevents
 	// enumeration of which groups in which orgs a multi-org user
@@ -583,7 +599,7 @@ func (s *Server) createUserMembership(c *gin.Context) {
 	}
 	// RD-1107: super-admin manages org-admin-group membership only (minting);
 	// regular-group membership is per-org tenant management (the org admin's job).
-	if denySuperAdminRegularGroup(c, group) {
+	if denyOperatorRegularGroup(c, group) {
 		return
 	}
 
@@ -746,7 +762,7 @@ func (s *Server) createMembershipByDID(c *gin.Context) {
 	}
 	// RD-1107: super-admin manages org-admin-group membership only (minting);
 	// regular-group membership is per-org tenant management (the org admin's job).
-	if denySuperAdminRegularGroup(c, group) {
+	if denyOperatorRegularGroup(c, group) {
 		return
 	}
 
@@ -862,7 +878,7 @@ func (s *Server) deleteUserMembership(c *gin.Context) {
 	}
 	// RD-1107: super-admin manages org-admin-group membership only (minting);
 	// regular-group membership is per-org tenant management (the org admin's job).
-	if denySuperAdminRegularGroup(c, group) {
+	if denyOperatorRegularGroup(c, group) {
 		return
 	}
 
@@ -887,6 +903,10 @@ func (s *Server) deleteUserMembership(c *gin.Context) {
 // Debugging handlers
 
 func (s *Server) getEffectivePermissions(c *gin.Context) {
+	// RD-1132: tenant-confidential read — not readable with the operator token.
+	if denyOperatorTenantRead(c) {
+		return
+	}
 	userID := c.Param("user_id")
 	// Caller must share at least one org with the user. Prevents a
 	// tier-2 admin from extracting the AllowedMethods / Claims /
@@ -943,6 +963,10 @@ func (s *Server) getEffectivePermissions(c *gin.Context) {
 }
 
 func (s *Server) checkAccessAPI(c *gin.Context) {
+	// RD-1132: tenant-confidential read — not readable with the operator token.
+	if denyOperatorTenantRead(c) {
+		return
+	}
 	var req rbac.AccessCheckRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})

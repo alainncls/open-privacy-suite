@@ -102,13 +102,14 @@ func (s *Server) handleDryRun(c *gin.Context) {
 	ctx := c.Request.Context()
 	orgID := c.Param("org_id")
 
-	// Reject super-admin token explicitly. The orgScopingMiddleware
-	// already lets super-admin through any :org_id — we have to gate
-	// here because dry-run is the one admin-API endpoint where
-	// super-admin's "bypass org scoping" rule must NOT apply.
-	if c.GetString("auth_method") == "admin_token" {
+	// Reject the token credentials explicitly. orgScopingMiddleware lets both
+	// admin_token (full) and operator_token through any :org_id — we have to
+	// gate here because dry-run is the one admin-API endpoint where that
+	// "bypass org scoping" rule must NOT apply: impersonating a user is reading
+	// tenant data as that user, which neither token may do.
+	if am := c.GetString("auth_method"); am == "admin_token" || am == "operator_token" {
 		c.JSON(http.StatusForbidden, gin.H{
-			"error": "dry-run requires a tier-2 admin JWT; super-admin tokens are not authorised for impersonation",
+			"error": "dry-run requires a tier-2 admin JWT; X-Admin-Token credentials are not authorised for impersonation",
 		})
 		return
 	}

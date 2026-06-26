@@ -103,51 +103,57 @@ func requireSuperAdmin(c *gin.Context) bool {
 	return false
 }
 
-// errSuperAdminNoTenantMgmt is the opaque deny for RD-1107: the super-admin
-// token (X-Admin-Token) is a platform / bootstrap / fleet credential and must
-// NOT perform per-org tenant management. Per-org RBAC and compliance are the
-// org admin's job (Authorization: Bearer JWT). Super-admin keeps org lifecycle,
-// is_org_admin / system group ops (incl. minting org admins), and the global /
-// fleet endpoints (requireSuperAdmin paths).
-const errSuperAdminNoTenantMgmt = "per-org management is the org admin's job; the super-admin token is for platform/bootstrap only"
+// RD-1107 / RD-1132 — the OPERATOR token (auth_method=="operator_token").
+//
+// The admin API is reachable with two X-Admin-Token values (see
+// adminAuthMiddleware): the full ADMIN_API_TOKEN (auth_method=="admin_token",
+// trusted ops / MCP — unrestricted) and the optional restricted
+// OPERATOR_API_TOKEN (auth_method=="operator_token"). The operator is a
+// platform/bootstrap principal — possibly a 3rd-party onboarder with no DB
+// access — that may create/manage orgs and mint org admins, but must NOT touch
+// or read per-org tenant data. The denyOperator* helpers enforce that; they
+// fire ONLY for operator_token (admin_token and jwt_admin and dev pass through).
 
-// denySuperAdminOrgScoped rejects the super-admin token on a mutation of
-// org_id-scoped tenant data (contracts, grants, per-org compliance, …). It is
-// the RD-1107 counterpart to requireSuperAdmin: where requireSuperAdmin guards
-// genuinely-global mutations, this guards genuinely-per-org ones. jwt_admin
-// (tier-2 — already org-scoped by orgScopingMiddleware) and dev ("") pass
-// through. Returns true and writes the 403 when the caller must be stopped.
+// errOperatorNoTenantMgmt is the opaque deny for an operator-token per-org
+// MUTATION (RD-1107). The operator keeps org lifecycle, is_org_admin / system
+// group ops (incl. minting org admins), but per-org RBAC + compliance are the
+// org admin's job (Authorization: Bearer JWT).
+const errOperatorNoTenantMgmt = "per-org management is the org admin's job; the operator token is for platform/bootstrap only"
+
+// denyOperatorOrgScoped rejects the operator token on a mutation of org_id-scoped
+// tenant data (contracts, grants, per-org compliance, …). jwt_admin (tier-2 —
+// already org-scoped by orgScopingMiddleware), admin_token (full) and dev ("")
+// pass through. Returns true and writes the 403 when the caller must be stopped.
 //
 // Call AFTER the org-scope / foreign-org checks so a cross-tenant probe still
 // gets the opaque foreign-org error first.
-func denySuperAdminOrgScoped(c *gin.Context) bool {
-	if c.GetString("auth_method") != "admin_token" {
+func denyOperatorOrgScoped(c *gin.Context) bool {
+	if c.GetString("auth_method") != "operator_token" {
 		return false
 	}
 	// The default org is system infrastructure (the global landing org that
-	// every self-onboarding user lands in), not a tenant — super-admin still
-	// manages it, like is_system resources. All these routes carry :org_id.
+	// every self-onboarding user lands in), not a tenant — the operator may
+	// still manage it, like is_system resources. All these routes carry :org_id.
 	if c.Param("org_id") == rbac.DefaultOrgID {
 		return false
 	}
-	c.JSON(http.StatusForbidden, gin.H{"error": errSuperAdminNoTenantMgmt})
+	c.JSON(http.StatusForbidden, gin.H{"error": errOperatorNoTenantMgmt})
 	return true
 }
 
-// denySuperAdminRegularGroup is the group-bound variant of
-// denySuperAdminOrgScoped: it rejects the super-admin token only when the
-// target group is a REGULAR group (not is_org_admin / is_org_readonly_admin /
-// is_system). Super-admin keeps full control of org-admin and system groups
-// (minting org admins, anonymous-group config) — the exact inverse of
-// denyJWTAdminTouchOrgAdminGroup, which reserves those same groups TO
-// super-admin. A nil group is treated as regular (fail-closed). Returns true
-// and writes the 403 when stopped; the handler must then return. Call AFTER
-// the group load + nil/404 check and the foreign-org check.
-func denySuperAdminRegularGroup(c *gin.Context, group *rbac.Group) bool {
-	if c.GetString("auth_method") != "admin_token" {
+// denyOperatorRegularGroup is the group-bound variant of denyOperatorOrgScoped:
+// it rejects the operator token only when the target group is a REGULAR group
+// (not is_org_admin / is_org_readonly_admin / is_system). The operator keeps full
+// control of org-admin and system groups (minting org admins, anonymous-group
+// config) — the exact inverse of denyJWTAdminTouchOrgAdminGroup, which reserves
+// those same groups to the privileged path. A nil group is treated as regular
+// (fail-closed). Returns true and writes the 403 when stopped; the handler must
+// then return. Call AFTER the group load + nil/404 check and the foreign-org check.
+func denyOperatorRegularGroup(c *gin.Context, group *rbac.Group) bool {
+	if c.GetString("auth_method") != "operator_token" {
 		return false
 	}
-	// Admin-tier and system groups stay super-admin-managed: is_org_admin /
+	// Admin-tier and system groups stay operator-manageable: is_org_admin /
 	// is_org_readonly_admin (minting/managing org admins), is_system (e.g. the
 	// anonymous group), and the global default group — system infrastructure
 	// that predates the is_system flag. Everything else is a tenant's regular
@@ -156,6 +162,32 @@ func denySuperAdminRegularGroup(c *gin.Context, group *rbac.Group) bool {
 	if group != nil && (group.IsOrgAdmin || group.IsOrgReadonlyAdmin || group.IsSystem || group.ID == rbac.DefaultGroupID) {
 		return false
 	}
-	c.JSON(http.StatusForbidden, gin.H{"error": errSuperAdminNoTenantMgmt})
+	c.JSON(http.StatusForbidden, gin.H{"error": errOperatorNoTenantMgmt})
+	return true
+}
+
+// errOperatorNoTenantRead is the opaque deny for RD-1132: the operator token may
+// not READ tenant-confidential data (members, groups, contracts, grants, audit
+// logs, per-org compliance, …). For an operator that reaches the system only
+// through the admin API (e.g. a 3rd-party onboarder with no DB access) this is a
+// real confidentiality boundary, not just accountability.
+const errOperatorNoTenantRead = "tenant data is not readable with the operator token; use a tier-2 org-admin JWT"
+
+// denyOperatorTenantRead rejects the operator token on a tenant-confidential READ
+// (RD-1132 — the read-side counterpart to denyOperatorOrgScoped). The operator
+// keeps the org list + org metadata + fleet/global reads; everything per-tenant
+// is the org admin's (tier-2 JWT). admin_token (full), jwt_admin and dev ("")
+// pass through. The default org/group stays readable (system infrastructure),
+// matching the mutation gate: org-scoped routes carry :org_id, so the default-org
+// check exempts them; global / by-:user_id / by-:address reads have no :org_id
+// param (empty != DefaultOrgID) and are therefore blocked for the operator.
+func denyOperatorTenantRead(c *gin.Context) bool {
+	if c.GetString("auth_method") != "operator_token" {
+		return false
+	}
+	if c.Param("org_id") == rbac.DefaultOrgID {
+		return false
+	}
+	c.JSON(http.StatusForbidden, gin.H{"error": errOperatorNoTenantRead})
 	return true
 }

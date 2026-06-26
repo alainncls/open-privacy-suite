@@ -21,6 +21,10 @@ import (
 // admin_readonly_org_ids. The DB layer filters at the SQL level so
 // the response cardinality cannot be used as an enumeration oracle.
 func (s *Server) listAuditLogs(c *gin.Context) {
+	// RD-1132: tenant-confidential read — not readable with the operator token.
+	if denyOperatorTenantRead(c) {
+		return
+	}
 	// Parse pagination params
 	limit := 100
 	offset := 0

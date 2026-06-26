@@ -83,6 +83,10 @@ func (s *Server) defaultEnforcementMode() compliance.EnforcementMode {
 // Compliance Config handlers
 
 func (s *Server) getComplianceConfig(c *gin.Context) {
+	// RD-1132: tenant-confidential read — not readable with the operator token.
+	if denyOperatorTenantRead(c) {
+		return
+	}
 	orgID := c.Param("org_id")
 
 	config, err := s.db.GetComplianceConfig(c.Request.Context(), orgID)
@@ -109,7 +113,7 @@ func (s *Server) getComplianceConfig(c *gin.Context) {
 func (s *Server) updateComplianceConfig(c *gin.Context) {
 	// RD-1107: per-org compliance management is the org admin's job; the
 	// super-admin token is platform/bootstrap only.
-	if denySuperAdminOrgScoped(c) {
+	if denyOperatorOrgScoped(c) {
 		return
 	}
 	orgID := c.Param("org_id")
@@ -207,6 +211,10 @@ func (s *Server) updateComplianceConfig(c *gin.Context) {
 // Token Price handlers
 
 func (s *Server) listTokenPrices(c *gin.Context) {
+	// RD-1132: tenant-confidential read — not readable with the operator token.
+	if denyOperatorTenantRead(c) {
+		return
+	}
 	orgID := c.Param("org_id")
 
 	prices, err := s.db.ListTokenPrices(c.Request.Context(), orgID)
@@ -220,7 +228,7 @@ func (s *Server) listTokenPrices(c *gin.Context) {
 
 func (s *Server) upsertTokenPrice(c *gin.Context) {
 	// RD-1107: per-org compliance management is the org admin's job.
-	if denySuperAdminOrgScoped(c) {
+	if denyOperatorOrgScoped(c) {
 		return
 	}
 	orgID := c.Param("org_id")
@@ -362,7 +370,7 @@ func (s *Server) upsertTokenPrice(c *gin.Context) {
 
 func (s *Server) deleteTokenPrice(c *gin.Context) {
 	// RD-1107: per-org compliance management is the org admin's job.
-	if denySuperAdminOrgScoped(c) {
+	if denyOperatorOrgScoped(c) {
 		return
 	}
 	orgID := c.Param("org_id")
@@ -442,7 +450,7 @@ func (s *Server) listSystemTokenPrices(c *gin.Context) {
 
 func (s *Server) createTravelRuleRecord(c *gin.Context) {
 	// RD-1107: per-org compliance management is the org admin's job.
-	if denySuperAdminOrgScoped(c) {
+	if denyOperatorOrgScoped(c) {
 		return
 	}
 	orgID := c.Param("org_id")
@@ -582,6 +590,10 @@ func (s *Server) createTravelRuleRecord(c *gin.Context) {
 }
 
 func (s *Server) listTravelRuleRecords(c *gin.Context) {
+	// RD-1132: tenant-confidential read — not readable with the operator token.
+	if denyOperatorTenantRead(c) {
+		return
+	}
 	orgID := c.Param("org_id")
 	limit, offset := compliancePaginationParams(c, 50)
 
@@ -596,7 +608,7 @@ func (s *Server) listTravelRuleRecords(c *gin.Context) {
 
 func (s *Server) deleteTravelRuleRecord(c *gin.Context) {
 	// RD-1107: per-org compliance management is the org admin's job.
-	if denySuperAdminOrgScoped(c) {
+	if denyOperatorOrgScoped(c) {
 		return
 	}
 	orgID := c.Param("org_id")
@@ -639,6 +651,14 @@ func (s *Server) listSanctionedAddresses(c *gin.Context) {
 	var orgID *string
 	if q := c.Query("org_id"); q != "" {
 		orgID = &q
+	}
+
+	// RD-1132: the operator token may read GLOBAL sanctions (fleet) but not a
+	// specific org's blocklist (tenant-confidential). Block only the per-org
+	// query for operator_token; the global listing (org_id nil) passes.
+	if c.GetString("auth_method") == "operator_token" && orgID != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": errOperatorNoTenantRead})
+		return
 	}
 
 	// For JWT admins, the caller MUST specify org_id (and it must be in
@@ -705,8 +725,8 @@ func (s *Server) addSanctionedAddress(c *gin.Context) {
 	}
 	// RD-1107: a PER-ORG sanction (org_id set) is the org admin's job; the
 	// super-admin token may only manage GLOBAL sanctions (org_id nil).
-	if c.GetString("auth_method") == "admin_token" && input.OrgID != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": errSuperAdminNoTenantMgmt})
+	if c.GetString("auth_method") == "operator_token" && input.OrgID != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": errOperatorNoTenantMgmt})
 		return
 	}
 
@@ -772,8 +792,8 @@ func (s *Server) removeSanctionedAddress(c *gin.Context) {
 	}
 	// RD-1107: removing a PER-ORG sanction (org_id set) is the org admin's job;
 	// the super-admin token may only manage GLOBAL sanctions (org_id nil).
-	if c.GetString("auth_method") == "admin_token" && existing.OrgID != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": errSuperAdminNoTenantMgmt})
+	if c.GetString("auth_method") == "operator_token" && existing.OrgID != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": errOperatorNoTenantMgmt})
 		return
 	}
 
@@ -800,6 +820,10 @@ func (s *Server) removeSanctionedAddress(c *gin.Context) {
 // Address Threshold Override handlers
 
 func (s *Server) listAddressThresholdOverrides(c *gin.Context) {
+	// RD-1132: tenant-confidential read — not readable with the operator token.
+	if denyOperatorTenantRead(c) {
+		return
+	}
 	orgID := c.Param("org_id")
 	limit, offset := compliancePaginationParams(c, 50)
 
@@ -814,7 +838,7 @@ func (s *Server) listAddressThresholdOverrides(c *gin.Context) {
 
 func (s *Server) upsertAddressThresholdOverride(c *gin.Context) {
 	// RD-1107: per-org compliance management is the org admin's job.
-	if denySuperAdminOrgScoped(c) {
+	if denyOperatorOrgScoped(c) {
 		return
 	}
 	orgID := c.Param("org_id")
@@ -873,7 +897,7 @@ func (s *Server) upsertAddressThresholdOverride(c *gin.Context) {
 
 func (s *Server) deleteAddressThresholdOverride(c *gin.Context) {
 	// RD-1107: per-org compliance management is the org admin's job.
-	if denySuperAdminOrgScoped(c) {
+	if denyOperatorOrgScoped(c) {
 		return
 	}
 	orgID := c.Param("org_id")
@@ -900,6 +924,10 @@ func (s *Server) deleteAddressThresholdOverride(c *gin.Context) {
 // Compliance Log handlers
 
 func (s *Server) listComplianceLogs(c *gin.Context) {
+	// RD-1132: tenant-confidential read — not readable with the operator token.
+	if denyOperatorTenantRead(c) {
+		return
+	}
 	orgID := c.Param("org_id")
 	limit, offset := compliancePaginationParams(c, 50)
 
