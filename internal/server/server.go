@@ -1075,7 +1075,7 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 	}
 
 	// Process the request through the business logic layer
-	result := s.jsonrpcProcessor.Process(c.Request.Context(), &ProcessRequest{
+	procReq := &ProcessRequest{
 		UserID:           subjectStr,
 		OrgID:            orgID,
 		Method:           method,
@@ -1084,11 +1084,41 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 		ClientIP:         c.ClientIP(),
 		CorrelationID:    getCorrelationID(c),
 		BypassPermsCache: impersonating,
-	})
+	}
+	result := s.jsonrpcProcessor.Process(c.Request.Context(), procReq)
 
 	// Handle errors from processing
 	if result.Error != nil {
-		c.JSON(result.Error.StatusCode, gin.H{"error": result.Error.Message})
+		respBody := gin.H{"error": result.Error.Message}
+		// RD-1137 Part A: opt-in verbose errors. The wire stays opaque by
+		// default; only callers in a group flagged verbose_errors (in the
+		// resolved org) receive the curated, oracle-collapsed reason code.
+		// Resolved lazily here — only on denials, never on the success hot
+		// path. procReq.resolvedOrgID is stamped by the processor after
+		// CheckAccess (RD-1135); empty for pre-resolution denials → opaque.
+		//
+		// Read denialReason (the unified carrier set at EVERY classified denial
+		// site for the access-log — Part B), not ProcessError.Reason (which is
+		// only populated on the trace paths). Otherwise the most common denial,
+		// the RBAC method_not_allowed, would never surface a verbose reason.
+		//
+		// Org for the verbose lookup: prefer the access-decision-resolved org
+		// (RD-1135), but fall back to the request/path-supplied org — the
+		// method_not_allowed deny returns no resolved OrgID (access.go), yet for
+		// an explicit /rpc/:org_id request the path org is the right scope. This
+		// is membership-gated by GroupVerboseErrorsForUserOrg, so a forged org
+		// can't grant verbose (the caller isn't a member of a verbose group
+		// there). Empty (bare /rpc, unresolved) → opaque.
+		verboseOrg := procReq.resolvedOrgID
+		if verboseOrg == "" {
+			verboseOrg = procReq.OrgID
+		}
+		if procReq.denialReason != "" && procReq.UserID != "" && verboseOrg != "" {
+			if verbose, vErr := s.db.GroupVerboseErrorsForUserOrg(c.Request.Context(), procReq.UserID, verboseOrg); vErr == nil && verbose {
+				respBody["reason"] = wireReason(procReq.denialReason)
+			}
+		}
+		c.JSON(result.Error.StatusCode, respBody)
 		return
 	}
 

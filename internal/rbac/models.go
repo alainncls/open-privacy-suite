@@ -95,11 +95,11 @@ type Organization struct {
 type AuditRecord struct {
 	ID        string    `json:"id"`
 	OrgID     string    `json:"org_id"`
-	ActorID   string    `json:"actor_id"` // User or API Key ID
-	Action    string    `json:"action"`   // e.g., "create", "update", "delete"
-	Resource  string    `json:"resource"` // The type of resource (e.g., "ContractGrant")
+	ActorID   string    `json:"actor_id"`  // User or API Key ID
+	Action    string    `json:"action"`    // e.g., "create", "update", "delete"
+	Resource  string    `json:"resource"`  // The type of resource (e.g., "ContractGrant")
 	TargetID  string    `json:"target_id"` // GroupID, UserID, ContractID depending on resource
-	Details   any       `json:"details"`  // The actual object changes
+	Details   any       `json:"details"`   // The actual object changes
 	Timestamp time.Time `json:"timestamp"`
 }
 
@@ -263,7 +263,7 @@ type ContractGrant struct {
 	ContractID string           `json:"contract_id"`
 	GroupID    string           `json:"group_id"`
 	Functions  []FunctionRule   `json:"functions,omitempty"` // nil = all functions, or structured rules with optional param constraints
-	EventRules *EventRulesField `json:"event_rules"`        // nil = deny, wildcard = all events, allowlist = specific events
+	EventRules *EventRulesField `json:"event_rules"`         // nil = deny, wildcard = all events, allowlist = specific events
 	CreatedAt  time.Time        `json:"created_at"`
 	UpdatedAt  time.Time        `json:"updated_at"`
 }
@@ -280,6 +280,7 @@ type GroupAccess struct {
 	RateLimitRPS   *int      `json:"rate_limit_rps,omitempty"`   // Deprecated: rate limiting moved to RPC proxy
 	RateLimitDaily *int      `json:"rate_limit_daily,omitempty"` // Deprecated: rate limiting moved to RPC proxy
 	RPCAPIKey      *string   `json:"rpc_api_key,omitempty"`      // API key for upstream RPC proxy authentication
+	VerboseErrors  bool      `json:"verbose_errors"`             // RD-1137 Part A: members get curated reason codes on the wire for denials
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 
@@ -318,7 +319,7 @@ type UserMembership struct {
 type ContractAccess struct {
 	Claims     []Claim          `json:"claims"`
 	Functions  []FunctionRule   `json:"functions,omitempty"` // nil = all functions allowed
-	EventRules *EventRulesField `json:"event_rules"`        // nil = deny, wildcard = all events, allowlist = specific events
+	EventRules *EventRulesField `json:"event_rules"`         // nil = deny, wildcard = all events, allowlist = specific events
 }
 
 // EffectivePermissions represents the computed permissions for a user in an organization.
@@ -357,10 +358,10 @@ type AuditLogEntry struct {
 // AccessCheckRequest represents a request to check access permissions.
 type AccessCheckRequest struct {
 	UserExternalID   string  `json:"user_external_id"`
-	OrgSlug          string  `json:"org_slug,omitempty"` // Optional org slug (deprecated, use OrgID)
-	OrgID            string  `json:"org_id,omitempty"`   // Optional org ID for explicit org selection
-	Method           string  `json:"method"`             // Original JSON-RPC method name (used for RBAC allowlist)
-	AccessMethod     string  `json:"-"`                  // Resolved method for access control (alias target). Empty = same as Method.
+	OrgSlug          string  `json:"org_slug,omitempty"`          // Optional org slug (deprecated, use OrgID)
+	OrgID            string  `json:"org_id,omitempty"`            // Optional org ID for explicit org selection
+	Method           string  `json:"method"`                      // Original JSON-RPC method name (used for RBAC allowlist)
+	AccessMethod     string  `json:"-"`                           // Resolved method for access control (alias target). Empty = same as Method.
 	Params           []any   `json:"params,omitempty"`            // JSON-RPC params for Multicall detection
 	TargetAddress    string  `json:"target_address,omitempty"`    // Target address (contract or EOA)
 	FunctionSelector string  `json:"function_selector,omitempty"` // First 4 bytes of calldata (e.g., "0xa9059cbb")
@@ -403,15 +404,15 @@ func (r *AccessCheckRequest) EffectiveMethod() string {
 // that consumes this field should slog it for the operator and
 // respond with a generic opaque message to the client.
 type AccessCheckResult struct {
-	Allowed           bool               `json:"allowed"`
-	AuthRequired      bool               `json:"auth_required,omitempty"`       // True when denial is due to missing authentication (401 vs 403)
-	Reason            string             `json:"reason,omitempty"`
-	OrgID             string             `json:"org_id,omitempty"`              // Resolved organization ID
-	UserID            string             `json:"user_id,omitempty"`             // Internal user ID (UUID)
-	RateLimitRPS   *int            `json:"rate_limit_rps,omitempty"`  // Deprecated: rate limiting moved to RPC proxy
-	RateLimitDaily *int            `json:"rate_limit_daily,omitempty"` // Deprecated: rate limiting moved to RPC proxy
-	RPCAPIKey string  `json:"-"`                // API key for upstream RPC proxy (excluded from JSON — sensitive)
-	Claims    []Claim `json:"claims,omitempty"`
+	Allowed        bool    `json:"allowed"`
+	AuthRequired   bool    `json:"auth_required,omitempty"` // True when denial is due to missing authentication (401 vs 403)
+	Reason         string  `json:"reason,omitempty"`
+	OrgID          string  `json:"org_id,omitempty"`           // Resolved organization ID
+	UserID         string  `json:"user_id,omitempty"`          // Internal user ID (UUID)
+	RateLimitRPS   *int    `json:"rate_limit_rps,omitempty"`   // Deprecated: rate limiting moved to RPC proxy
+	RateLimitDaily *int    `json:"rate_limit_daily,omitempty"` // Deprecated: rate limiting moved to RPC proxy
+	RPCAPIKey      string  `json:"-"`                          // API key for upstream RPC proxy (excluded from JSON — sensitive)
+	Claims         []Claim `json:"claims,omitempty"`
 }
 
 // GroupWithAccess combines a Group with its access settings.
@@ -650,13 +651,11 @@ func (ca ContractAccess) HasClaim(claim Claim) bool {
 type PreregisteredAddress struct {
 	ID             string     `json:"id"`
 	OrgID          string     `json:"org_id"`
-	Address        string     `json:"address"`         // The pre-computed CREATE3 address (lowercase 0x-prefixed)
-	Factory        string     `json:"factory"`         // The CREATE3 factory contract address
-	Salt           []byte     `json:"salt"`            // The 32-byte salt used for address derivation
+	Address        string     `json:"address"` // The pre-computed CREATE3 address (lowercase 0x-prefixed)
+	Factory        string     `json:"factory"` // The CREATE3 factory contract address
+	Salt           []byte     `json:"salt"`    // The 32-byte salt used for address derivation
 	Note           string     `json:"note,omitempty"`
 	ConstructorABI string     `json:"constructor_abi,omitempty"` // Contract ABI JSON for constructor arg validation
 	CreatedAt      time.Time  `json:"created_at"`
 	UsedAt         *time.Time `json:"used_at,omitempty"` // Timestamp when the address was actually deployed to
 }
-
-

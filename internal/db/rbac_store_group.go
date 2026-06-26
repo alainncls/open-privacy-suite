@@ -419,8 +419,8 @@ func (d *DB) CreateGroupAccess(ctx context.Context, access *rbac.GroupAccess) er
 	// schema DEFAULT 'Authorization' (migration 043) and is not consulted at
 	// runtime. The header name is operator-wide via the RPC_API_KEY_HEADER env
 	// var (see internal/config and SetDefaultRPCAPIKeyHeader).
-	query := `INSERT INTO group_access (id, group_id, allowed_methods, claims, rate_limit_rps, rate_limit_daily, rpc_api_key)
-	          VALUES ($1, $2, $3, $4, $5, $6, $7)
+	query := `INSERT INTO group_access (id, group_id, allowed_methods, claims, rate_limit_rps, rate_limit_daily, rpc_api_key, verbose_errors)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	          RETURNING created_at, updated_at`
 
 	claims := make([]string, len(access.Claims))
@@ -431,12 +431,12 @@ func (d *DB) CreateGroupAccess(ctx context.Context, access *rbac.GroupAccess) er
 	return d.conn.QueryRowContext(ctx, query,
 		access.ID, access.GroupID,
 		pq.Array(access.AllowedMethods), pq.Array(claims),
-		access.RateLimitRPS, access.RateLimitDaily, access.RPCAPIKey,
+		access.RateLimitRPS, access.RateLimitDaily, access.RPCAPIKey, access.VerboseErrors,
 	).Scan(&access.CreatedAt, &access.UpdatedAt)
 }
 
 func (d *DB) GetGroupAccess(ctx context.Context, groupID string) (*rbac.GroupAccess, error) {
-	query := `SELECT id, group_id, allowed_methods, claims, rate_limit_rps, rate_limit_daily, rpc_api_key, created_at, updated_at
+	query := `SELECT id, group_id, allowed_methods, claims, rate_limit_rps, rate_limit_daily, rpc_api_key, verbose_errors, created_at, updated_at
 	          FROM group_access WHERE group_id = $1`
 
 	access := &rbac.GroupAccess{}
@@ -447,7 +447,7 @@ func (d *DB) GetGroupAccess(ctx context.Context, groupID string) (*rbac.GroupAcc
 	err := d.conn.QueryRowContext(ctx, query, groupID).Scan(
 		&access.ID, &access.GroupID,
 		&allowedMethods, &defaultClaims,
-		&rateLimitRPS, &rateLimitDaily, &rpcAPIKey,
+		&rateLimitRPS, &rateLimitDaily, &rpcAPIKey, &access.VerboseErrors,
 		&access.CreatedAt, &access.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -538,14 +538,15 @@ func (d *DB) GetGroupAccessBatch(ctx context.Context, groupIDs []string) (map[st
 
 func (d *DB) UpdateGroupAccess(ctx context.Context, access *rbac.GroupAccess) error {
 	// rpc_api_key_header is left untouched; see CreateGroupAccess for the rationale.
-	query := `INSERT INTO group_access (id, group_id, allowed_methods, claims, rate_limit_rps, rate_limit_daily, rpc_api_key)
-	          VALUES ($1, $2, $3, $4, $5, $6, $7)
+	query := `INSERT INTO group_access (id, group_id, allowed_methods, claims, rate_limit_rps, rate_limit_daily, rpc_api_key, verbose_errors)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	          ON CONFLICT (group_id) DO UPDATE SET
 	          allowed_methods = EXCLUDED.allowed_methods,
 	          claims = EXCLUDED.claims,
 	          rate_limit_rps = EXCLUDED.rate_limit_rps,
 	          rate_limit_daily = EXCLUDED.rate_limit_daily,
 	          rpc_api_key = EXCLUDED.rpc_api_key,
+	          verbose_errors = EXCLUDED.verbose_errors,
 	          updated_at = CURRENT_TIMESTAMP
 	          RETURNING created_at, updated_at`
 
@@ -557,8 +558,33 @@ func (d *DB) UpdateGroupAccess(ctx context.Context, access *rbac.GroupAccess) er
 	return d.conn.QueryRowContext(ctx, query,
 		access.ID, access.GroupID,
 		pq.Array(access.AllowedMethods), pq.Array(claims),
-		access.RateLimitRPS, access.RateLimitDaily, access.RPCAPIKey,
+		access.RateLimitRPS, access.RateLimitDaily, access.RPCAPIKey, access.VerboseErrors,
 	).Scan(&access.CreatedAt, &access.UpdatedAt)
+}
+
+// GroupVerboseErrorsForUserOrg reports whether the user (by external ID / DID)
+// belongs to at least one NON-EXPIRED membership in a group of orgID whose
+// group_access has verbose_errors enabled (RD-1137 Part A). Used on the denial
+// path to decide whether to return the curated reason code on the wire.
+// Callers treat an error as false (fail closed → opaque).
+func (d *DB) GroupVerboseErrorsForUserOrg(ctx context.Context, externalID, orgID string) (bool, error) {
+	var ok bool
+	err := d.conn.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM user_memberships um
+			JOIN users u ON u.id = um.user_id
+			JOIN groups g ON g.id = um.group_id
+			JOIN group_access ga ON ga.group_id = g.id
+			WHERE u.external_id = $1
+			  AND g.org_id = $2
+			  AND ga.verbose_errors = true
+			  AND (um.expires_at IS NULL OR um.expires_at > NOW())
+		)`, externalID, orgID).Scan(&ok)
+	if err != nil {
+		return false, fmt.Errorf("verbose-errors lookup: %w", err)
+	}
+	return ok, nil
 }
 
 func (d *DB) DeleteGroupAccess(ctx context.Context, groupID string) error {

@@ -148,6 +148,7 @@ export interface GroupAccess {
   allowed_methods: string[];
   claims: Claim[]; // Operational claims: deploy, upgrade, admin
   rpc_api_key?: string | null;
+  verbose_errors?: boolean; // RD-1137 Part A
   created_at: string;
   updated_at: string;
   // Computed fields (populated by backend for child groups)
@@ -277,6 +278,7 @@ export interface SetGroupAccessInput {
   allowed_methods?: string[];
   claims?: Claim[];
   rpc_api_key?: string | null;
+  verbose_errors?: boolean; // RD-1137 Part A: opt-in machine-readable denial reasons on the wire
 }
 
 export interface UpdateUserInput {

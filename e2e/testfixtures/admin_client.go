@@ -141,13 +141,13 @@ type ContractGrant struct {
 // EffectivePermissions is the response from
 // GET /api/v1/admin/users/:user_id/effective-permissions.
 type EffectivePermissions struct {
-	UserID         string         `json:"user_id"`
-	OrgID          string         `json:"org_id"`
-	AllowedMethods []string       `json:"allowed_methods"`
-	Claims         []Claim        `json:"claims"`
-	RateLimitRPS   *int           `json:"rate_limit_rps"`
-	RateLimitDaily *int           `json:"rate_limit_daily"`
-	Groups         []Group        `json:"groups"`
+	UserID         string           `json:"user_id"`
+	OrgID          string           `json:"org_id"`
+	AllowedMethods []string         `json:"allowed_methods"`
+	Claims         []Claim          `json:"claims"`
+	RateLimitRPS   *int             `json:"rate_limit_rps"`
+	RateLimitDaily *int             `json:"rate_limit_daily"`
+	Groups         []Group          `json:"groups"`
 	Memberships    []UserMembership `json:"memberships"`
 }
 
@@ -172,6 +172,7 @@ type GroupAccessInput struct {
 	Claims         []Claim  `json:"claims"`
 	RateLimitRPS   *int     `json:"rate_limit_rps,omitempty"`
 	RateLimitDaily *int     `json:"rate_limit_daily,omitempty"`
+	VerboseErrors  bool     `json:"verbose_errors,omitempty"` // RD-1137 Part A
 }
 
 type CreateMembershipInput struct {
@@ -464,4 +465,3 @@ func (c *AdminClient) DoRaw(t *testing.T, method, path string, body any) (int, [
 	respBody, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, respBody
 }
-
