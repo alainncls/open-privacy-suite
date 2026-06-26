@@ -129,6 +129,17 @@ repos exist, forces a `--no-cache` rebuild of the frontend so
 `VITE_ALLOW_MOCK_LOGIN=true` is baked into the JS bundle, and waits for
 the backend healthcheck. Delete `.env.privacy.dev` to rotate.
 
+It also symlinks `.env -> .env.privacy.dev`. Docker Compose only
+auto-loads a file named `.env` for `${VAR}` interpolation, so without
+this any `docker compose up` outside the script — including **Docker
+Desktop's start/play button**, which re-runs `up` rather than a bare
+`docker start` — trips the fail-closed guards. With the symlink, the UI
+start/stop buttons and a plain `docker compose -f
+docker-compose.privacy.dev.yml up` work directly. Note the `.env` is then
+picked up by *every* compose file in the repo root (base, prod, scale,
+e2e); the script never overwrites a pre-existing real `.env`, it just
+prints how to opt in.
+
 Required env vars (all fail-closed — missing → compose aborts):
 
 - `JWT_SECRET`, `JWT_REFRESH_SECRET` — privacy-proxy signing keys.
