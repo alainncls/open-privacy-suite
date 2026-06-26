@@ -138,8 +138,9 @@ type EnhancedAccessLogger interface {
 		params []byte,
 		responseStatus *int,
 		orgID string,
+		denialReason string,
 	) (int64, time.Time, string, error)
-	LogAccessEnhanced(ctx context.Context, externalID, method string, statusCode int, ipAddress, correlationID string, params []byte, responseStatus *int, orgID string) (int64, time.Time, error)
+	LogAccessEnhanced(ctx context.Context, externalID, method string, statusCode int, ipAddress, correlationID string, params []byte, responseStatus *int, orgID string, denialReason string) (int64, time.Time, error)
 	UpdateAccessLogHash(ctx context.Context, id int64, hash string) error
 }
 
@@ -168,6 +169,12 @@ type ProcessRequest struct {
 	// written with NULL org_id (anonymous / org-free metadata / pre-auth),
 	// visible only to super-admin.
 	resolvedOrgID string
+
+	// denialReason is the curated reason code (RD-1137; see denial_reasons.go)
+	// for a denied request, stamped onto the access-log row so the org-scoped
+	// admin Access Logs view shows WHY, not just the status. Set at the denial
+	// site right before logAccess; empty for success/unclassified => NULL.
+	denialReason string
 }
 
 // ProcessResult represents the result of processing a JSON-RPC request.
@@ -181,6 +188,11 @@ type ProcessResult struct {
 type ProcessError struct {
 	StatusCode int
 	Message    string
+	// Reason is the curated, stable denial-reason code (RD-1137; see
+	// denial_reasons.go). Recorded on the access-log row for the org-scoped
+	// admin view, and — for opt-in verbose callers (Part A) — surfaced on the
+	// wire. Empty for non-denial or unclassified errors. Never raw error text.
+	Reason string
 }
 
 func (e *ProcessError) Error() string {
@@ -455,6 +467,7 @@ func (p *JSONRPCProcessor) logAccess(ctx context.Context, req *ProcessRequest, s
 			Params:         params,
 			ResponseStatus: rsp,
 			OrgID:          req.resolvedOrgID, // RD-1135
+			DenialReason:   req.denialReason,  // RD-1137
 		}
 		if data, mErr := json.Marshal(rec); mErr != nil {
 			slog.Error("audit record marshal failed; basic logging fallback", "error", mErr)
@@ -486,7 +499,7 @@ func (p *JSONRPCProcessor) logAccess(ctx context.Context, req *ProcessRequest, s
 			ctx,
 			p.hashChain,
 			req.UserID, req.Method, statusCode, req.ClientIP, req.CorrelationID,
-			params, respStatusPtr, req.resolvedOrgID,
+			params, respStatusPtr, req.resolvedOrgID, req.denialReason,
 		)
 		if err != nil {
 			// Fallback to basic logging
@@ -646,8 +659,10 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 
 	if !result.Allowed {
 		realStatus := http.StatusForbidden
+		req.denialReason = ReasonMethodNotAllowed
 		if result.AuthRequired {
 			realStatus = http.StatusUnauthorized
+			req.denialReason = ReasonAuthRequired
 		}
 		slog.Info("RBAC access denied", "method", req.Method, "user", req.UserID, "ip", req.ClientIP, "auth_required", result.AuthRequired)
 		slog.Debug("RBAC denial details", "method", req.Method, "user", req.UserID, "reason", result.Reason)
@@ -674,6 +689,7 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 			p.metrics.ConcurrencyRejectionsTotal.Inc()
 		}
 		p.recordRPCOutcome(req.Method, "concurrent_limit", start)
+		req.denialReason = ReasonConcurrencyLimited // RD-1137
 		p.logAccess(ctx, req, http.StatusTooManyRequests)
 		return &ProcessResult{
 			Error: &ProcessError{
@@ -690,7 +706,9 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	runtimeCreateTargets, traceErr := p.validateWithTracing(ctx, req, targetAddr)
 	if traceErr != nil {
 		p.recordRPCOutcome(req.Method, "send_trace_denied", start)
-		p.logAccess(ctx, req, http.StatusForbidden)
+		// RD-1137: log the REAL status (not a hardcoded 403) + curated reason.
+		req.denialReason = traceErr.Reason
+		p.logAccess(ctx, req, traceErr.StatusCode)
 		return &ProcessResult{
 			Error: traceErr,
 		}
@@ -703,7 +721,11 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	// (proxy-pattern contracts can re-target via storage rewrites).
 	if ethCallTraceErr := p.validateEthCallWithTracing(ctx, req, targetAddr); ethCallTraceErr != nil {
 		p.recordRPCOutcome(req.Method, "eth_call_trace_denied", start)
-		p.logAccess(ctx, req, http.StatusForbidden)
+		// RD-1137: log the REAL status (not a hardcoded 403) + curated reason —
+		// this is what surfaces "sender_not_linked" etc. in the admin Access
+		// Logs view instead of an opaque 403.
+		req.denialReason = ethCallTraceErr.Reason
+		p.logAccess(ctx, req, ethCallTraceErr.StatusCode)
 		return &ProcessResult{
 			Error: ethCallTraceErr,
 		}
@@ -760,6 +782,7 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 			p.metrics.CircuitBreakerTripsTotal.WithLabelValues(maskAPIKey(apiKey)).Inc()
 		}
 		p.recordRPCOutcome(req.Method, "circuit_open", start)
+		req.denialReason = ReasonRateLimited // RD-1137 (upstream rate limited)
 		p.logAccess(ctx, req, http.StatusTooManyRequests)
 		return &ProcessResult{
 			Error: &ProcessError{
@@ -837,6 +860,7 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	}
 	if err != nil {
 		p.recordRPCOutcome(req.Method, "forward_error", start)
+		req.denialReason = ReasonUpstreamError // RD-1137
 		p.logAccess(ctx, req, http.StatusBadGateway)
 		return &ProcessResult{
 			Error: &ProcessError{
@@ -1201,6 +1225,7 @@ func (p *JSONRPCProcessor) validateDeployWithTracing(
 		return nil, &ProcessError{
 			StatusCode: http.StatusForbidden,
 			Message:    sendTraceDenyTracerError,
+			Reason:     ReasonTracingUnavailable,
 		}
 	}
 	if traceResult == nil {
@@ -1208,6 +1233,7 @@ func (p *JSONRPCProcessor) validateDeployWithTracing(
 		return nil, &ProcessError{
 			StatusCode: http.StatusForbidden,
 			Message:    sendTraceDenyTracerError,
+			Reason:     ReasonTracingUnavailable,
 		}
 	}
 
@@ -1222,6 +1248,7 @@ func (p *JSONRPCProcessor) validateDeployWithTracing(
 		return nil, &ProcessError{
 			StatusCode: http.StatusForbidden,
 			Message:    sendTraceValidatorError,
+			Reason:     ReasonTracingUnavailable,
 		}
 	}
 
@@ -1236,6 +1263,7 @@ func (p *JSONRPCProcessor) validateDeployWithTracing(
 		return nil, &ProcessError{
 			StatusCode: http.StatusInternalServerError,
 			Message:    sendTraceValidatorError,
+			Reason:     ReasonTracingUnavailable,
 		}
 	}
 	if !validationResult.Allowed {
@@ -1247,6 +1275,7 @@ func (p *JSONRPCProcessor) validateDeployWithTracing(
 		return nil, &ProcessError{
 			StatusCode: http.StatusForbidden,
 			Message:    sendTraceDenyMessage(validationResult.Reason),
+			Reason:     ReasonCrossOrg,
 		}
 	}
 	return validationResult.CreateTargets, nil
@@ -1277,6 +1306,7 @@ func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *Process
 		return nil, &ProcessError{
 			StatusCode: http.StatusForbidden,
 			Message:    "failed to get user for trace validation",
+			Reason:     ReasonTracingUnavailable,
 		}
 	}
 
@@ -1286,6 +1316,7 @@ func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *Process
 		return nil, &ProcessError{
 			StatusCode: http.StatusForbidden,
 			Message:    "failed to get user memberships for trace validation",
+			Reason:     ReasonTracingUnavailable,
 		}
 	}
 
@@ -1335,6 +1366,7 @@ func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *Process
 			return nil, &ProcessError{
 				StatusCode: http.StatusForbidden,
 				Message:    "failed to verify sender identity",
+				Reason:     ReasonTracingUnavailable,
 			}
 		}
 		fromLC := strings.ToLower(from)
@@ -1351,6 +1383,7 @@ func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *Process
 			return nil, &ProcessError{
 				StatusCode: http.StatusBadRequest,
 				Message:    "invalid sender: from address is not linked to your account",
+				Reason:     ReasonSenderNotLinked,
 			}
 		}
 	}
@@ -1376,6 +1409,7 @@ func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *Process
 		return nil, &ProcessError{
 			StatusCode: http.StatusForbidden,
 			Message:    sendTraceDenyTracerError,
+			Reason:     ReasonTracingUnavailable,
 		}
 	}
 
@@ -1385,6 +1419,7 @@ func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *Process
 		return nil, &ProcessError{
 			StatusCode: http.StatusForbidden,
 			Message:    sendTraceDenyTracerError,
+			Reason:     ReasonTracingUnavailable,
 		}
 	}
 
@@ -1400,6 +1435,7 @@ func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *Process
 		return nil, &ProcessError{
 			StatusCode: http.StatusForbidden,
 			Message:    sendTraceValidatorError,
+			Reason:     ReasonTracingUnavailable,
 		}
 	}
 
@@ -1411,6 +1447,7 @@ func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *Process
 		return nil, &ProcessError{
 			StatusCode: http.StatusInternalServerError,
 			Message:    sendTraceValidatorError,
+			Reason:     ReasonTracingUnavailable,
 		}
 	}
 
@@ -1424,6 +1461,7 @@ func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *Process
 		return nil, &ProcessError{
 			StatusCode: http.StatusForbidden,
 			Message:    sendTraceDenyMessage(validationResult.Reason),
+			Reason:     ReasonCrossOrg,
 		}
 	}
 
@@ -1543,7 +1581,7 @@ func (p *JSONRPCProcessor) validateEthCallWithTracing(ctx context.Context, req *
 	// returns the value as the JSON-RPC layer should see it.
 	blockParam, blockErr := extractEthCallBlockParam(req.Params)
 	if blockErr != nil {
-		return &ProcessError{StatusCode: http.StatusBadRequest, Message: ethCallDenyInvalidRequest}
+		return &ProcessError{StatusCode: http.StatusBadRequest, Message: ethCallDenyInvalidRequest, Reason: ReasonInvalidRequestShape}
 	}
 
 	// Input validation BEFORE tracing: malformed addresses cannot be
@@ -1551,10 +1589,10 @@ func (p *JSONRPCProcessor) validateEthCallWithTracing(ctx context.Context, req *
 	// junk. gethcommon.IsHexAddress accepts mixed-case checksummed and
 	// uppercase forms.
 	if to == "" || !gethcommon.IsHexAddress(to) {
-		return &ProcessError{StatusCode: http.StatusBadRequest, Message: ethCallDenyInvalidRequest}
+		return &ProcessError{StatusCode: http.StatusBadRequest, Message: ethCallDenyInvalidRequest, Reason: ReasonInvalidRequestShape}
 	}
 	if from != "" && !gethcommon.IsHexAddress(from) {
-		return &ProcessError{StatusCode: http.StatusBadRequest, Message: ethCallDenyInvalidRequest}
+		return &ProcessError{StatusCode: http.StatusBadRequest, Message: ethCallDenyInvalidRequest, Reason: ReasonInvalidRequestShape}
 	}
 
 	// Resolve the JWT-bound user identity and rebind `from`. The JWT
@@ -1564,7 +1602,7 @@ func (p *JSONRPCProcessor) validateEthCallWithTracing(ctx context.Context, req *
 	if err != nil || user == nil {
 		slog.Warn("eth_call trace: user lookup failed",
 			slog.String("user", req.UserID), slog.Any("err", err))
-		return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyTracerError}
+		return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyTracerError, Reason: ReasonTracingUnavailable}
 	}
 
 	// Discover the user's linked EOAs. Any user-supplied `from` must
@@ -1577,7 +1615,7 @@ func (p *JSONRPCProcessor) validateEthCallWithTracing(ctx context.Context, req *
 	if addrErr != nil {
 		slog.Warn("eth_call trace: linked-address lookup failed",
 			slog.String("user", req.UserID), slog.Any("err", addrErr))
-		return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyTracerError}
+		return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyTracerError, Reason: ReasonTracingUnavailable}
 	}
 	if from != "" {
 		fromLC := strings.ToLower(from)
@@ -1591,7 +1629,7 @@ func (p *JSONRPCProcessor) validateEthCallWithTracing(ctx context.Context, req *
 		if !match {
 			slog.Info("eth_call trace: user-supplied from rejected (not in linked addresses)",
 				slog.String("user", req.UserID), slog.String("from", from))
-			return &ProcessError{StatusCode: http.StatusBadRequest, Message: ethCallDenyInvalidRequest}
+			return &ProcessError{StatusCode: http.StatusBadRequest, Message: ethCallDenyInvalidRequest, Reason: ReasonSenderNotLinked}
 		}
 	}
 
@@ -1600,7 +1638,7 @@ func (p *JSONRPCProcessor) validateEthCallWithTracing(ctx context.Context, req *
 	if err != nil {
 		slog.Warn("eth_call trace: membership lookup failed",
 			slog.String("user_uuid", user.ID), slog.Any("err", err))
-		return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyTracerError}
+		return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyTracerError, Reason: ReasonTracingUnavailable}
 	}
 	userOrgIDs := make(map[string]bool)
 	for _, m := range memberships {
@@ -1625,17 +1663,17 @@ func (p *JSONRPCProcessor) validateEthCallWithTracing(ctx context.Context, req *
 		if errors.Is(err, tracer.ErrTraceDepthExceeded) {
 			slog.Info("eth_call trace: depth exceeded",
 				slog.String("user", req.UserID), slog.String("to", to))
-			return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyDepthExceeded}
+			return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyDepthExceeded, Reason: ReasonTraceDepthExceeded}
 		}
 		slog.Warn("eth_call trace: upstream tracer error",
 			slog.String("user", req.UserID), slog.String("to", to), slog.Any("err", err))
-		return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyTracerError}
+		return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyTracerError, Reason: ReasonTracingUnavailable}
 	}
 	if traceResult == nil {
 		// Tracer is enabled but returned nil — fail closed. This is
 		// the same posture as the send path (line ~910).
 		slog.Warn("eth_call trace: nil result", slog.String("user", req.UserID), slog.String("to", to))
-		return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyTracerError}
+		return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyTracerError, Reason: ReasonTracingUnavailable}
 	}
 
 	// userHasDeploy is irrelevant for read-only validation but the
@@ -1650,14 +1688,14 @@ func (p *JSONRPCProcessor) validateEthCallWithTracing(ctx context.Context, req *
 	if optErr != nil {
 		slog.Warn("eth_call trace: intra-org grant resolution failed",
 			slog.String("user", req.UserID), slog.Any("err", optErr))
-		return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyTracerError}
+		return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyTracerError, Reason: ReasonTracingUnavailable}
 	}
 
 	validationResult, err := p.traceValidator.ValidateTrace(ctx, userOrgIDs, traceResult, userHasDeploy, traceOpts...)
 	if err != nil {
 		slog.Warn("eth_call trace: validator error",
 			slog.String("user", req.UserID), slog.Any("err", err))
-		return &ProcessError{StatusCode: http.StatusInternalServerError, Message: ethCallDenyTracerError}
+		return &ProcessError{StatusCode: http.StatusInternalServerError, Message: ethCallDenyTracerError, Reason: ReasonTracingUnavailable}
 	}
 	if !validationResult.Allowed {
 		// Diagnostic detail (which contract triggered the deny, and the
@@ -1674,7 +1712,7 @@ func (p *JSONRPCProcessor) validateEthCallWithTracing(ctx context.Context, req *
 			slog.String("kind", kind),
 			slog.String("reason", validationResult.Reason),
 			slog.String("denied_target", validationResult.DeniedTarget))
-		return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyCrossOrg}
+		return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyCrossOrg, Reason: ReasonCrossOrg}
 	}
 
 	return nil
@@ -1876,8 +1914,10 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 
 	if !result.Allowed {
 		realStatus := http.StatusForbidden
+		req.denialReason = ReasonMethodNotAllowed
 		if result.AuthRequired {
 			realStatus = http.StatusUnauthorized
+			req.denialReason = ReasonAuthRequired
 		}
 		slog.Info("RBAC access denied", "method", req.Method, "user", req.UserID, "ip", req.ClientIP, "auth_required", result.AuthRequired)
 		slog.Debug("RBAC denial details", "method", req.Method, "user", req.UserID, "reason", result.Reason)
@@ -1901,6 +1941,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 			p.metrics.ConcurrencyRejectionsTotal.Inc()
 		}
 		p.recordRPCOutcome(req.Method, "concurrent_limit", start)
+		req.denialReason = ReasonConcurrencyLimited // RD-1137
 		p.logAccess(ctx, req, http.StatusTooManyRequests)
 		return &ProcessResult{
 			Error: &ProcessError{
@@ -1936,7 +1977,8 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 			rawRuntimeCreateTargets, traceErr := p.validateRawTxWithTracing(ctx, req, from, to, data, value)
 			if traceErr != nil {
 				p.recordRPCOutcome(req.Method, "send_trace_denied", start)
-				p.logAccess(ctx, req, http.StatusForbidden)
+				req.denialReason = traceErr.Reason // RD-1137
+				p.logAccess(ctx, req, traceErr.StatusCode)
 				return &ProcessResult{
 					Error: traceErr,
 				}
@@ -1948,17 +1990,19 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 		user, err := p.rbacAccessCtrl.Store().GetUserByExternalID(ctx, req.UserID)
 		if err != nil || user == nil {
 			p.recordRPCOutcome(req.Method, "send_trace_denied", start)
+			req.denialReason = ReasonTracingUnavailable // RD-1137
 			p.logAccess(ctx, req, http.StatusForbidden)
 			return &ProcessResult{
-				Error: &ProcessError{StatusCode: http.StatusForbidden, Message: sendTraceDenyTracerError},
+				Error: &ProcessError{StatusCode: http.StatusForbidden, Message: sendTraceDenyTracerError, Reason: ReasonTracingUnavailable},
 			}
 		}
 		memberships, err := p.rbacAccessCtrl.Store().ListUserMembershipsWithDetails(ctx, user.ID)
 		if err != nil {
 			p.recordRPCOutcome(req.Method, "send_trace_denied", start)
+			req.denialReason = ReasonTracingUnavailable // RD-1137
 			p.logAccess(ctx, req, http.StatusForbidden)
 			return &ProcessResult{
-				Error: &ProcessError{StatusCode: http.StatusForbidden, Message: sendTraceDenyTracerError},
+				Error: &ProcessError{StatusCode: http.StatusForbidden, Message: sendTraceDenyTracerError, Reason: ReasonTracingUnavailable},
 			}
 		}
 		userOrgIDs := make(map[string]bool)
@@ -1971,7 +2015,8 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 		deployTargets, traceErr := p.validateDeployWithTracing(ctx, req, user.ID, from, data, value, userOrgIDs, userHasDeploy)
 		if traceErr != nil {
 			p.recordRPCOutcome(req.Method, "send_trace_denied", start)
-			p.logAccess(ctx, req, http.StatusForbidden)
+			req.denialReason = traceErr.Reason // RD-1137
+			p.logAccess(ctx, req, traceErr.StatusCode)
 			return &ProcessResult{
 				Error: traceErr,
 			}
@@ -2023,6 +2068,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 			p.metrics.CircuitBreakerTripsTotal.WithLabelValues(maskAPIKey(apiKey)).Inc()
 		}
 		p.recordRPCOutcome(req.Method, "circuit_open", start)
+		req.denialReason = ReasonRateLimited // RD-1137 (upstream rate limited)
 		p.logAccess(ctx, req, http.StatusTooManyRequests)
 		return &ProcessResult{
 			Error: &ProcessError{
@@ -2365,6 +2411,7 @@ func (p *JSONRPCProcessor) validateRawTxWithTracing(ctx context.Context, req *Pr
 		return nil, &ProcessError{
 			StatusCode: http.StatusForbidden,
 			Message:    "failed to get user for trace validation",
+			Reason:     ReasonTracingUnavailable,
 		}
 	}
 
@@ -2374,6 +2421,7 @@ func (p *JSONRPCProcessor) validateRawTxWithTracing(ctx context.Context, req *Pr
 		return nil, &ProcessError{
 			StatusCode: http.StatusForbidden,
 			Message:    "failed to get user memberships for trace validation",
+			Reason:     ReasonTracingUnavailable,
 		}
 	}
 
@@ -2392,6 +2440,7 @@ func (p *JSONRPCProcessor) validateRawTxWithTracing(ctx context.Context, req *Pr
 		return nil, &ProcessError{
 			StatusCode: http.StatusForbidden,
 			Message:    sendTraceDenyTracerError,
+			Reason:     ReasonTracingUnavailable,
 		}
 	}
 
@@ -2401,6 +2450,7 @@ func (p *JSONRPCProcessor) validateRawTxWithTracing(ctx context.Context, req *Pr
 		return nil, &ProcessError{
 			StatusCode: http.StatusForbidden,
 			Message:    sendTraceDenyTracerError,
+			Reason:     ReasonTracingUnavailable,
 		}
 	}
 
@@ -2415,6 +2465,7 @@ func (p *JSONRPCProcessor) validateRawTxWithTracing(ctx context.Context, req *Pr
 		return nil, &ProcessError{
 			StatusCode: http.StatusForbidden,
 			Message:    sendTraceValidatorError,
+			Reason:     ReasonTracingUnavailable,
 		}
 	}
 
@@ -2426,6 +2477,7 @@ func (p *JSONRPCProcessor) validateRawTxWithTracing(ctx context.Context, req *Pr
 		return nil, &ProcessError{
 			StatusCode: http.StatusInternalServerError,
 			Message:    sendTraceValidatorError,
+			Reason:     ReasonTracingUnavailable,
 		}
 	}
 
@@ -2439,6 +2491,7 @@ func (p *JSONRPCProcessor) validateRawTxWithTracing(ctx context.Context, req *Pr
 		return nil, &ProcessError{
 			StatusCode: http.StatusForbidden,
 			Message:    sendTraceDenyMessage(validationResult.Reason),
+			Reason:     ReasonCrossOrg,
 		}
 	}
 

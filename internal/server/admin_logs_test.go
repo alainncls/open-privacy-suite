@@ -113,7 +113,7 @@ func TestGetLogsHandler(t *testing.T) {
 	}
 	insertedIDs := make([]int64, 0, len(seed))
 	for _, r := range seed {
-		id, _, err := srv.db.LogAccessEnhanced(ctx, r.externalID, r.method, r.statusCode, "127.0.0.1", r.correlationID, nil, nil, "")
+		id, _, err := srv.db.LogAccessEnhanced(ctx, r.externalID, r.method, r.statusCode, "127.0.0.1", r.correlationID, nil, nil, "", "")
 		require.NoError(t, err)
 		insertedIDs = append(insertedIDs, id)
 	}
@@ -383,7 +383,7 @@ func TestGetLogsOrgScoping(t *testing.T) {
 		{"did:anon", "eth_blockNumber", 200, ""}, // unattributed → NULL org_id
 	}
 	for _, r := range seed {
-		_, _, err := srv.db.LogAccessEnhanced(ctx, r.ext, r.method, r.status, "127.0.0.1", "", nil, nil, r.org)
+		_, _, err := srv.db.LogAccessEnhanced(ctx, r.ext, r.method, r.status, "127.0.0.1", "", nil, nil, r.org, "")
 		require.NoError(t, err)
 	}
 
@@ -460,4 +460,40 @@ func TestGetLogsOrgScoping(t *testing.T) {
 			assert.Equal(t, int64(0), body.Total, "tenant admin saw an unattributed row")
 		}
 	})
+}
+
+// TestGetLogs_DenialReasonRoundTrip is the RD-1137 Part B regression: a denied
+// request's curated reason persists and is returned in the /logs response, and
+// a successful request omits it. This is what lets an admin see WHY in the
+// Access Logs panel instead of only the status code.
+func TestGetLogs_DenialReasonRoundTrip(t *testing.T) {
+	srv, router, token := setupGetLogsTestServer(t)
+	ctx := context.Background()
+
+	_, _, err := srv.db.LogAccessEnhanced(ctx, "did:dr", "eth_estimateGas", 400, "127.0.0.1", "", nil, nil, "", ReasonSenderNotLinked)
+	require.NoError(t, err)
+	_, _, err = srv.db.LogAccessEnhanced(ctx, "did:dr", "eth_blockNumber", 200, "127.0.0.1", "", nil, nil, "", "")
+	require.NoError(t, err)
+
+	rec := doGetLogs(t, router, token, url.Values{})
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body struct {
+		Data []map[string]any `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+
+	var sawReason, sawSuccess bool
+	for _, r := range body.Data {
+		switch r["method"] {
+		case "eth_estimateGas":
+			assert.Equal(t, ReasonSenderNotLinked, r["denial_reason"], "denied row must carry the curated reason")
+			sawReason = true
+		case "eth_blockNumber":
+			_, has := r["denial_reason"]
+			assert.False(t, has, "successful row must omit denial_reason (NULL)")
+			sawSuccess = true
+		}
+	}
+	assert.True(t, sawReason, "expected the denied row in the response")
+	assert.True(t, sawSuccess, "expected the success row in the response")
 }

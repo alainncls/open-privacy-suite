@@ -15,8 +15,9 @@ import (
 // captureEnhancedLogger records the orgID argument passed to the chained
 // writer so the test can assert logAccess forwards req.resolvedOrgID.
 type captureEnhancedLogger struct {
-	calledChained bool
-	gotOrgID      string
+	calledChained   bool
+	gotOrgID        string
+	gotDenialReason string
 }
 
 func (c *captureEnhancedLogger) LogAccessChained(
@@ -28,9 +29,11 @@ func (c *captureEnhancedLogger) LogAccessChained(
 	_ []byte,
 	_ *int,
 	orgID string,
+	denialReason string,
 ) (int64, time.Time, string, error) {
 	c.calledChained = true
 	c.gotOrgID = orgID
+	c.gotDenialReason = denialReason
 	return 1, time.Time{}, "hash", nil
 }
 
@@ -42,8 +45,10 @@ func (c *captureEnhancedLogger) LogAccessEnhanced(
 	_ []byte,
 	_ *int,
 	orgID string,
+	denialReason string,
 ) (int64, time.Time, error) {
 	c.gotOrgID = orgID
+	c.gotDenialReason = denialReason
 	return 1, time.Time{}, nil
 }
 
@@ -67,11 +72,13 @@ func TestLogAccess_ForwardsResolvedOrgID(t *testing.T) {
 		Method:        "eth_call",
 		ClientIP:      "203.0.113.7",
 		resolvedOrgID: "org-resolved-123",
+		denialReason:  ReasonSenderNotLinked,
 	}
 	p.logAccess(context.Background(), req, 403)
 
 	require.True(t, cl.calledChained, "logAccess must use the chained writer")
 	assert.Equal(t, "org-resolved-123", cl.gotOrgID, "resolved org must reach the writer")
+	assert.Equal(t, ReasonSenderNotLinked, cl.gotDenialReason, "denial reason (RD-1137) must reach the writer")
 }
 
 // TestLogAccess_EmptyResolvedOrgIDStaysEmpty confirms an unattributed request

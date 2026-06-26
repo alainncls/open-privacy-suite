@@ -136,6 +136,14 @@ function AccessLogs() {
     };
   };
 
+  // Humanize a curated denial-reason code (RD-1137), e.g. "sender_not_linked"
+  // -> "Sender not linked". Returns null when there's no reason.
+  const formatReason = (reason?: string | null) => {
+    if (!reason) return null;
+    const spaced = reason.replace(/_/g, ' ');
+    return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+  };
+
   const filtersActive =
     active.externalId !== '' ||
     active.method !== '' ||
@@ -309,6 +317,7 @@ function AccessLogs() {
                   <TableHead>External ID</TableHead>
                   <TableHead>Method</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Reason</TableHead>
                   <TableHead>IP Address</TableHead>
                   <TableHead>Correlation</TableHead>
                 </TableRow>
@@ -344,6 +353,11 @@ function AccessLogs() {
                         <Badge variant={getStatusBadgeVariant(log.status_code)}>
                           {log.status_code}
                         </Badge>
+                      </TableCell>
+                      <TableCell className="text-xs text-neutral-600">
+                        {formatReason(log.denial_reason) ?? (
+                          <span className="text-neutral-300">-</span>
+                        )}
                       </TableCell>
                       <TableCell className="font-mono text-xs text-neutral-500">
                         {log.ip_address || '-'}
