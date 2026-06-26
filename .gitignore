@@ -32,6 +32,7 @@ node_modules/
 # Environment (keep .env.example)
 .env
 .env.*
+.*.env
 !.env.example
 
 # RPC namespaces config (keep example)
