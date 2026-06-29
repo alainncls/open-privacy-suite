@@ -62,7 +62,7 @@ For auditor spot-checks, incident response, or scheduled cron, use the CLI:
 
 ```bash
 privacy-cli audit verify \
-  --database-url postgres://privacy_proxy_admin:***@.../privacy_proxy \
+  --database-url "$AUDIT_DB_URL" \
   --chain all
 ```
 
@@ -116,9 +116,9 @@ This raises the bar against an attacker who compromises the proxy host: they get
 
 ### Recommended: AWS Secrets Manager via IRSA (canonical)
 
-- Create two secrets in AWS Secrets Manager: `privacy-proxy/app-db` and `privacy-proxy/admin-db`.
-- Bind the proxy's pod IAM role (IRSA) only to `privacy-proxy/app-db`. The pod can read the app credential at startup; it cannot reach the admin credential.
-- Bind a separate IAM role (the operator's break-glass role) to `privacy-proxy/admin-db`. Used via `aws secretsmanager get-secret-value` from a workstation when needed.
+- Create two secrets in AWS Secrets Manager: `<app-db-secret>` and `<admin-db-secret>`.
+- Bind the proxy's pod IAM role (IRSA) only to `<app-db-secret>`. The pod can read the app credential at startup; it cannot reach the admin credential.
+- Bind a separate IAM role (the operator's break-glass role) to `<admin-db-secret>`. Used via `aws secretsmanager get-secret-value` from a workstation when needed.
 - Rotate via Secrets Manager rotation Lambda (or whatever your IaC uses).
 
 ### Alternative: RDS IAM authentication

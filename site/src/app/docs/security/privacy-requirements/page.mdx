@@ -310,9 +310,9 @@ The following limitations are known and accepted in the current release. They ar
 
 ### 1. Contract deployment: deployed address visible when deployer is private
 
-When a private address deploys a contract, the transaction's `contractAddress` field (the address of the newly deployed contract) is currently not stripped. An unauthorized viewer can see the address of the contract that was deployed, even though the deployer's identity is shown as `[PRIVATE]`. The deployed contract may be discoverable in the block explorer and could be correlated with subsequent activity.
+Some deploy-transaction metadata (e.g. the created contract address) is not redacted in the current release.
 
-**Mitigation:** Ensure deployed contracts are registered to the same organization as the deployer, so their activity is also subject to access control.
+**Mitigation:** Register deployed contracts to the deployer's org so their activity is access-controlled.
 
 ### 2. Gas parameters are not hidden
 
@@ -320,13 +320,7 @@ Gas fields (`gasUsed`, `gasPrice`, `maxFeePerGas`, `maxPriorityFeePerGas`, `gasL
 
 ### 3. Value inference from public address balance history
 
-When a transaction involves one private address and one public address, the `value` field is hidden. However, the transferred amount can still be inferred by comparing the public address's balance at adjacent blocks:
-
-```
-transferred ≈ balance(block N−1) − balance(block N) − (gas_used × gas_price)
-```
-
-All inputs to this calculation are accessible through the block explorer for public addresses. This requires deliberate cross-block correlation rather than direct reading, but it is feasible. Stripping the `value` field removes the direct leakage path; it is not a complete financial privacy guarantee for mixed-party transactions.
+When a transaction has one private and one public party, stripping `value` removes the direct leak, but the amount may still be inferable by correlating the public address's balance across adjacent blocks. This is a known residual limitation for mixed-party transactions, not a complete financial-privacy guarantee.
 
 ---
 
