@@ -234,6 +234,12 @@ A user can belong to multiple groups. Across memberships:
 2. Apply **UNION** across all memberships — methods, claims, and contract grants are all combined. A user gets the **most permissive** combined view of every group they belong to.
 3. Rate limits across memberships: **MAXIMUM** is honored (the most generous limit applies).
 
+### Time-boxed memberships (access windows)
+
+A membership can carry an optional **expiry**. When you add a member — via the admin API (`expires_at`, an RFC3339 timestamp) or the dashboard's **Access window** selector (24 hours / 7 days / 30 days / a custom date) — access is granted only until that moment. Once the window passes, the membership stops contributing any methods, claims, or data visibility and is cleaned up automatically; the user falls back to whatever their remaining memberships allow (typically none). Leave the window unset for a permanent membership.
+
+This is the mechanism for **time-limited observer access** — for example a regulator or auditor onboarded into a read-only group for a fixed engagement window, after which their access ends on its own. Revocation applies to both direct RPC and the Block Explorer. To revoke before the window ends, remove the membership (effective immediately).
+
 ---
 
 ## Contract Access Rules

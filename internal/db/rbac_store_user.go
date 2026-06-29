@@ -579,11 +579,21 @@ func (d *DB) ListUserMembershipsWithDetails(ctx context.Context, userID string) 
 }
 
 func (d *DB) ListUserMembershipsInOrg(ctx context.Context, userID, orgID string) ([]*rbac.MembershipWithDetails, error) {
+	// Expired memberships are excluded so that a time-boxed grant (regulator
+	// access window, RD-1145) is *enforced* at access-decision time:
+	// computePermissions builds the user's effective methods/claims/visibility
+	// from this list, so an expired row must contribute nothing. Same
+	// fail-closed idiom as the IsOrgAdmin / IsOrgReadonlyAdmin / HasAdminClaim
+	// checks (NULL = never expires; the DB session runs in UTC). The
+	// background cleanup (expiredMembershipCleanupLoop) only tidies the rows
+	// away afterwards — this filter is the actual revocation boundary, so an
+	// expired window blocks access immediately, not at the next sweep.
 	query := `SELECT m.id, m.user_id, m.group_id, m.source, m.zk_credential_ref, m.expires_at, m.created_at, m.updated_at,
 	                 g.id, g.org_id, g.parent_id, g.slug, g.name, g.description, g.depth, g.path, g.is_org_admin, g.created_at, g.updated_at
 	          FROM user_memberships m
 	          JOIN groups g ON m.group_id = g.id
-	          WHERE m.user_id = $1 AND g.org_id = $2`
+	          WHERE m.user_id = $1 AND g.org_id = $2
+	            AND (m.expires_at IS NULL OR m.expires_at > NOW())`
 
 	rows, err := d.conn.QueryContext(ctx, query, userID, orgID)
 	if err != nil {

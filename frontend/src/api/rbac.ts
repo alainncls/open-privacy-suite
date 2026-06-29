@@ -55,7 +55,7 @@ export const rbacApi = {
     // (super-admin / dev callers bypass) and the group must live in orgId.
     createMembershipByDid: (
       orgId: string,
-      input: { did: string; group_id: string }
+      input: { did: string; group_id: string; expires_at?: string }
     ) =>
       api.post<{ membership: UserMembership; user_id: string }>(
         `/orgs/${orgId}/memberships/by-did`,

@@ -10,6 +10,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { AlertCircle, Save, X, Loader2, Building2, FolderTree } from 'lucide-react';
+import AccessWindowField from './AccessWindowField';
+import { resolveExpiry } from './accessWindow';
 
 // Stable default value to prevent infinite render loops
 const EMPTY_MEMBERSHIPS: MembershipWithDetails[] = [];
@@ -36,6 +38,9 @@ export default function MembershipForm({
   const [loadingGroups, setLoadingGroups] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Time-boxed access window (RD-1145). 'none' = permanent.
+  const [expiryPreset, setExpiryPreset] = useState<string>('none');
+  const [customExpiry, setCustomExpiry] = useState<string>('');
 
   // Memoize the set of existing group IDs to prevent recreation on every render
   const existingGroupIds = useMemo(
@@ -103,9 +108,17 @@ export default function MembershipForm({
     setSaving(true);
     setError(null);
 
+    const expires_at = resolveExpiry(expiryPreset, customExpiry);
+    if (expiryPreset === 'custom' && !expires_at) {
+      setError('Please pick a valid expiry date, or choose “No expiry”.');
+      setSaving(false);
+      return;
+    }
+
     try {
       await rbacApi.users.createMembership(userId, {
         group_id: selectedGroupId,
+        ...(expires_at ? { expires_at } : {}),
       });
       onSave();
     } catch (err: unknown) {
@@ -188,6 +201,18 @@ export default function MembershipForm({
           </Select>
         )}
       </div>
+
+      {/* Time-boxed access window (RD-1145). Picking a window makes the
+          membership auto-expire — e.g. a regulator/auditor profile for 24h / 7d. */}
+      {selectedGroupId && (
+        <AccessWindowField
+          preset={expiryPreset}
+          onPresetChange={setExpiryPreset}
+          custom={customExpiry}
+          onCustomChange={setCustomExpiry}
+          disabled={saving}
+        />
+      )}
 
       {/* Info about permissions */}
       {selectedGroupId && (

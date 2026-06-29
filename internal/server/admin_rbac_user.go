@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -533,6 +534,31 @@ func (s *Server) listUserMemberships(c *gin.Context) {
 	c.JSON(http.StatusOK, memberships)
 }
 
+// parseMembershipExpiry reads the optional `expires_at` field of a
+// membership-create request — the configurable end of a time-boxed access
+// window (e.g. a regulator profile granted for 24h / 7 days,
+// RD-1145). nil or empty means a permanent membership (no expiry). A present
+// value must be an RFC3339 timestamp strictly in the future; it is normalised
+// to UTC to line up with the `expires_at > NOW()` filter the resolver enforces
+// at access-decision time. On a malformed or non-future value it writes a 400
+// and returns ok=false so the caller aborts before touching the DB.
+func parseMembershipExpiry(c *gin.Context, raw *string) (*time.Time, bool) {
+	if raw == nil || strings.TrimSpace(*raw) == "" {
+		return nil, true
+	}
+	t, err := time.Parse(time.RFC3339, strings.TrimSpace(*raw))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "expires_at must be an RFC3339 timestamp"})
+		return nil, false
+	}
+	if !t.After(time.Now()) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "expires_at must be in the future"})
+		return nil, false
+	}
+	utc := t.UTC()
+	return &utc, true
+}
+
 func (s *Server) createUserMembership(c *gin.Context) {
 	userID := c.Param("user_id")
 
@@ -559,7 +585,8 @@ func (s *Server) createUserMembership(c *gin.Context) {
 	}
 
 	var input struct {
-		GroupID string `json:"group_id" binding:"required"`
+		GroupID   string  `json:"group_id" binding:"required"`
+		ExpiresAt *string `json:"expires_at"` // optional RFC3339; time-boxed access window (RD-1145)
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
@@ -603,11 +630,20 @@ func (s *Server) createUserMembership(c *gin.Context) {
 		return
 	}
 
+	// Optional time-boxed access window (RD-1145). Parsed after the
+	// authz gates so a malformed-timestamp 400 only reaches a caller already
+	// cleared for this group.
+	expiresAt, ok := parseMembershipExpiry(c, input.ExpiresAt)
+	if !ok {
+		return
+	}
+
 	membership := &rbac.UserMembership{
-		ID:      uuid.New().String(),
-		UserID:  userID,
-		GroupID: input.GroupID,
-		Source:  rbac.MembershipSourceAdmin,
+		ID:        uuid.New().String(),
+		UserID:    userID,
+		GroupID:   input.GroupID,
+		Source:    rbac.MembershipSourceAdmin,
+		ExpiresAt: expiresAt,
 	}
 
 	if err := s.db.CreateMembership(c.Request.Context(), membership); err != nil {
@@ -631,9 +667,10 @@ func (s *Server) createUserMembership(c *gin.Context) {
 	s.recordAuditActionScoped(c, rbac.AuditActionAssign, rbac.ResourceTypeMembership, membership.ID, group.Name, group.OrgID,
 		nil,
 		map[string]any{
-			"user_id":  userID,
-			"group_id": group.ID,
-			"org_id":   group.OrgID,
+			"user_id":    userID,
+			"group_id":   group.ID,
+			"org_id":     group.OrgID,
+			"expires_at": membership.ExpiresAt, // nil = permanent; set = time-boxed window (RD-1145)
 		})
 
 	c.JSON(http.StatusCreated, membership)
@@ -706,8 +743,9 @@ func (s *Server) createMembershipByDID(c *gin.Context) {
 	orgID := c.Param("org_id")
 
 	var input struct {
-		DID     string `json:"did" binding:"required"`
-		GroupID string `json:"group_id" binding:"required"`
+		DID       string  `json:"did" binding:"required"`
+		GroupID   string  `json:"group_id" binding:"required"`
+		ExpiresAt *string `json:"expires_at"` // optional RFC3339; time-boxed access window (RD-1145)
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
@@ -766,6 +804,14 @@ func (s *Server) createMembershipByDID(c *gin.Context) {
 		return
 	}
 
+	// Optional time-boxed access window (RD-1145). Parsed before
+	// EnsureUserExists so a malformed-timestamp 400 cannot leave a phantom
+	// auto-provisioned user behind.
+	expiresAt, ok := parseMembershipExpiry(c, input.ExpiresAt)
+	if !ok {
+		return
+	}
+
 	// DID → user_id translation. If the DID is not yet in `users`, create the
 	// row (mirroring first-login behaviour). KYC starts false; KYC remains
 	// admin-managed. skipDefaultGroup=true so the user does not also end up
@@ -799,10 +845,11 @@ func (s *Server) createMembershipByDID(c *gin.Context) {
 	// membership row is dormant until the ban is lifted.
 
 	membership := &rbac.UserMembership{
-		ID:      uuid.New().String(),
-		UserID:  user.ID,
-		GroupID: input.GroupID,
-		Source:  rbac.MembershipSourceAdmin,
+		ID:        uuid.New().String(),
+		UserID:    user.ID,
+		GroupID:   input.GroupID,
+		Source:    rbac.MembershipSourceAdmin,
+		ExpiresAt: expiresAt,
 	}
 
 	if err := s.db.CreateMembership(c.Request.Context(), membership); err != nil {
@@ -828,6 +875,7 @@ func (s *Server) createMembershipByDID(c *gin.Context) {
 			"org_id":        group.OrgID,
 			"did":           input.DID,
 			"onboarded_via": "by-did",
+			"expires_at":    membership.ExpiresAt, // nil = permanent; set = time-boxed window (RD-1145)
 		})
 
 	c.JSON(http.StatusCreated, gin.H{
