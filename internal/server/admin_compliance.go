@@ -141,11 +141,19 @@ func (s *Server) updateComplianceConfig(c *gin.Context) {
 	if config == nil {
 		isNew = true
 		config = &compliance.ComplianceConfig{
-			ID:              uuid.New().String(),
-			OrgID:           orgID,
-			Enabled:         false,
-			ThresholdFiat:   1000,
-			EnforcementMode: s.defaultEnforcementMode(),
+			ID:            uuid.New().String(),
+			OrgID:         orgID,
+			Enabled:       false,
+			ThresholdFiat: 1000,
+			// RD-1111: default to the fail-closed policy on CREATE. Pricing is
+			// fail-closed throughout the proxy (an unknown/zero token price
+			// BLOCKS the transfer), so a newly-created config must block on
+			// unknown price unless the caller explicitly opts into "allowed"
+			// below. Leaving this empty persisted "" and violated the
+			// unknown_price_policy CHECK constraint, surfacing as a 500 on the
+			// first PUT for a brand-new org.
+			UnknownPricePolicy: compliance.UnknownPriceForbidden,
+			EnforcementMode:    s.defaultEnforcementMode(),
 		}
 	}
 
