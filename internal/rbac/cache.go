@@ -122,9 +122,22 @@ func (c *Cache) SetWithTTL(perms *EffectivePermissions, ttl time.Duration) {
 		c.evictLRU()
 	}
 
+	expiresAt := time.Now().Add(ttl)
+	// Never cache past the permissions' own expiry. computePermissions caps
+	// EffectivePermissions.ExpiresAt at the soonest membership expires_at, so a
+	// time-boxed access window (RD-1145) revokes promptly: this in-memory
+	// entry — checked before the resolver on the hot path — cannot outlive the
+	// window, so once it lapses the next lookup re-resolves and the expired
+	// membership is filtered out. Without this cap the cache would keep serving
+	// stale perms for the full TTL after the window closed (the DB-backed cache
+	// already stores perms.ExpiresAt, so only this layer needed the cap).
+	if !perms.ExpiresAt.IsZero() && perms.ExpiresAt.Before(expiresAt) {
+		expiresAt = perms.ExpiresAt
+	}
+
 	entry := &cacheEntry{
 		permissions: perms,
-		expiresAt:   time.Now().Add(ttl),
+		expiresAt:   expiresAt,
 	}
 	entry.lastAccess.Store(time.Now().UnixNano())
 	c.entries[key] = entry

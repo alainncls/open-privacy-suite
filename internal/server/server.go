@@ -254,6 +254,33 @@ func (s *Server) explorerReconnectLoop(dbURL string, rbacDB *db.DB, indexerURL s
 	}
 }
 
+// expiredMembershipCleanupLoop periodically hard-deletes user_memberships
+// rows whose expires_at has passed (RD-1145 time-boxed access). This
+// is housekeeping, NOT the enforcement point: ListUserMembershipsInOrg already
+// filters expired rows out at access-decision time, so access is revoked the
+// moment the window lapses regardless of when this sweep runs. Removing the
+// rows just stops dead grants accumulating and keeps the admin panel's member
+// lists accurate. Runs until ctx is cancelled (process lifetime).
+func (s *Server) expiredMembershipCleanupLoop(ctx context.Context, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			n, err := s.db.DeleteExpiredMemberships(ctx)
+			if err != nil {
+				slog.Warn("expired membership cleanup failed", "error", err)
+				continue
+			}
+			if n > 0 {
+				slog.Info("expired memberships removed", "count", n)
+			}
+		}
+	}
+}
+
 // buildExplorerBackend returns the gRPC-backed explorer Backend when
 // indexerURL is set, otherwise returns the SQL store unchanged. The
 // gRPC backend embeds the SQL store so unmigrated methods keep working.
@@ -717,6 +744,14 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		"travel", cfg.RetentionTravelRecords,
 		"interval", cfg.RetentionCleanupInterval,
 		"max_access_log_rows", cfg.MaxAccessLogRows)
+
+	// RD-1145: hard-delete user_memberships whose time-boxed access
+	// window has lapsed. Housekeeping only — an expired membership is already
+	// denied at access-decision time by the (expires_at > NOW()) filter in
+	// ListUserMembershipsInOrg, so the revocation boundary does NOT depend on
+	// this sweep; it just keeps dead grants from accumulating and keeps the
+	// admin panel honest. Hourly is ample; the goroutine ends with the process.
+	go s.expiredMembershipCleanupLoop(context.Background(), time.Hour)
 
 	// M7 (security audit follow-up): visibility outbox reconciler. Drains
 	// pending_tx_visibility rows into tx_visible_to. Survives DB hiccups

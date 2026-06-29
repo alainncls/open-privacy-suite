@@ -229,8 +229,27 @@ func (r *Resolver) computePermissions(ctx context.Context, userID, orgID string)
 		RateLimitDaily: finalRateLimitDaily,
 		RPCAPIKey:      finalRPCAPIKey,
 		ComputedAt:     time.Now(),
-		ExpiresAt:      time.Now().Add(r.cacheTTL),
+		ExpiresAt:      r.cacheExpiry(memberships),
 	}, nil
+}
+
+// cacheExpiry returns when a resolved-permission cache entry should expire:
+// the normal cache TTL, but never later than the soonest membership
+// expires_at. This makes a time-boxed grant (regulator access window —
+// RD-1145) revoke promptly: the cache cannot outlive the membership
+// window, so once the window passes the next ResolvePermissions re-runs and
+// ListUserMembershipsInOrg filters the now-expired row out (fail-closed).
+// Without the cap, an expiry landing mid-cache would keep granting access for
+// up to the full TTL. The memberships passed here are already
+// expiry-filtered, so any non-nil ExpiresAt is in the future.
+func (r *Resolver) cacheExpiry(memberships []*MembershipWithDetails) time.Time {
+	exp := time.Now().Add(r.cacheTTL)
+	for _, m := range memberships {
+		if m.Membership != nil && m.Membership.ExpiresAt != nil && m.Membership.ExpiresAt.Before(exp) {
+			exp = *m.Membership.ExpiresAt
+		}
+	}
+	return exp
 }
 
 // computeOrgAdminPermissions computes permissions for org admin users.
@@ -284,7 +303,7 @@ func (r *Resolver) computeOrgAdminPermissions(ctx context.Context, userID, orgID
 		RateLimitDaily: finalRateLimitDaily,
 		RPCAPIKey:      finalRPCAPIKey,
 		ComputedAt:     time.Now(),
-		ExpiresAt:      time.Now().Add(r.cacheTTL),
+		ExpiresAt:      r.cacheExpiry(memberships),
 	}, nil
 }
 

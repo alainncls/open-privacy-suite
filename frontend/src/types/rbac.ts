@@ -291,6 +291,10 @@ export interface UpdateUserInput {
 // No more role_id in membership creation
 export interface CreateMembershipInput {
   group_id: string;
+  // Optional RFC3339 timestamp — end of a time-boxed access window (e.g. a
+  // regulator profile granted for 24h / 7 days, RD-1145). Omit for a
+  // permanent membership. Access is denied automatically once it passes.
+  expires_at?: string;
 }
 
 // Input for creating a contract

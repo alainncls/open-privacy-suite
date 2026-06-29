@@ -11,6 +11,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { AlertCircle, FolderTree, Loader2, UserPlus, X } from 'lucide-react';
+import AccessWindowField from './AccessWindowField';
+import { resolveExpiry } from './accessWindow';
 
 // Minimum length for any plausible DID. The shortest real DIDs we'd accept
 // (e.g. `did:iden3:polygon:main:` + identifier) comfortably exceed 20 chars,
@@ -43,6 +45,10 @@ export default function OnboardByDIDForm({
   const [loadingGroups, setLoadingGroups] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Time-boxed access window (RD-1145) — onboard a regulator/auditor
+  // DID with an auto-expiring profile. 'none' = permanent.
+  const [expiryPreset, setExpiryPreset] = useState<string>('none');
+  const [customExpiry, setCustomExpiry] = useState<string>('');
 
   // Use the prop if provided; otherwise fall back to what we fetched.
   // RD-1099: org-admin groups are excluded — only a super-admin (X-Admin-Token)
@@ -94,6 +100,12 @@ export default function OnboardByDIDForm({
       return;
     }
 
+    const expires_at = resolveExpiry(expiryPreset, customExpiry);
+    if (expiryPreset === 'custom' && !expires_at) {
+      setError('Please pick a valid expiry date, or choose “No expiry”.');
+      return;
+    }
+
     setSaving(true);
     setError(null);
 
@@ -101,6 +113,7 @@ export default function OnboardByDIDForm({
       const res = await rbacApi.orgs.createMembershipByDid(orgId, {
         did: trimmedDid,
         group_id: selectedGroupId,
+        ...(expires_at ? { expires_at } : {}),
       });
       const { membership, user_id: userId } = res.data;
       onSave({ userId, membership });
@@ -195,6 +208,18 @@ export default function OnboardByDIDForm({
           </Select>
         )}
       </div>
+
+      {/* Time-boxed access window (RD-1145) — auto-expiring regulator
+          profile. */}
+      {selectedGroupId && (
+        <AccessWindowField
+          preset={expiryPreset}
+          onPresetChange={setExpiryPreset}
+          custom={customExpiry}
+          onCustomChange={setCustomExpiry}
+          disabled={saving}
+        />
+      )}
 
       {selectedGroupId && (
         <div className="p-3 rounded-lg bg-primary-50 border border-primary-200">
