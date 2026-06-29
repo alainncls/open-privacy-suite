@@ -142,11 +142,16 @@ graph TD
 
 Non-privileged method access (reads + non-mutating calls + ordinary writes) is controlled entirely by the method allowlist. If `eth_call` is in a group's allowed methods, members can read contract data. If `eth_sendTransaction` is in the list, members can send transactions. No additional claim is needed.
 
-<Callout variant="info" title="Method-claim validation">
+<Callout variant="info" title="Tracing is gated by the allowlist">
 
-The system enforces consistency between allowed methods and claims. For example, allowing
-`debug_traceTransaction` without the `deploy` claim returns a 400 Bad Request error.
-Methods that don't require `admin`/`deploy`/`upgrade` are gated solely by the allowlist.
+The `debug_traceTransaction` and `debug_traceCall` methods are gated by the method
+allowlist like every other RPC method: a group can use them only if they appear in that
+group's allowed methods (or the group allows all methods). The `deploy` claim does **not**
+grant tracing — a group that holds `deploy` but does not list `debug_trace*` in its allowed
+methods cannot trace. This includes **org-admin groups**: an org-admin group that should be
+able to trace must include `debug_traceTransaction` / `debug_traceCall` (or `*`) in its
+allowed methods. Cross-organization isolation on trace results is always enforced separately,
+regardless of the allowlist.
 
 </Callout>
 

@@ -36,9 +36,10 @@ func TestGetClaimForMethod(t *testing.T) {
 		{name: "eth_signTypedData has no claim", method: "eth_signTypedData", want: ""},
 		{name: "eth_signTypedData_v4 has no claim", method: "eth_signTypedData_v4", want: ""},
 
-		// Deploy methods still require deploy claim
-		{name: "debug_traceCall requires deploy", method: "debug_traceCall", want: ClaimDeploy},
-		{name: "debug_traceTransaction requires deploy", method: "debug_traceTransaction", want: ClaimDeploy},
+		// RD-1121: debug_trace* no longer requires a claim — it is gated by the
+		// method allowlist like every other named method (tracing != deploying).
+		{name: "debug_traceCall has no claim", method: "debug_traceCall", want: ""},
+		{name: "debug_traceTransaction has no claim", method: "debug_traceTransaction", want: ""},
 
 		// Unknown/uncategorized methods
 		{name: "unknown method returns empty", method: "unknown_method", want: ""},
@@ -96,20 +97,21 @@ func TestValidateMethodsMatchClaims(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:    "deploy methods need deploy claim",
+			name:    "trace method with deploy claim is fine",
 			methods: []string{"debug_traceTransaction"},
 			claims:  []Claim{ClaimDeploy},
 			wantErr: false,
 		},
 		{
-			name:    "deploy methods without deploy claim fail",
+			// RD-1121: trace is allowlist-gated, not claim-coupled. A group may
+			// list debug_trace* in allowed_methods without holding any claim.
+			name:    "trace method without any claim is allowed (RD-1121)",
 			methods: []string{"debug_traceTransaction"},
 			claims:  []Claim{},
-			wantErr: true,
-			errMsg:  "method debug_traceTransaction requires deploy claim",
+			wantErr: false,
 		},
 		{
-			name:    "admin claim satisfies deploy requirement (via expansion)",
+			name:    "trace method with admin claim is fine",
 			methods: []string{"debug_traceCall"},
 			claims:  ExpandClaims([]Claim{ClaimAdmin}),
 			wantErr: false,

@@ -71,20 +71,33 @@ var WriteMethods = map[string]bool{
 	"eth_signTypedData_v4":   true,
 }
 
-// DeployMethods are highly privileged RPC methods that require the "deploy" or "admin" claim.
-// Checked dynamically by trace validators for cross-org data leaks.
-var DeployMethods = map[string]bool{
+// TraceMethods are the runtime trace RPC methods. They are valid entries in a
+// group's allowed_methods (and are included in the "*" all-methods expansion),
+// but — as of RD-1121 — they are NOT coupled to any operational claim. Tracing
+// is gated by the method allowlist like every other named method (runtime gate
+// in jsonrpc_processor.processDebugTrace), and cross-org leakage is prevented by
+// the TraceValidator content gate. The map name is kept generic to reflect that
+// these are simply allowlist-eligible methods, not claim-bearing ones.
+var TraceMethods = map[string]bool{
 	"debug_traceTransaction": true,
 	"debug_traceCall":        true,
 }
 
+// DeployMethods is the legacy name for the trace-method set, retained as an
+// alias because external references (and the "*" expansion in AllAllowedMethods)
+// use it. Tracing no longer requires the deploy claim — see TraceMethods and
+// RD-1121.
+var DeployMethods = TraceMethods
+
 // GetClaimForMethod returns the claim required for a given RPC method.
-// Returns an empty string for read/write methods (gated by method allowlist, not claims).
-// Only deploy-tier methods (debug_trace*) return a non-empty claim.
+//
+// As of RD-1121, NO standard RPC method requires a claim at the allowlist level:
+// read/write methods were always allowlist-gated, and debug_trace* is now gated
+// by the allowlist too (it is not deploying). This returns "" for every method;
+// operational claims (deploy/upgrade/admin) are still enforced for the
+// operations that actually need them (contract deployment, proxy upgrade,
+// admin) inside CheckAccess via ClassifyOperation, not here.
 func GetClaimForMethod(method string) Claim {
-	if DeployMethods[method] {
-		return ClaimDeploy
-	}
 	return ""
 }
 
@@ -98,10 +111,16 @@ func IsWriteMethod(method string) bool {
 	return WriteMethods[method]
 }
 
-// ValidateMethodsMatchClaims checks that all provided methods have
-// their required claims in the claims list.
-// Only deploy-tier methods (debug_trace*) require a claim; read/write
-// methods are gated by the method allowlist alone.
+// ValidateMethodsMatchClaims checks that all provided methods have their
+// required claims in the claims list.
+//
+// As of RD-1121 no standard RPC method (including debug_trace*) requires a claim
+// to appear in a group's allowed_methods — method access is gated by the
+// allowlist alone, and the deploy/upgrade/admin claims gate the privileged
+// OPERATIONS (deployment, proxy upgrade, admin) at runtime, not the listing of a
+// method. The function is retained (it still rejects any future claim-bearing
+// method GetClaimForMethod might report) so callers and the config-time
+// validation contract stay stable.
 func ValidateMethodsMatchClaims(methods []string, claims []Claim) error {
 	// Build a set of available claims
 	hasClaim := make(map[Claim]bool)

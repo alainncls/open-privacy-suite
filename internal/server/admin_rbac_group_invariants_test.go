@@ -224,10 +224,10 @@ func TestOrgAdminInvariant_SetAccessRejectsEmptyMethodsOnOrgAdminGroup(t *testin
 // ── Validator carve-out: org-admin effective claims are all-of-them ────────────
 
 func TestOrgAdminInvariant_SetAccessAllowsDeployMethodWithoutStoredClaims(t *testing.T) {
-	// debug_traceTransaction requires the deploy claim under
-	// ValidateMethodsMatchClaims. On an org-admin group the resolver grants all
-	// claims, so the stored-claims check must be skipped — otherwise a legitimate
-	// org-admin method set would be wrongly rejected.
+	// An org-admin group may list debug_traceTransaction with no stored claims.
+	// (RD-1121 decoupled debug_trace* from the deploy claim at config time, so
+	// the org-admin validator carve-out is no longer load-bearing for trace —
+	// but the set must still be accepted.)
 	srv, router := setupTieredAdminTestServer(t, "secret")
 	orgID, groupID := createOrgWithOrgAdminGroup(t, srv)
 
@@ -239,10 +239,13 @@ func TestOrgAdminInvariant_SetAccessAllowsDeployMethodWithoutStoredClaims(t *tes
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestOrgAdminInvariant_SetAccessOnNormalGroupStillValidatesMethodClaims(t *testing.T) {
-	// The carve-out above must NOT disable the validator globally: a normal group
-	// listing a deploy-tier method without the deploy claim is still rejected.
-	// Run as the tier-2 org admin — RD-1107 reserves this to the org admin.
+func TestOrgAdminInvariant_SetAccessOnNormalGroupAllowsTraceWithoutDeployClaim(t *testing.T) {
+	// RD-1121: debug_trace* is gated by the method allowlist, not a claim. A
+	// normal group may therefore list debug_traceTransaction in allowed_methods
+	// with no claims — config-time validation no longer forces the deploy claim
+	// (the runtime allowlist gate in processDebugTrace + ValidateTrace enforce
+	// access). Run as the tier-2 org admin — RD-1107 reserves this to the org
+	// admin.
 	srv, router := setupTieredAdminTestServer(t, "secret")
 	userDID, orgID, _ := createOrgAndAdminUser(t, srv)
 	groupID := createNormalGroupInOrg(t, srv, orgID)
@@ -254,7 +257,7 @@ func TestOrgAdminInvariant_SetAccessOnNormalGroupStillValidatesMethodClaims(t *t
 		"claims":          []string{},
 	})
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 // ── DB backstop: migration 060 CHECK constraint ────────────────────────────────

@@ -341,7 +341,7 @@ Group with `allowed_methods: ["linea_estimateGas", "linea_*"]`:
 | `linea_getProof` | none (no explicit entry) | true (via `linea_*` → wildcard match) | passthrough, no redaction |
 | `linea_sendTransaction` | none | false (wildcard match blocked by deny) | rejected with "method not allowed" |
 | `linea_signFoo` | none | false (deny `linea_sign*` glob) | rejected |
-| `debug_traceTransaction` | n/a | n/a | rejected by `GlobalBlockedMethods` before RBAC |
+| `debug_traceTransaction` | n/a | only if listed in the group's `allowed_methods` (or `*`) | gated by the method allowlist like any other method; cross-org isolation on results always enforced |
 
 A ready-to-use example is provided in `rpc-namespaces.example.json` — copy and customize it:
 
