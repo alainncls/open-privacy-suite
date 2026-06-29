@@ -59,6 +59,7 @@ var secretKeys = map[string]bool{
 	"RPC_API_KEY_ENCRYPTION_KEY": true,
 	"OAUTH_FIRST_PARTY_CLIENTS":  true, // client_id:bcrypt-hash pairs
 	"AUDIT_CHECKPOINT_KEY":       true, // HMAC key signing audit-chain checkpoints (RD-1112)
+	"SIEM_AUTH_HEADER":           true, // verbatim outbound Authorization header to the SIEM webhook (RD-1141)
 }
 
 // loadConfigFile reads the optional TOML file named by CONFIG_FILE into the

@@ -114,20 +114,30 @@ func TestLoadConfigFile_MissingFilePathErrors(t *testing.T) {
 }
 
 func TestLoadConfigFile_SecretKeyRejected(t *testing.T) {
-	resetFileConfig(t)
 	// Secrets must never be sourced from the file — the proxy refuses to load a
 	// file containing one, naming the offending key, and stays in pure-env mode.
-	path := writeConfigFile(t, "version = 1\nBASE_URL = \"https://ok\"\nADMIN_API_TOKEN = \"nope\"\n")
-	t.Setenv("CONFIG_FILE", path)
-	err := loadConfigFile()
-	if err == nil {
-		t.Fatal("expected rejection when a secret key is in the config file, got nil")
+	// SIEM_AUTH_HEADER is the verbatim outbound Authorization header to the SIEM
+	// webhook, so it is secret-class like ADMIN_API_TOKEN (RD-1141).
+	secretKeysUnderTest := []string{
+		"ADMIN_API_TOKEN",
+		"SIEM_AUTH_HEADER",
 	}
-	if !strings.Contains(err.Error(), "ADMIN_API_TOKEN") {
-		t.Errorf("error should name the offending secret key, got: %v", err)
-	}
-	if fileConfig != nil {
-		t.Errorf("expected fileConfig nil when the file is rejected, got %v", fileConfig)
+	for _, key := range secretKeysUnderTest {
+		t.Run(key, func(t *testing.T) {
+			resetFileConfig(t)
+			path := writeConfigFile(t, "version = 1\nBASE_URL = \"https://ok\"\n"+key+" = \"nope\"\n")
+			t.Setenv("CONFIG_FILE", path)
+			err := loadConfigFile()
+			if err == nil {
+				t.Fatal("expected rejection when a secret key is in the config file, got nil")
+			}
+			if !strings.Contains(err.Error(), key) {
+				t.Errorf("error should name the offending secret key %q, got: %v", key, err)
+			}
+			if fileConfig != nil {
+				t.Errorf("expected fileConfig nil when the file is rejected, got %v", fileConfig)
+			}
+		})
 	}
 }
 
