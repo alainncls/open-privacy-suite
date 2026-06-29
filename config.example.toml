@@ -15,8 +15,8 @@
 # Nested tables and arrays are not supported.
 #
 # SECRETS ARE NOT ALLOWED HERE. Keep JWT_SECRET, JWT_REFRESH_SECRET,
-# ADMIN_API_TOKEN, AZURE_AD_CLIENT_SECRET, DATABASE_URL, REDIS_URL /
-# REDIS_PASSWORD, RPC_API_KEY, OAUTH_FIRST_PARTY_CLIENTS and similar in the
+# ADMIN_API_TOKEN, OPERATOR_API_TOKEN, AZURE_AD_CLIENT_SECRET, DATABASE_URL,
+# REDIS_URL / REDIS_PASSWORD, RPC_API_KEY, OAUTH_FIRST_PARTY_CLIENTS and similar in the
 # environment or your secrets manager. The proxy REFUSES TO START if it finds
 # one of these in this file.
 #

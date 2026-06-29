@@ -17,6 +17,25 @@ import (
 // VisibilityMap maps an address (lowercase) to its resolved visibility level
 type VisibilityMap map[string]VisibilityLevel
 
+// visibilityMapFromDetailed projects the level-only VisibilityMap out of a
+// detailed visibility result (RD-1123). GetBatchVisibilityDetailed is an exact
+// superset of GetBatchVisibility: both DB methods iterate the same deduplicated
+// address set, initialise every address to VisibilityHidden, and resolve each
+// level through identical branches (own-address, precompile, org-contract grant,
+// disclosure-grant rank-merge). The only difference is that the detailed variant
+// additionally carries Reason / Visible / Pseudonym metadata. Therefore
+// detailed[addr].Level == plain[addr] for every address, and deriving the plain
+// map from the detailed one lets each Redact* entry point issue ONE visibility
+// query instead of two — eliminating a redundant per-request DB round-trip with
+// no change to the levels the redactor sees.
+func visibilityMapFromDetailed(detailed map[string]AddressVisibility) VisibilityMap {
+	m := make(VisibilityMap, len(detailed))
+	for addr, v := range detailed {
+		m[addr] = v.Level
+	}
+	return m
+}
+
 // ContractStore is the minimal interface RedactionEngine needs from the explorer store.
 type ContractStore interface {
 	GetContract(ctx context.Context, address string) (*Contract, error)
@@ -709,15 +728,16 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 	// 1. Extract unique addresses
 	uniqueAddrs := extractUniqueAddresses(txs)
 
-	// 2. Get batch visibility (authoritative levels) + detailed (for reason metadata)
-	visibilityMap, err := r.db.GetBatchVisibility(ctx, viewerDID, uniqueAddrs)
-	if err != nil {
-		return nil, err
-	}
+	// 2. Get batch visibility. GetBatchVisibilityDetailed is an exact superset
+	// of GetBatchVisibility (same levels + reason metadata), so we issue ONE
+	// query and project the level-only map out of it (RD-1123). The detailed
+	// map drives the disclosure-grant lens / AddressMetadata below; the plain
+	// map drives base level resolution — both from the same fetch.
 	visibilityMapDetailed, err := r.db.GetBatchVisibilityDetailed(ctx, viewerDID, uniqueAddrs)
 	if err != nil {
 		return nil, err
 	}
+	visibilityMap := visibilityMapFromDetailed(visibilityMapDetailed)
 
 	// 2b. Get the viewer's linked addresses for participant visibility.
 	// If the viewer is a participant (from or to) in a transaction, the counterparty
@@ -1085,14 +1105,13 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 		addrs = append(addrs, a)
 	}
 
-	visMap, err := r.db.GetBatchVisibility(ctx, viewerDID, addrs)
-	if err != nil {
-		return nil, err
-	}
+	// Single visibility fetch (RD-1123): the detailed map is a superset of the
+	// plain one, so derive plain levels from it instead of querying twice.
 	visMapDetailed, err := r.db.GetBatchVisibilityDetailed(ctx, viewerDID, addrs)
 	if err != nil {
 		return nil, err
 	}
+	visMap := visibilityMapFromDetailed(visMapDetailed)
 
 	// Get viewer's linked addresses for participant visibility override.
 	viewerAddrs := make(map[string]bool)
@@ -1308,14 +1327,13 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 		addrs = append(addrs, a)
 	}
 
-	visMap, err := r.db.GetBatchVisibility(ctx, viewerDID, addrs)
-	if err != nil {
-		return nil, err
-	}
+	// Single visibility fetch (RD-1123): derive plain levels from the detailed
+	// superset rather than querying GetBatchVisibility separately.
 	visMapDetailed, err := r.db.GetBatchVisibilityDetailed(ctx, viewerDID, addrs)
 	if err != nil {
 		return nil, err
 	}
+	visMap := visibilityMapFromDetailed(visMapDetailed)
 
 	// Get viewer's linked addresses for participant visibility override.
 	viewerAddrs := make(map[string]bool)
@@ -1859,14 +1877,14 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 		addrs = append(addrs, a)
 	}
 
-	visMap, err := r.db.GetBatchVisibility(ctx, viewerDID, addrs)
-	if err != nil {
-		return nil, err
-	}
+	// Single visibility fetch (RD-1123): the detailed map carries both the
+	// level (for visMap) and the reason (for masterMeta), so one query replaces
+	// the previous GetBatchVisibility + GetBatchVisibilityDetailed pair.
 	visMapDetailed, err := r.db.GetBatchVisibilityDetailed(ctx, viewerDID, addrs)
 	if err != nil {
 		return nil, err
 	}
+	visMap := visibilityMapFromDetailed(visMapDetailed)
 	masterMeta := make(map[string]VisibilityReason)
 	for k, v := range visMapDetailed {
 		masterMeta[k] = v.Reason
@@ -1911,18 +1929,13 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 		for a := range extraAddrMap {
 			extraAddrs = append(extraAddrs, a)
 		}
-		extraVisMap, err := r.db.GetBatchVisibility(ctx, viewerDID, extraAddrs)
-		if err != nil {
-			return nil, err
-		}
-		for k, v := range extraVisMap {
-			visMap[k] = v
-		}
+		// Single fetch (RD-1123): derive level + reason from the detailed map.
 		extraVisMapDetailed, err := r.db.GetBatchVisibilityDetailed(ctx, viewerDID, extraAddrs)
 		if err != nil {
 			return nil, err
 		}
 		for k, v := range extraVisMapDetailed {
+			visMap[k] = v.Level
 			masterMeta[k] = v.Reason
 		}
 	}
@@ -1963,18 +1976,13 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 			for a := range abiDataAddrMap {
 				abiDataAddrs = append(abiDataAddrs, a)
 			}
-			abiVisMap, err2 := r.db.GetBatchVisibility(ctx, viewerDID, abiDataAddrs)
-			if err2 != nil {
-				return nil, err2
-			}
-			for k, v := range abiVisMap {
-				visMap[k] = v
-			}
+			// Single fetch (RD-1123): derive level + reason from the detailed map.
 			abiVisMapDetailed, err2 := r.db.GetBatchVisibilityDetailed(ctx, viewerDID, abiDataAddrs)
 			if err2 != nil {
 				return nil, err2
 			}
 			for k, v := range abiVisMapDetailed {
+				visMap[k] = v.Level
 				masterMeta[k] = v.Reason
 			}
 		}

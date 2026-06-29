@@ -115,17 +115,16 @@ func TestLoadConfigFile_MissingFilePathErrors(t *testing.T) {
 
 func TestLoadConfigFile_SecretKeyRejected(t *testing.T) {
 	// Secrets must never be sourced from the file — the proxy refuses to load a
-	// file containing one, naming the offending key, and stays in pure-env mode.
-	// SIEM_AUTH_HEADER is the verbatim outbound Authorization header to the SIEM
-	// webhook, so it is secret-class like ADMIN_API_TOKEN (RD-1141).
-	secretKeysUnderTest := []string{
-		"ADMIN_API_TOKEN",
-		"SIEM_AUTH_HEADER",
-	}
-	for _, key := range secretKeysUnderTest {
+	// file containing one, naming the offending key (but NOT its value), and
+	// stays in pure-env mode. Cover all three secret-class credentials: the
+	// full-power ADMIN_API_TOKEN and the restricted OPERATOR_API_TOKEN
+	// (RD-1132/RD-1140), both sent as X-Admin-Token, and SIEM_AUTH_HEADER — the
+	// verbatim outbound Authorization header to the SIEM webhook (RD-1141).
+	const secretValue = "super-secret-token-value-DO-NOT-LEAK"
+	for _, key := range []string{"ADMIN_API_TOKEN", "OPERATOR_API_TOKEN", "SIEM_AUTH_HEADER"} {
 		t.Run(key, func(t *testing.T) {
 			resetFileConfig(t)
-			path := writeConfigFile(t, "version = 1\nBASE_URL = \"https://ok\"\n"+key+" = \"nope\"\n")
+			path := writeConfigFile(t, "version = 1\nBASE_URL = \"https://ok\"\n"+key+" = \""+secretValue+"\"\n")
 			t.Setenv("CONFIG_FILE", path)
 			err := loadConfigFile()
 			if err == nil {
@@ -133,6 +132,10 @@ func TestLoadConfigFile_SecretKeyRejected(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), key) {
 				t.Errorf("error should name the offending secret key %q, got: %v", key, err)
+			}
+			// Fail-closed: the loader must not leak the secret VALUE in the error.
+			if strings.Contains(err.Error(), secretValue) {
+				t.Errorf("error must NOT echo the secret value, got: %v", err)
 			}
 			if fileConfig != nil {
 				t.Errorf("expected fileConfig nil when the file is rejected, got %v", fileConfig)
