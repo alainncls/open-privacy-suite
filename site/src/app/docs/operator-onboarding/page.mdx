@@ -20,7 +20,7 @@ Everything here drives the **admin REST API** with `curl`. The same operations a
 <Callout variant="warning" title="The admin API requires a token AND a private-network source IP">
 Every `/api/v1/admin/*` endpoint requires a valid `X-Admin-Token` (or a JWT-admin bearer token) **and** that the request's **direct TCP peer** falls in an allowed range: loopback (`127.0.0.1`, `::1`), RFC1918 (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), CGNAT / Tailscale (`100.64.0.0/10`), or any CIDR you add via `TRUSTED_INTERNAL_CIDRS`. A direct connection from a public IP is `403`'d before auth.
 
-This is **not** a "same host only" rule — you can call it remotely from anywhere on the private network, a VPN, or Tailscale. And the check reads the *immediate* TCP peer, **not** `X-Forwarded-For` (by design): when the backend sits behind a reverse proxy or ingress (the usual production setup), every forwarded request arrives from the proxy's private IP, so this check always passes and **the token becomes the real boundary**. Treat the admin API as token-gated and use network policy / ingress rules to decide who can reach it — this middleware is a backstop against the backend port being *directly* exposed to the internet, not an internet firewall sitting in front of your proxy.
+This is **not** a "same host only" rule — you can call it remotely from anywhere on the private network, a VPN, or Tailscale. And the check reads the *immediate* TCP peer, **not** `X-Forwarded-For` (by design): when the backend sits behind a reverse proxy or ingress (the usual production setup), every forwarded request arrives from the proxy's private IP, so this check always passes and **the token becomes the authorization boundary**. Treat the admin API as token-gated and use network policy / ingress rules to decide who can reach it — this middleware is a backstop against the backend port being *directly* exposed to the internet, not an internet firewall sitting in front of your proxy.
 </Callout>
 
 You will need:
@@ -50,10 +50,10 @@ Tier-2 org admins normally use the **dashboard UI** — they obtain their JWT by
 
 | Operating model | Who holds `ADMIN_API_TOKEN` | Who runs the bootstrap (Part 1) | Who runs day-to-day onboarding (Part 2+) |
 |---|---|---|---|
-| **Gateway-managed** | Gateway | Gateway creates the client's org and adds the client's first org admin(s) by DID. | The client's org admins, in the dashboard / with their JWT. |
+| **Operator-managed** | The platform operator | The platform operator creates the client's org and adds the client's first org admin(s) by DID. | The client's org admins, in the dashboard / with their JWT. |
 | **Client-self-managed** | The client | The client runs Part 1 themselves against their own deployment. | The client's org admins. |
 
-In both models, **Part 2 onward is the same** and is done by tier-2 org admins — the difference is only who performs the one-time super-admin bootstrap and who custodies the token long-term. If Gateway manages the token, the handoff point is Step 4 (Gateway onboards the client's first admin by DID; from there the client is self-sufficient and never needs `X-Admin-Token`). Whoever holds it must source it from a secret store and rotate it per the [credential-lifecycle guidance](/docs/security/audit-integrity#recommended-aws-secrets-manager-via-irsa-canonical).
+In both models, **Part 2 onward is the same** and is done by tier-2 org admins — the difference is only who performs the one-time super-admin bootstrap and who custodies the token long-term. If the platform operator manages the token, the handoff point is Step 4 (the operator onboards the client's first admin by DID; from there the client is self-sufficient and never needs `X-Admin-Token`). Whoever holds it must source it from a secret store and rotate it per the [credential-lifecycle guidance](/docs/security/audit-integrity#recommended-aws-secrets-manager-via-irsa-canonical).
 
 ---
 
