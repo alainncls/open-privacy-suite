@@ -100,6 +100,33 @@ set -a
 source "$ENV_FILE"
 set +a
 
+# Make Docker Compose auto-load these secrets without going through this
+# script. Compose only reads a file literally named `.env` for ${VAR}
+# interpolation — it does NOT know about $ENV_FILE. Without a `.env`, any
+# `docker compose up` outside this script re-runs interpolation with the
+# vars unset and trips the fail-closed `${INDEXER_POSTGRES_PASSWORD:?...}`
+# guards. The most common offender is Docker Desktop's start/play button,
+# which re-runs `up` (not a bare `docker start`) every time — so without
+# this, the UI button is broken for everyone, not just the first dev.
+#
+# Point `.env` at $ENV_FILE so the button (and a plain `docker compose up`)
+# just work. Trade-off: `.env` is auto-loaded by EVERY compose file in this
+# dir (base, prod, scale, e2e), so they'll now see these dev secrets too —
+# acceptable on a dev box, and the reason the secrets live in a
+# stack-specific file rather than `.env` in the first place.
+#
+# A symlink (or absent `.env`) is ours to manage and we repoint it freely
+# — that also self-heals after a secret rotation. A *regular* `.env` is
+# someone's hand-rolled config; never clobber it, just tell them how to opt in.
+if [[ -L ".env" || ! -e ".env" ]]; then
+  ln -sf "$ENV_FILE" .env
+  echo "$(bold '==>') $(green "Linked .env -> $ENV_FILE") (Docker Desktop's start button will work)"
+else
+  echo "$(bold '==>') $(yellow 'A real .env already exists — leaving it untouched.')"
+  echo "      Docker Desktop's start button can't resolve privacy secrets until .env"
+  echo "      provides them. To opt in:  ln -sf $ENV_FILE .env"
+fi
+
 # Build identity (RD-1023). Resolve from git unless already set by the
 # caller (e.g. the Makefile exports these), so the backend reports a real
 # version/commit instead of dev/none/unknown. Forwarded to the compose
