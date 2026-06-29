@@ -408,15 +408,123 @@ func TestUpdateComplianceConfig_UnknownPricePolicy(t *testing.T) {
 			c, _ := gin.CreateTestContext(w)
 			c.Request = httptest.NewRequest(http.MethodPut, "/", bytes.NewBuffer([]byte(tc.body)))
 			c.Params = gin.Params{gin.Param{Key: "org_id", Value: orgID}}
-			
+
 			ts.updateComplianceConfig(c)
-			
+
 			assert.Equal(t, tc.wantStatus, w.Code)
-			
+
 			// Verify DB
 			cfg, err := ts.db.GetComplianceConfig(ctx, orgID)
 			require.NoError(t, err)
 			assert.Equal(t, tc.wantPolicy, cfg.UnknownPricePolicy)
 		})
 	}
+}
+
+// createBareOrg inserts an organization with NO compliance_config row and
+// returns its id. The compliance config is created lazily by the first PUT
+// /compliance/config — this is the exact precondition RD-1111 needs (the bug
+// only fires when no config row exists yet).
+func createBareOrg(t *testing.T, database *db.DB, slug string) string {
+	t.Helper()
+	orgID := uuid.New().String()
+	_, err := database.Conn().ExecContext(context.Background(),
+		`INSERT INTO organizations (id, slug, name, settings, created_at, updated_at)
+		 VALUES ($1, $2, $3, '{}', NOW(), NOW())`,
+		orgID, slug, slug)
+	require.NoError(t, err)
+	return orgID
+}
+
+// TestUpdateComplianceConfig_CreateWithoutUnknownPricePolicy is the RD-1111
+// regression test. Creating a brand-new compliance config (no existing row)
+// WITHOUT unknown_price_policy must NOT 500. The server must default the field
+// to the fail-closed value ("forbidden") so an unknown token price BLOCKS
+// transfers — and a raw DB CHECK-constraint error must never reach the client.
+//
+// Note: TestUpdateComplianceConfig_UnknownPricePolicy above does NOT cover this
+// because seedComplianceTestData pre-creates a compliance_config row, so the
+// isNew (config == nil) branch is never exercised there.
+func TestUpdateComplianceConfig_CreateWithoutUnknownPricePolicy(t *testing.T) {
+	ts := setupTestServerForCompliance(t)
+	ctx := context.Background()
+
+	t.Run("create without policy defaults to fail-closed forbidden", func(t *testing.T) {
+		orgID := createBareOrg(t, ts.db, "rd1111-default")
+
+		// Sanity: no config row exists yet — this is the bug precondition.
+		pre, err := ts.db.GetComplianceConfig(ctx, orgID)
+		require.NoError(t, err)
+		require.Nil(t, pre, "org must have no compliance_config row before the first PUT")
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		// Body intentionally omits unknown_price_policy (matches the QA repro).
+		c.Request = httptest.NewRequest(http.MethodPut, "/",
+			bytes.NewBufferString(`{"enabled": true, "threshold_fiat": 5000}`))
+		c.Params = gin.Params{gin.Param{Key: "org_id", Value: orgID}}
+
+		ts.updateComplianceConfig(c)
+
+		// The core of RD-1111: must be 200, not 500.
+		require.Equal(t, http.StatusOK, w.Code,
+			"first PUT without unknown_price_policy must succeed, got body: %s", w.Body.String())
+		assert.NotContains(t, w.Body.String(), "constraint",
+			"raw DB constraint error must never reach the client")
+
+		// Stored policy must be the fail-closed default. UnknownPriceForbidden is
+		// the value the checker treats as "block on unknown price" (see
+		// checker.go: priceFiat<0 + UnknownPriceForbidden => denied in enforce
+		// mode), so the safe default does NOT silently allow unpriced transfers.
+		cfg, err := ts.db.GetComplianceConfig(ctx, orgID)
+		require.NoError(t, err)
+		require.NotNil(t, cfg)
+		assert.Equal(t, compliance.UnknownPriceForbidden, cfg.UnknownPricePolicy)
+		assert.True(t, cfg.Enabled)
+		assert.Equal(t, float64(5000), cfg.ThresholdFiat)
+		// EnforcementMode is also coalesced to the safe default (enforce).
+		assert.Equal(t, compliance.EnforcementEnforce, cfg.EnforcementMode)
+	})
+
+	t.Run("create with explicit allowed policy is honored", func(t *testing.T) {
+		// Defaulting must not override an explicit opt-in to the fail-open policy.
+		orgID := createBareOrg(t, ts.db, "rd1111-explicit-allowed")
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodPut, "/",
+			bytes.NewBufferString(`{"enabled": true, "unknown_price_policy": "allowed"}`))
+		c.Params = gin.Params{gin.Param{Key: "org_id", Value: orgID}}
+
+		ts.updateComplianceConfig(c)
+
+		require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+		cfg, err := ts.db.GetComplianceConfig(ctx, orgID)
+		require.NoError(t, err)
+		require.NotNil(t, cfg)
+		assert.Equal(t, compliance.UnknownPriceAllowed, cfg.UnknownPricePolicy)
+	})
+
+	t.Run("create with invalid policy returns clean 400 not 500", func(t *testing.T) {
+		// Genuinely-invalid input on CREATE must be a clean 400 (opaque), never a
+		// 500 leaking a DB CHECK error, and must not persist a row.
+		orgID := createBareOrg(t, ts.db, "rd1111-invalid")
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodPut, "/",
+			bytes.NewBufferString(`{"enabled": true, "unknown_price_policy": "ignore"}`))
+		c.Params = gin.Params{gin.Param{Key: "org_id", Value: orgID}}
+
+		ts.updateComplianceConfig(c)
+
+		require.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
+		assert.Contains(t, w.Body.String(), "unknown_price_policy must be")
+		assert.NotContains(t, w.Body.String(), "constraint")
+
+		// No partial write: the config row must not have been created.
+		cfg, err := ts.db.GetComplianceConfig(ctx, orgID)
+		require.NoError(t, err)
+		assert.Nil(t, cfg, "invalid CREATE must not persist a compliance_config row")
+	})
 }

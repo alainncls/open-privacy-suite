@@ -40,6 +40,17 @@ func (d *DB) UpsertComplianceConfig(ctx context.Context, config *compliance.Comp
 		mode = compliance.EnforcementEnforce
 	}
 
+	// RD-1111: unknown_price_policy is NOT NULL with a CHECK(allowed|forbidden).
+	// Coalesce an unset value to the fail-closed default ("forbidden") so no
+	// caller can trip the constraint with an empty string (which surfaced as a
+	// raw 500 on the first PUT for a new org). Defaulting here — not relying on
+	// the column DEFAULT — because we always bind $5 explicitly. "forbidden" is
+	// the safe choice: an unknown price BLOCKS the transfer.
+	pricePolicy := config.UnknownPricePolicy
+	if pricePolicy == "" {
+		pricePolicy = compliance.UnknownPriceForbidden
+	}
+
 	query := `INSERT INTO compliance_config (id, org_id, enabled, threshold_fiat, unknown_price_policy, enforcement_mode)
 	          VALUES ($1, $2, $3, $4, $5, $6)
 	          ON CONFLICT (org_id) DO UPDATE SET
@@ -51,8 +62,9 @@ func (d *DB) UpsertComplianceConfig(ctx context.Context, config *compliance.Comp
 	          RETURNING created_at, updated_at`
 
 	config.EnforcementMode = mode
+	config.UnknownPricePolicy = pricePolicy
 	return d.conn.QueryRowContext(ctx, query,
-		config.ID, config.OrgID, config.Enabled, config.ThresholdFiat, config.UnknownPricePolicy, mode,
+		config.ID, config.OrgID, config.Enabled, config.ThresholdFiat, pricePolicy, mode,
 	).Scan(&config.CreatedAt, &config.UpdatedAt)
 }
 
