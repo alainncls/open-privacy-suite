@@ -564,6 +564,11 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	s.jsonrpcProcessor.SetDefaultRPCAPIKeyHeader(cfg.RPCAPIKeyHeader)
 	s.jsonrpcProcessor.SetEthCallTracing(cfg.RuntimeTracingEthCallEnabled, cfg.EthCallTraceTimeout)
 	s.jsonrpcProcessor.SetIntraOrgGrantTracing(cfg.RuntimeTracingIntraOrgGrantsEnabled)
+	// RD-1144: eth_call return-data field redaction reuses the explorer's
+	// DID-based visibility resolver (database satisfies it) so the RPC and
+	// explorer layers agree per (viewer, address).
+	s.jsonrpcProcessor.SetExplorerVisibilityResolver(database)
+	s.jsonrpcProcessor.SetEthCallDenyWithoutABI(cfg.EthCallDenyWithoutABI)
 
 	// Initialize compliance checker for travel rule enforcement
 	if cfg.EnableTravelRule {
