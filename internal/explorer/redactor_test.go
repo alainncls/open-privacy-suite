@@ -529,7 +529,7 @@ func TestRedactTransactions_PseudonymousAddress(t *testing.T) {
 // page (getGrantTransactions) already rendered the same tx with the
 // contract as External-XXXX; this test makes the regular path consistent.
 func TestRedactTransactions_PseudonymousGrant_DemotesPublicCounterparty(t *testing.T) {
-	bob := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"           // pseudonymously disclosed to viewer
+	bob := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"            // pseudonymously disclosed to viewer
 	publicContract := "0xcccccccccccccccccccccccccccccccccccccccc" // e.g. USDC — viewer sees it everywhere else
 
 	engine := newEngineDetailed(
@@ -3305,6 +3305,108 @@ func TestRedactTransactions_ContractCreationVisibleDeployer(t *testing.T) {
 	}
 	if len(result) != 1 {
 		t.Errorf("expected visible deployer's contract creation to be kept, got %d", len(result))
+	}
+}
+
+// RD-1143: the deployed-contract address on a CREATE receipt is field-level
+// redacted. With a PUBLIC deployer the row survives, but a private deployed
+// contract's address must not leak to a non-participant.
+func TestRedactTransactions_ContractAddress_RedactedForNonParticipant_RD1143(t *testing.T) {
+	deployer := "0xdeployer000000000000000000000000000000" // public
+	contract := "0xcontract000000000000000000000000000000" // private (Redacted)
+	db := &mockDB{visMap: VisibilityMap{
+		deployer: VisibilityFull,
+		contract: VisibilityRedacted,
+	}}
+	engine := NewRedactionEngine(nil, db)
+	txs := []Transaction{{Hash: "0xdeploy", From: deployer, To: nil, ContractAddress: strPtr(contract)}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:eve")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected row kept (public deployer), got %d", len(result))
+	}
+	if result[0].ContractAddress == nil || *result[0].ContractAddress != "[PRIVATE]" {
+		t.Errorf("contractAddress must be [PRIVATE] for non-participant, got %v", result[0].ContractAddress)
+	}
+}
+
+// RD-1143: the deployer (participant in their own CREATE) sees the real deployed
+// contract address even when its standing visibility is Redacted.
+func TestRedactTransactions_ContractAddress_DeployerSeesReal_RD1143(t *testing.T) {
+	deployer := "0xdeployer000000000000000000000000000000"
+	contract := "0xcontract000000000000000000000000000000"
+	engine := newEngineWithLinkedAddrs(VisibilityMap{
+		deployer: VisibilityHidden,   // private deployer
+		contract: VisibilityRedacted, // standing-redacted contract
+	}, []string{deployer}) // viewer's linked addr IS the deployer
+	txs := []Transaction{{Hash: "0xdeploy", From: deployer, To: nil, ContractAddress: strPtr(contract)}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:deployer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected deployer to see their own deploy, got %d", len(result))
+	}
+	if result[0].ContractAddress == nil || *result[0].ContractAddress != contract {
+		t.Errorf("deployer must see real contractAddress, got %v", result[0].ContractAddress)
+	}
+}
+
+// RD-1143 (admin-flag reconciliation): ORG_ADMIN_VIEW_USER_TXS reveals row
+// existence + value but NOT the deployed-contract address — addresses are never
+// revealed by the flag. Admin has no org access to the contract.
+func TestRedactTransactions_ContractAddress_AdminFlagDoesNotReveal_RD1143(t *testing.T) {
+	deployer := "0xdeployer000000000000000000000000000000"
+	contract := "0xcontract000000000000000000000000000000"
+	db := &mockDB{visMap: VisibilityMap{
+		deployer: VisibilityHidden,
+		contract: VisibilityRedacted, // admin has NO org access to it
+	}}
+	engine := NewRedactionEngine(nil, db)
+	txs := []Transaction{{Hash: "0xdeploy", From: deployer, To: nil, Value: "42", ContractAddress: strPtr(contract)}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:admin",
+		RedactOpts{ViewerIsAdmin: true, OrgAdminViewUserTxs: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("admin-flag should keep the deploy row, got %d", len(result))
+	}
+	if result[0].From != "[PRIVATE]" {
+		t.Errorf("deployer should be [PRIVATE] under the flag, got %s", result[0].From)
+	}
+	if result[0].ContractAddress == nil || *result[0].ContractAddress != "[PRIVATE]" {
+		t.Errorf("admin flag must NOT reveal contractAddress, got %v", result[0].ContractAddress)
+	}
+	if result[0].Value != "42" {
+		t.Errorf("admin flag should preserve value, got %s", result[0].Value)
+	}
+}
+
+// RD-1143 (admin-flag reconciliation): an admin WITH org access to the deployed
+// contract (its visibility resolves Full) sees the real address legitimately,
+// even though the deployer EOA stays [PRIVATE].
+func TestRedactTransactions_ContractAddress_AdminWithContractAccessSeesReal_RD1143(t *testing.T) {
+	deployer := "0xdeployer000000000000000000000000000000"
+	contract := "0xcontract000000000000000000000000000000"
+	db := &mockDB{visMap: VisibilityMap{
+		deployer: VisibilityHidden, // deployer EOA private to the admin
+		contract: VisibilityFull,   // admin has org access to the contract
+	}}
+	engine := NewRedactionEngine(nil, db)
+	txs := []Transaction{{Hash: "0xdeploy", From: deployer, To: nil, ContractAddress: strPtr(contract)}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:admin",
+		RedactOpts{ViewerIsAdmin: true, OrgAdminViewUserTxs: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected row kept, got %d", len(result))
+	}
+	if result[0].ContractAddress == nil || *result[0].ContractAddress != contract {
+		t.Errorf("admin with contract access should see real contractAddress, got %v", result[0].ContractAddress)
 	}
 }
 
