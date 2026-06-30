@@ -30,6 +30,12 @@ func newHTTPClient(rawURL, adminToken string) (*httpClient, error) {
 		adminToken: adminToken,
 		http: &http.Client{
 			Timeout: 15 * time.Second,
+			// SSRF mitigation: never follow redirects. The configured base host
+			// is trusted, but a redirect response could otherwise steer a request
+			// to an internal/loopback/metadata endpoint (e.g. 169.254.169.254).
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		},
 	}, nil
 }
@@ -66,6 +72,13 @@ func (c *httpClient) do(method, path string, payload any) (json.RawMessage, erro
 		target = c.baseURL.JoinPath(parts[0])
 		target.RawQuery = parts[1]
 	}
+	// SSRF mitigation: pin the request to the configured base host. JoinPath
+	// preserves the base scheme/host/userinfo, but re-asserting them here ensures
+	// a caller-supplied path can only ever address the trusted upstream and can
+	// never redirect the request to another scheme, host, or credential.
+	target.Scheme = c.baseURL.Scheme
+	target.Host = c.baseURL.Host
+	target.User = c.baseURL.User
 	req, err := http.NewRequest(method, target.String(), body)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
