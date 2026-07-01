@@ -1528,6 +1528,12 @@ func countAcrossPages[T any](
 		if len(page) == 0 {
 			break
 		}
+		// Pages are cursor-descending; if the top of this page hasn't moved
+		// below the previous cursor, the backend ignored `before` and is
+		// re-serving counted rows. Stop before counting to avoid duplicates.
+		if before != nil && cursorOf(page[0]) >= *before {
+			break
+		}
 		scanned += len(page)
 		n, err := perPageCount(page)
 		if err != nil {
@@ -1535,9 +1541,6 @@ func countAcrossPages[T any](
 		}
 		count += n
 		last := cursorOf(page[len(page)-1])
-		if before != nil && last >= *before {
-			break // no progress (single block exceeds a page) — stay bounded
-		}
 		if last == 0 {
 			break // reached genesis
 		}
