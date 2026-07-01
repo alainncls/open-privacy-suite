@@ -39,16 +39,16 @@ const create2FactoryBytecode = "0x608060405234801561000f575f80fd5b506108b5806100
 
 // Function selectors.
 const (
-	selectorDeployChild   = "0x2354c9da" // deployChild(bytes32,uint256)
-	selectorPredictAddr   = "0x7c3afe11" // predictAddress(bytes32,uint256)
-	selectorChildValue    = "0x3fa4f245" // value() on Child
+	selectorDeployChild = "0x2354c9da" // deployChild(bytes32,uint256)
+	selectorPredictAddr = "0x7c3afe11" // predictAddress(bytes32,uint256)
+	selectorChildValue  = "0x3fa4f245" // value() on Child
 )
 
 // Anvil deterministic accounts (from "test test test...junk" mnemonic).
 const (
-	anvilAccount0     = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
-	anvilAccount0Key  = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-	anvilAccount1     = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+	anvilAccount0    = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+	anvilAccount0Key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+	anvilAccount1    = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
 )
 
 // ---------------------------------------------------------------------------
@@ -209,21 +209,26 @@ func setupCreate2Env(t *testing.T) *create2TestEnv {
 	serverURL := fmt.Sprintf("http://localhost:%d", port)
 
 	cfg := &config.Config{
-		NodeURL:              anvilURL,
-		DatabaseURL:          dbURL,
-		PrivadoRPCURL:        "https://rpc-mainnet.privado.id",
-		IPFSGateway:          "https://ipfs-proxy-cache.privado.id",
-		JWTSecret:            "test-secret-create2",
-		JWTRefreshSecret:     "test-refresh-secret-create2",
-		VerifierID:           "did:privado:verifier:test",
-		BaseURL:              serverURL,
-		Environment:          "development",
-		TraceCacheTTL:        5 * time.Second,
-		TraceTimeout:         30 * time.Second,
+		NodeURL:     anvilURL,
+		DatabaseURL: dbURL,
+		// RD-1147: co-locate the audit schema in this testcontainer DB for e2e
+		// (server.New requires a resolvable audit DB; the lean migration is
+		// idempotent, so it just recreates access_logs here). Prod keeps them separate.
+		AuditDatabaseURL:      dbURL,
+		AuditAdminDatabaseURL: dbURL,
+		PrivadoRPCURL:         "https://rpc-mainnet.privado.id",
+		IPFSGateway:           "https://ipfs-proxy-cache.privado.id",
+		JWTSecret:             "test-secret-create2",
+		JWTRefreshSecret:      "test-refresh-secret-create2",
+		VerifierID:            "did:privado:verifier:test",
+		BaseURL:               serverURL,
+		Environment:           "development",
+		TraceCacheTTL:         5 * time.Second,
+		TraceTimeout:          30 * time.Second,
 		TraceTieredValidation: true,
-		AllowMockLogin:       true,
-		MockSignatures:       true,
-		DisableCoinGecko:     true,
+		AllowMockLogin:        true,
+		MockSignatures:        true,
+		DisableCoinGecko:      true,
 	}
 
 	mockVerifier := &mockPrivadoVerifier{}

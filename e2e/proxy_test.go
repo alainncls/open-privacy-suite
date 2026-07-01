@@ -143,15 +143,23 @@ func setupE2EWithVerifier(t *testing.T, verifier server.PrivadoVerifier) (*serve
 	serverURL := fmt.Sprintf("http://localhost:%d", port)
 
 	cfg := &config.Config{
-		NodeURL:          "http://localhost:8545",
-		DatabaseURL:      dbURL,
-		PrivadoRPCURL:    "https://rpc-mainnet.privado.id",
-		IPFSGateway:      "https://ipfs-proxy-cache.privado.id",
-		JWTSecret:        "test-secret",
-		JWTRefreshSecret: "test-refresh-secret",
-		VerifierID:       "did:privado:verifier:test",
-		BaseURL:          serverURL,
-		Environment:      "development",
+		NodeURL:     "http://localhost:8545",
+		DatabaseURL: dbURL,
+		// RD-1147: audit logs live in a separate DB via the real server.New path.
+		// For e2e, co-locate the audit schema in this same testcontainer DB (the
+		// lean audit migration is idempotent — CREATE ... IF NOT EXISTS — so it just
+		// recreates access_logs here after main dropped it). Production keeps the
+		// audit DB strictly separate; owner creds here are fine (the INSERT-only
+		// seal is exercised by the internal/db integration test, not e2e).
+		AuditDatabaseURL:      dbURL,
+		AuditAdminDatabaseURL: dbURL,
+		PrivadoRPCURL:         "https://rpc-mainnet.privado.id",
+		IPFSGateway:           "https://ipfs-proxy-cache.privado.id",
+		JWTSecret:             "test-secret",
+		JWTRefreshSecret:      "test-refresh-secret",
+		VerifierID:            "did:privado:verifier:test",
+		BaseURL:               serverURL,
+		Environment:           "development",
 		// AllowMockLogin is inert without the mockauth build tag
 		// (auth_prod.go stubs tryMockLogin out); enabling it here is
 		// safe for production builds and lets mockauth-tagged tests
@@ -286,7 +294,7 @@ func createRBACUser(t *testing.T, database *db.DB, externalID string, kyc, banne
 		ID:             uuid.New().String(),
 		GroupID:        rbac.DefaultGroupID,
 		AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_blockNumber", "eth_chainId", "eth_estimateGas", "eth_gasPrice", "eth_getCode", "eth_getLogs", "eth_getStorageAt", "eth_getTransactionByHash", "eth_getTransactionCount", "eth_getTransactionReceipt", "eth_sendRawTransaction", "net_version"},
-		Claims:  []rbac.Claim{},
+		Claims:         []rbac.Claim{},
 	}
 	_ = database.CreateGroupAccess(ctx, groupAccess) // Ignore error if already exists
 
