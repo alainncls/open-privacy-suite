@@ -168,6 +168,8 @@ By default the access-log chain is written synchronously on each request. Set `A
 
 The trade-off: an entry is durable on the local volume the instant the request returns, but only reaches the (replicated, backed-up) database when the sealer next runs. Keep the buffer on a durable/replicated volume and the seal interval short so the un-sealed window stays small.
 
+**Volume ownership.** The proxy runs as a non-root user (uid 1000) and the buffer is a fail-hard dependency, so the buffer directory must be writable by that user or the backend refuses to start. On Docker, mount a named volume at the image's pre-owned buffer path (`/var/lib/pp/auditbuf`) and it inherits the right ownership; on Kubernetes, set the pod's `securityContext.fsGroup: 1000`.
+
 ---
 
 ## Truncation detection (signed checkpoints)

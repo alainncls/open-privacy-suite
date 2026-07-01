@@ -24,7 +24,10 @@ package buffer
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"sync/atomic"
 
 	"github.com/cockroachdb/pebble"
@@ -67,6 +70,11 @@ func prefixBounds() *pebble.IterOptions {
 // Open opens (or creates) the buffer at dir and recovers the last persisted
 // sequence so Append continues monotonically across restarts.
 func Open(dir string) (*Buffer, error) {
+	// Fail fast with an actionable error if the dir isn't usable, rather than
+	// deep inside Pebble with a bare EACCES (the common non-root-volume case).
+	if err := ensureWritableDir(dir); err != nil {
+		return nil, err
+	}
 	db, err := pebble.Open(dir, &pebble.Options{})
 	if err != nil {
 		return nil, fmt.Errorf("open audit buffer: %w", err)
@@ -77,6 +85,41 @@ func Open(dir string) (*Buffer, error) {
 		return nil, err
 	}
 	return b, nil
+}
+
+// ensureWritableDir creates the buffer directory if needed and verifies the
+// current process can actually write in it. The proxy runs as a non-root user
+// (uid 1000 in the shipped image); a freshly-mounted Docker volume or Kubernetes
+// PVC is root-owned, so without provisioning pebble.Open would fail deep inside
+// with a bare EACCES. The async buffer is a fail-hard dependency, so surfacing
+// the fix here turns a cryptic boot failure into an operator-actionable one
+// (RD-1112 prod deploy).
+func ensureWritableDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return bufferDirError(dir, err)
+	}
+	// MkdirAll is a no-op on an existing (possibly root-owned) dir, so only a
+	// real create proves this process can use it.
+	probe, err := os.CreateTemp(dir, ".writable-probe-*")
+	if err != nil {
+		return bufferDirError(dir, err)
+	}
+	name := probe.Name()
+	_ = probe.Close()
+	_ = os.Remove(name)
+	return nil
+}
+
+// bufferDirError wraps a buffer-dir preparation failure, adding a deployment
+// hint on the permission case so the operator knows the volume must be owned by
+// (or writable by) the proxy's runtime uid.
+func bufferDirError(dir string, err error) error {
+	if errors.Is(err, fs.ErrPermission) {
+		return fmt.Errorf("audit buffer dir %q is not writable by the proxy's runtime user (uid %d): %w — "+
+			"mount a volume owned by that uid (on Docker a named volume inherits the image's pre-owned buffer dir; "+
+			"on Kubernetes set the pod securityContext fsGroup to that uid)", dir, os.Getuid(), err)
+	}
+	return fmt.Errorf("prepare audit buffer dir %q: %w", dir, err)
 }
 
 // recoverSeq sets seq to the highest persisted entry sequence (0 if empty).
