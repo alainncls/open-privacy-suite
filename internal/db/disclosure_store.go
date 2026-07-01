@@ -1013,8 +1013,14 @@ func (d *DB) GetActivityLogs(ctx context.Context, userExternalID string, scope *
 // audit DB via GetAccessLogsForExternalIDInRange.
 type GrantActivityBounds struct {
 	ExternalID string
-	GrantedAt  time.Time
-	ExpiresAt  time.Time
+	// Canonical digit strings ("YYYY-MM-DD HH24:MI:SS.US"), NOT time.Time. The
+	// audit split re-passes these against the naive (timezone-less)
+	// access_logs.created_at column; round-tripping through Go time.Time shifts
+	// the wall-clock on a non-UTC host and silently drops in-window rows. Reading
+	// them formatted on the UTC-pinned session (parseConfigUTC) and comparing via
+	// ::timestamp keeps the bounds→query round-trip timezone-independent (RD-1147).
+	GrantedAt string
+	ExpiresAt string
 }
 
 // GetGrantActivityBounds resolves the target user's external_id and the grant's
@@ -1023,7 +1029,9 @@ type GrantActivityBounds struct {
 func (d *DB) GetGrantActivityBounds(ctx context.Context, grantID string) (*GrantActivityBounds, error) {
 	var b GrantActivityBounds
 	err := d.conn.QueryRowContext(ctx, `
-		SELECT u.external_id, g.granted_at, g.expires_at
+		SELECT u.external_id,
+		       to_char(g.granted_at, 'YYYY-MM-DD HH24:MI:SS.US'),
+		       to_char(g.expires_at, 'YYYY-MM-DD HH24:MI:SS.US')
 		FROM disclosure_grants g
 		JOIN disclosure_requests dr ON dr.id = g.request_id
 		JOIN users u ON u.id = dr.target_user_id
@@ -1042,13 +1050,14 @@ func (d *DB) GetGrantActivityBounds(ctx context.Context, grantID string) (*Grant
 // Only method, status_code, created_at are selected — sensitive fields
 // (ip_address, request_params, correlation_id) are never returned. This runs on
 // whichever DB holds access_logs (the audit DB under RD-1147); it does NOT touch
-// the grant/user tables, so it is safe cross-database. Time bounds are passed as
-// parameters (resolved via GetGrantActivityBounds) so no timezone conversion is
-// introduced — the values were read from the same TIMESTAMP columns.
-func (d *DB) GetAccessLogsForExternalIDInRange(ctx context.Context, externalID string, start, end time.Time, limit, offset int) ([]disclosure.ActivityLogEntry, int, error) {
+// the grant/user tables, so it is safe cross-database. start/end are canonical
+// UTC digit strings from GetGrantActivityBounds, compared via ::timestamp against
+// the naive created_at column — no Go time.Time round-trip, so the comparison is
+// timezone-independent (a non-UTC host otherwise silently drops in-window rows).
+func (d *DB) GetAccessLogsForExternalIDInRange(ctx context.Context, externalID string, start, end string, limit, offset int) ([]disclosure.ActivityLogEntry, int, error) {
 	var total int
 	if err := d.conn.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM access_logs WHERE external_id = $1 AND created_at >= $2 AND created_at <= $3`,
+		`SELECT COUNT(*) FROM access_logs WHERE external_id = $1 AND created_at >= $2::timestamp AND created_at <= $3::timestamp`,
 		externalID, start, end).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("failed to count activity logs for grant: %w", err)
 	}
@@ -1057,7 +1066,7 @@ func (d *DB) GetAccessLogsForExternalIDInRange(ctx context.Context, externalID s
 	rows, err := d.conn.QueryContext(ctx, `
 		SELECT method, status_code, created_at
 		FROM access_logs
-		WHERE external_id = $1 AND created_at >= $2 AND created_at <= $3
+		WHERE external_id = $1 AND created_at >= $2::timestamp AND created_at <= $3::timestamp
 		ORDER BY created_at DESC
 		LIMIT $4 OFFSET $5`, externalID, start, end, limit, offset)
 	if err != nil {
