@@ -243,13 +243,17 @@ func (d *DB) Migrate(ctx context.Context) error {
 	return d.migrateFS(ctx, migrations.FS, "schema_version")
 }
 
-// MigrateAuditOnly applies the audit-database-only migration FS (RD-1147). It
-// MUST run against the audit database's admin/owner pool AFTER Migrate (the
-// shared FS) has created the access_logs table + the 058 roles there. It uses a
-// SEPARATE version table (schema_version_audit) so its sequence is tracked
-// independently of the shared schema. Never call this against the main
-// DATABASE_URL: it seals access_logs to INSERT-only, which would break the
-// main-DB retention worker that prunes access_logs under the app role.
+// MigrateAuditOnly applies the LEAN, STANDALONE audit-database migration set
+// (RD-1147) against the audit database's admin/owner pool. It builds the entire
+// audit schema from an EMPTY database — the roles, access_logs (+ its hash-chain
+// tables), and the append-only seal — and does NOT run the main migration FS, so
+// the audit DB never gets users / contracts / groups / rbac_audit_log / etc.
+//
+// It uses a SEPARATE tern version table (schema_version_audit) so its sequence
+// is independent of the main schema. Call it against the audit DSN only; never
+// against the main DATABASE_URL (that would seal access_logs to INSERT-only in
+// the main DB and break the main-DB retention worker — but under RD-1147 the
+// main DB no longer even has access_logs, so this simply must not point at main).
 func (d *DB) MigrateAuditOnly(ctx context.Context, auditFS fs.FS) error {
 	return d.migrateFS(ctx, auditFS, "schema_version_audit")
 }

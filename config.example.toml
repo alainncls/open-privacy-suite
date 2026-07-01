@@ -41,14 +41,19 @@ PORT = "8080"                                    # server listen port
 # Database / Redis — connection STRINGS are secrets; set them in the environment:
 #   DATABASE_URL, EXPLORER_DATABASE_URL, REDIS_URL
 #
-# Separate append-only audit database for access_logs (optional; RD-1147). Set
-# BOTH in the environment (they are secrets — DSNs with passwords):
-#   AUDIT_ADMIN_DATABASE_URL — admin/owner role: runs the audit-DB migrations
-#                              (schema + the append-only REVOKE) and retention prune.
+# Separate append-only audit database for access_logs (RD-1147). access_logs
+# ALWAYS lives in its OWN Postgres database — the main database no longer has an
+# access_logs table. Set BOTH DSNs in the environment (they are secrets — DSNs
+# with passwords):
+#   AUDIT_ADMIN_DATABASE_URL — admin/owner role: runs the lean audit-DB
+#                              migrations and retention prune (DELETE).
 #   AUDIT_DATABASE_URL       — runtime role: MUST connect as the RESTRICTED
 #                              privacy_proxy_app role, or the append-only seal
-#                              won't bite. Unset both = access_logs stay in the
-#                              main database (unchanged).
+#                              won't bite.
+# If unset, both are DERIVED from DATABASE_URL as "<name>_audit" on the same
+# server (reusing DATABASE_URL's owner credentials, so the seal is NOT enforced
+# on the derived default). The app connects to an already-provisioned audit
+# database and migrates it — it NEVER runs CREATE DATABASE (infra provisions it).
 
 # -----------------------------------------------------------------------------
 # Authentication (Privado ID / Billions)

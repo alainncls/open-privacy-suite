@@ -345,58 +345,57 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		return nil, fmt.Errorf("failed to create database: %w", err)
 	}
 
-	// RD-1147: optionally isolate the access_logs audit trail in a SEPARATE
-	// append-only Postgres. Two DSNs, two roles:
-	//   * AUDIT_ADMIN_DATABASE_URL — admin/owner. Runs the audit-DB migrations
-	//     (shared schema + the append-only REVOKE) and later the retention prune
-	//     (DELETE, which the runtime role cannot do).
-	//   * AUDIT_DATABASE_URL — RUNTIME. MUST connect as the restricted
-	//     privacy_proxy_app role so the append-only seal actually bites. Opened
-	//     WITHOUT migrations (NewWithoutMigrate) — the restricted role must never
-	//     run DDL.
-	// When a URL is unset, that role falls back to the main `database`. Both unset
-	// = fully unchanged single-DB behaviour (non-breaking).
-	auditAdminDB := database
-	if cfg.AuditAdminDatabaseURL != "" {
-		auditAdminDB, err = db.New(cfg.AuditAdminDatabaseURL, db.WithPool(cfg.DBMaxOpenConns, cfg.DBMaxIdleConns, cfg.DBConnMaxLifetime))
-		if err != nil {
-			database.Close()
-			return nil, fmt.Errorf("failed to open audit admin database: %w", err)
-		}
-		// db.New already ran the SHARED migration FS against the audit DB, giving
-		// it the full schema incl. access_logs, the chain tables, and the 058
-		// roles/grants. NOTE (future cleanup): the audit DB inherits the whole
-		// RBAC/operational schema too; those tables sit unused here. A lean
-		// audit-only schema (access_logs + audit_chain_* + roles) is a future
-		// simplification — acceptable for the MVP.
-		if mErr := auditAdminDB.MigrateAuditOnly(context.Background(), migrationsaudit.FS); mErr != nil {
-			auditAdminDB.Close()
-			database.Close()
-			return nil, fmt.Errorf("failed to apply audit-only migrations: %w", mErr)
-		}
-		slog.Info("access_logs isolated in separate audit database (RD-1147); append-only seal applied via audit admin pool")
+	// RD-1147: access_logs ALWAYS lives in a SEPARATE, always-on append-only
+	// audit database — the main DB no longer has an access_logs table at all
+	// (dropped by migration 068). There is NO fallback to main. Two DSNs, two
+	// roles:
+	//   * AUDIT_ADMIN_DATABASE_URL — admin/owner. Runs the LEAN audit migrations
+	//     (roles + access_logs + chain tables + append-only grants) at startup
+	//     and later the retention prune (DELETE, which the runtime role cannot).
+	//   * AUDIT_DATABASE_URL — RUNTIME. SHOULD connect as the restricted
+	//     privacy_proxy_app role so the append-only seal (INSERT+SELECT, no
+	//     UPDATE/DELETE) bites. Opened WITHOUT migrations — the runtime role
+	//     must never run DDL.
+	// When unset, both are DERIVED from DATABASE_URL as "<name>_audit" on the
+	// same server (config.deriveAuditDatabaseURL), reusing DATABASE_URL's owner
+	// credentials — the app connects to an already-provisioned DB and migrates
+	// it; the app NEVER runs CREATE DATABASE. In the derived-default case the
+	// runtime pool connects as the owner, so the seal is not enforced (see docs).
+	if cfg.AuditAdminDatabaseURL == "" || cfg.AuditDatabaseURL == "" {
+		database.Close()
+		return nil, fmt.Errorf("audit database URL unresolved: DATABASE_URL must be a parseable postgres:// URL so the <name>_audit default can be derived, or set AUDIT_ADMIN_DATABASE_URL / AUDIT_DATABASE_URL explicitly (RD-1147)")
 	}
 
-	auditDB := database
-	if cfg.AuditDatabaseURL != "" {
-		// Restricted runtime role: NO migrations (it lacks DDL rights, and the
-		// admin pool above already migrated the audit DB).
-		auditDB, err = db.NewWithoutMigrate(cfg.AuditDatabaseURL, db.WithPool(cfg.DBMaxOpenConns, cfg.DBMaxIdleConns, cfg.DBConnMaxLifetime))
-		if err != nil {
-			if auditAdminDB != database {
-				auditAdminDB.Close()
-			}
-			database.Close()
-			return nil, fmt.Errorf("failed to open audit runtime database: %w", err)
-		}
-		if cfg.AuditAdminDatabaseURL == "" {
-			// The seal (REVOKE UPDATE/DELETE) is applied by the audit-only
-			// migration, which only runs via the admin pool. Without an admin DSN
-			// the audit runtime DB is used as-is — the operator must have migrated
-			// it out of band. Warn so a half-configured deployment is visible.
-			slog.Warn("AUDIT_DATABASE_URL is set but AUDIT_ADMIN_DATABASE_URL is not — audit-DB migrations (incl. the append-only REVOKE) were NOT applied by this process; ensure the audit database has been migrated and sealed out of band, and that retention prune has a path with DELETE rights")
-		}
+	// Admin/owner pool: open WITHOUT running the main migration FS (the audit DB
+	// must NOT get users/contracts/groups/rbac_audit_log/etc), then apply the
+	// lean audit-only migration set that builds the entire audit schema.
+	auditAdminDB, err := db.NewWithoutMigrate(cfg.AuditAdminDatabaseURL, db.WithPool(cfg.DBMaxOpenConns, cfg.DBMaxIdleConns, cfg.DBConnMaxLifetime))
+	if err != nil {
+		database.Close()
+		return nil, fmt.Errorf("failed to open audit admin database: %w", err)
 	}
+	if mErr := auditAdminDB.MigrateAuditOnly(context.Background(), migrationsaudit.FS); mErr != nil {
+		auditAdminDB.Close()
+		database.Close()
+		return nil, fmt.Errorf("failed to apply lean audit migrations: %w", mErr)
+	}
+
+	// Runtime pool: restricted role, NO migrations (it lacks DDL rights; the
+	// admin pool above already migrated the audit DB).
+	auditDB, err := db.NewWithoutMigrate(cfg.AuditDatabaseURL, db.WithPool(cfg.DBMaxOpenConns, cfg.DBMaxIdleConns, cfg.DBConnMaxLifetime))
+	if err != nil {
+		auditAdminDB.Close()
+		database.Close()
+		return nil, fmt.Errorf("failed to open audit runtime database: %w", err)
+	}
+	if cfg.AuditDatabaseURL == cfg.AuditAdminDatabaseURL {
+		// Derived-default deployment (or an operator pointing both DSNs at the
+		// same owner identity): the runtime pool connects as the owner, so the
+		// INSERT-only seal is NOT enforced. Warn so a production deployment that
+		// wants the seal knows to set AUDIT_DATABASE_URL to the restricted role.
+		slog.Warn("audit runtime and admin DSNs are identical — the access_logs append-only seal is NOT enforced (runtime connects as the owner). Set AUDIT_DATABASE_URL to connect as the restricted privacy_proxy_app role to enforce the seal (RD-1147)")
+	}
+	slog.Info("access_logs isolated in separate audit database (RD-1147); lean audit schema migrated via admin pool")
 
 	var explorerSQL *explorer.Store
 	if cfg.ExplorerDatabaseURL != "" {
@@ -885,50 +884,37 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 			return n
 		}
 
-		auditSeparated := auditDB != database
-
-		// access_logs chain verifier — runs against whichever DB holds
-		// access_logs (the audit DB when separated, else main). RD-1112 #8
-		// checkpoint guard applies to this chain.
+		// RD-1147: access_logs and rbac_audit_log now ALWAYS live in different
+		// databases (access_logs in the audit DB, rbac_audit_log in main), and a
+		// single verifier connection cannot span two databases. So scope the
+		// primary worker to the access_logs chain (audit DB) and run a second
+		// worker for the rbac_audit_log chain on main.
+		//
+		// access_logs chain verifier — audit DB. RD-1112 #8 checkpoint guard
+		// applies to this chain.
 		accessVerifier := audit.NewVerifier(auditDB.Conn(), auditDB)
 		if checkpointSigner != nil && checkpointReader != nil {
 			accessVerifier.SetCheckpointVerification(checkpointReader, checkpointSigner)
 		}
+		s.auditIntegrityWorker = audit.NewIntegrityWorker(accessVerifier, buildNotifiers(), audit.IntegrityWorkerConfig{
+			Interval:   cfg.AuditIntegrityVerifyInterval,
+			Violations: m.AuditChainIntegrityViolations,
+			Chains:     []audit.ChainName{audit.ChainAccessLogs},
+		})
+		s.auditIntegrityWorker.Start(context.Background())
 
-		if auditSeparated {
-			// Split deployment: scope the primary worker to the access_logs chain
-			// (audit DB) and add a second worker for the rbac_audit_log chain on
-			// main. A single verifier connection cannot span two databases.
-			s.auditIntegrityWorker = audit.NewIntegrityWorker(accessVerifier, buildNotifiers(), audit.IntegrityWorkerConfig{
-				Interval:   cfg.AuditIntegrityVerifyInterval,
-				Violations: m.AuditChainIntegrityViolations,
-				Chains:     []audit.ChainName{audit.ChainAccessLogs},
-			})
-			s.auditIntegrityWorker.Start(context.Background())
-
-			rbacVerifier := audit.NewVerifier(database.Conn(), database)
-			s.auditIntegrityWorkerRBAC = audit.NewIntegrityWorker(rbacVerifier, buildNotifiers(), audit.IntegrityWorkerConfig{
-				Interval:   cfg.AuditIntegrityVerifyInterval,
-				Violations: m.AuditChainIntegrityViolations,
-				Chains:     []audit.ChainName{audit.ChainRBACAuditLog},
-			})
-			s.auditIntegrityWorkerRBAC.Start(context.Background())
-			slog.Info("audit chain integrity verifiers started (RD-1147 split: access_logs on audit DB, rbac_audit_log on main DB)",
-				"interval", cfg.AuditIntegrityVerifyInterval,
-				"siem_notify", siemForwarder != nil,
-				"webhook_notify", cfg.AuditTamperWebhookURL != "")
-		} else {
-			// Single DB: one worker verifies both chains (unchanged behaviour).
-			s.auditIntegrityWorker = audit.NewIntegrityWorker(accessVerifier, buildNotifiers(), audit.IntegrityWorkerConfig{
-				Interval:   cfg.AuditIntegrityVerifyInterval,
-				Violations: m.AuditChainIntegrityViolations,
-			})
-			s.auditIntegrityWorker.Start(context.Background())
-			slog.Info("audit chain integrity verifier started",
-				"interval", cfg.AuditIntegrityVerifyInterval,
-				"siem_notify", siemForwarder != nil,
-				"webhook_notify", cfg.AuditTamperWebhookURL != "")
-		}
+		// rbac_audit_log chain verifier — main DB.
+		rbacVerifier := audit.NewVerifier(database.Conn(), database)
+		s.auditIntegrityWorkerRBAC = audit.NewIntegrityWorker(rbacVerifier, buildNotifiers(), audit.IntegrityWorkerConfig{
+			Interval:   cfg.AuditIntegrityVerifyInterval,
+			Violations: m.AuditChainIntegrityViolations,
+			Chains:     []audit.ChainName{audit.ChainRBACAuditLog},
+		})
+		s.auditIntegrityWorkerRBAC.Start(context.Background())
+		slog.Info("audit chain integrity verifiers started (RD-1147: access_logs on audit DB, rbac_audit_log on main DB)",
+			"interval", cfg.AuditIntegrityVerifyInterval,
+			"siem_notify", siemForwarder != nil,
+			"webhook_notify", cfg.AuditTamperWebhookURL != "")
 	} else {
 		slog.Warn("AUDIT_INTEGRITY_VERIFY_INTERVAL=0: scheduled audit-chain verifier DISABLED. Run privacy-cli audit verify manually or via cron.")
 	}

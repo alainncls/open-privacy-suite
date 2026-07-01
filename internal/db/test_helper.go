@@ -8,11 +8,29 @@ import (
 	"testing"
 	"time"
 
+	migrationsaudit "privacy-proxy/internal/db/migrations_audit"
+
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
+
+// EnsureAuditSchemaForTest re-applies the lean audit migration set
+// (internal/db/migrations_audit) to the SAME database handle so access_logs +
+// the audit_chain_* tables exist there for tests (RD-1147).
+//
+// In production access_logs lives ONLY in a separate audit database; migration
+// 068 drops it from main. Tests, however, co-locate access_logs with the main
+// schema in a single testcontainer for simplicity (and because most Server test
+// literals leave auditDB nil, so accessLogDB() falls back to the main handle).
+// The lean FS is idempotent (CREATE ... IF NOT EXISTS, separate schema_version_
+// audit tern table, CREATE ROLE guarded), so applying it on top of a
+// main-migrated DB simply re-creates access_logs and re-grants — the chain
+// tables already exist and no-op. Safe to call repeatedly.
+func EnsureAuditSchemaForTest(database *DB) error {
+	return database.MigrateAuditOnly(context.Background(), migrationsaudit.FS)
+}
 
 // EnsureTestDatabase creates the test database if it doesn't exist
 // This is exported so it can be used by other test packages
@@ -85,6 +103,14 @@ func EnsureTestDatabase(dbURL string) error {
 func ResetTestDatabase(database *DB) error {
 	ctx := context.Background()
 	conn := database.Conn()
+
+	// RD-1147: production drops access_logs from main (migration 068) — it lives
+	// in a separate audit DB. Tests co-locate it, so re-create access_logs + the
+	// chain tables in this container via the lean audit FS before the DELETEs
+	// below (which include access_logs). Idempotent; no-op after the first call.
+	if err := EnsureAuditSchemaForTest(database); err != nil {
+		return fmt.Errorf("failed to ensure audit schema for test: %w", err)
+	}
 
 	// Delete data from tables in correct order to respect foreign keys
 	// This is safer than TRUNCATE which can cause deadlocks in concurrent tests
