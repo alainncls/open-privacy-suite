@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -1003,53 +1004,62 @@ func (d *DB) GetActivityLogs(ctx context.Context, userExternalID string, scope *
 	return d.GetDisclosureActivityLogs(ctx, userExternalID, scope, limit, offset)
 }
 
-// GetActivityLogsForGrant returns activity log entries scoped to a specific disclosure grant.
-// It resolves the grant's target user and time bounds, then queries access_logs for entries
-// within those bounds. Only method, status_code, and created_at are returned -- sensitive
-// fields (ip_address, request_params, correlation_id) are never selected.
-//
-// The time-bound filtering is done entirely in SQL (using a subquery for the grant's
-// granted_at/expires_at) to avoid timezone mismatches between Go time.Time and
-// PostgreSQL TIMESTAMP WITHOUT TIME ZONE columns.
-func (d *DB) GetActivityLogsForGrant(ctx context.Context, grantID string, limit, offset int) ([]disclosure.ActivityLogEntry, int, error) {
-	// Single query that joins through grant → request → user to get time bounds and external_id,
-	// then filters access_logs. This avoids round-trips and timezone conversion issues.
-	countQuery := `
-		SELECT COUNT(*)
-		FROM access_logs al
-		JOIN (
-			SELECT u.external_id, g.granted_at, g.expires_at
-			FROM disclosure_grants g
-			JOIN disclosure_requests dr ON dr.id = g.request_id
-			JOIN users u ON u.id = dr.target_user_id
-			WHERE g.id = $1
-		) grant_info ON al.external_id = grant_info.external_id
-		WHERE al.created_at >= grant_info.granted_at
-		  AND al.created_at <= grant_info.expires_at`
+// GrantActivityBounds are the target user's external_id and the grant's time
+// window — the inputs needed to query access_logs for a disclosure grant
+// WITHOUT joining access_logs to the grant tables. Split out for RD-1147: when
+// access_logs lives in a separate audit database, the grant/user rows (main DB)
+// and the access_logs rows (audit DB) can no longer be joined in one query, so
+// callers resolve the bounds here (main DB) and then read access_logs from the
+// audit DB via GetAccessLogsForExternalIDInRange.
+type GrantActivityBounds struct {
+	ExternalID string
+	GrantedAt  time.Time
+	ExpiresAt  time.Time
+}
 
-	var total int
-	err := d.conn.QueryRowContext(ctx, countQuery, grantID).Scan(&total)
+// GetGrantActivityBounds resolves the target user's external_id and the grant's
+// granted_at / expires_at window from grant → request → user (all in this DB).
+// Returns (nil, nil) when the grant does not exist.
+func (d *DB) GetGrantActivityBounds(ctx context.Context, grantID string) (*GrantActivityBounds, error) {
+	var b GrantActivityBounds
+	err := d.conn.QueryRowContext(ctx, `
+		SELECT u.external_id, g.granted_at, g.expires_at
+		FROM disclosure_grants g
+		JOIN disclosure_requests dr ON dr.id = g.request_id
+		JOIN users u ON u.id = dr.target_user_id
+		WHERE g.id = $1`, grantID).Scan(&b.ExternalID, &b.GrantedAt, &b.ExpiresAt)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to resolve grant activity bounds: %w", err)
+	}
+	return &b, nil
+}
+
+// GetAccessLogsForExternalIDInRange returns access_logs entries for one
+// external_id within [start, end], newest first, plus the total match count.
+// Only method, status_code, created_at are selected — sensitive fields
+// (ip_address, request_params, correlation_id) are never returned. This runs on
+// whichever DB holds access_logs (the audit DB under RD-1147); it does NOT touch
+// the grant/user tables, so it is safe cross-database. Time bounds are passed as
+// parameters (resolved via GetGrantActivityBounds) so no timezone conversion is
+// introduced — the values were read from the same TIMESTAMP columns.
+func (d *DB) GetAccessLogsForExternalIDInRange(ctx context.Context, externalID string, start, end time.Time, limit, offset int) ([]disclosure.ActivityLogEntry, int, error) {
+	var total int
+	if err := d.conn.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM access_logs WHERE external_id = $1 AND created_at >= $2 AND created_at <= $3`,
+		externalID, start, end).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("failed to count activity logs for grant: %w", err)
 	}
 
 	// SECURITY: only select method, status_code, created_at
-	dataQuery := `
-		SELECT al.method, al.status_code, al.created_at
-		FROM access_logs al
-		JOIN (
-			SELECT u.external_id, g.granted_at, g.expires_at
-			FROM disclosure_grants g
-			JOIN disclosure_requests dr ON dr.id = g.request_id
-			JOIN users u ON u.id = dr.target_user_id
-			WHERE g.id = $1
-		) grant_info ON al.external_id = grant_info.external_id
-		WHERE al.created_at >= grant_info.granted_at
-		  AND al.created_at <= grant_info.expires_at
-		ORDER BY al.created_at DESC
-		LIMIT $2 OFFSET $3`
-
-	rows, err := d.conn.QueryContext(ctx, dataQuery, grantID, limit, offset)
+	rows, err := d.conn.QueryContext(ctx, `
+		SELECT method, status_code, created_at
+		FROM access_logs
+		WHERE external_id = $1 AND created_at >= $2 AND created_at <= $3
+		ORDER BY created_at DESC
+		LIMIT $4 OFFSET $5`, externalID, start, end, limit, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to query activity logs for grant: %w", err)
 	}
@@ -1068,6 +1078,28 @@ func (d *DB) GetActivityLogsForGrant(ctx context.Context, grantID string, limit,
 	}
 
 	return logs, total, nil
+}
+
+// GetActivityLogsForGrant returns activity log entries scoped to a specific
+// disclosure grant. It resolves the grant's target user + time bounds and then
+// queries access_logs. Only method, status_code, and created_at are returned --
+// sensitive fields (ip_address, request_params, correlation_id) are never
+// selected.
+//
+// This method assumes access_logs lives in the SAME database as the grant/user
+// tables (the default, both-URLs-unset deployment). When access_logs is split
+// to a separate audit DB (RD-1147), the server layer instead composes
+// GetGrantActivityBounds (main DB) + GetAccessLogsForExternalIDInRange (audit
+// DB); see server.getActivityLogsForGrant.
+func (d *DB) GetActivityLogsForGrant(ctx context.Context, grantID string, limit, offset int) ([]disclosure.ActivityLogEntry, int, error) {
+	bounds, err := d.GetGrantActivityBounds(ctx, grantID)
+	if err != nil {
+		return nil, 0, err
+	}
+	if bounds == nil {
+		return []disclosure.ActivityLogEntry{}, 0, nil
+	}
+	return d.GetAccessLogsForExternalIDInRange(ctx, bounds.ExternalID, bounds.GrantedAt, bounds.ExpiresAt, limit, offset)
 }
 
 func (d *DB) GetActivitySummary(ctx context.Context, userExternalID string, scope *disclosure.Scope) (*disclosure.ActivitySummary, error) {
@@ -1603,13 +1635,13 @@ func (d *DB) ListAllGrantsForTarget(ctx context.Context, targetUserID string) ([
 //
 // The check joins disclosure_grants → disclosure_requests → users → eth_address_links
 // to verify:
-//   1. The grant is active (not expired, not revoked)
-//   2. The requester_did matches the viewer
-//   3. The target user owns the address
-//   4. The grant scope has disclosure_level = "full"
-//   5. The viewer is a current member of the org the disclosure was created in
-//      (M13 defence-in-depth: prevents cross-org leakage even if C3 is partially
-//      exploited and a disclosure request is forged against a foreign-org user).
+//  1. The grant is active (not expired, not revoked)
+//  2. The requester_did matches the viewer
+//  3. The target user owns the address
+//  4. The grant scope has disclosure_level = "full"
+//  5. The viewer is a current member of the org the disclosure was created in
+//     (M13 defence-in-depth: prevents cross-org leakage even if C3 is partially
+//     exploited and a disclosure request is forged against a foreign-org user).
 //
 // This is used by address-specific explorer endpoints to upgrade visibility for
 // full disclosure recipients without modifying GetBatchVisibility (G17 preserved).

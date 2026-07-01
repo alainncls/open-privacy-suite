@@ -247,8 +247,21 @@ type Config struct {
 	// Default 'access_logs' (one global chain). For multi-instance, set a
 	// per-instance value (e.g. hostname / pod name) so each instance is the
 	// SOLE writer of its own chain — preventing the multi-writer chain fork.
-	AuditChainName      string
-	ExplorerDatabaseURL string
+	AuditChainName string
+	// AuditDatabaseURL, when set, routes access_logs (the append-only audit
+	// trail: writes, reads, hash-chain, checkpoints) to a SEPARATE Postgres
+	// (RD-1147). This DSN is the RUNTIME identity — it MUST connect as the
+	// restricted privacy_proxy_app role so the append-only seal (REVOKE
+	// UPDATE/DELETE, migration audit/001) actually bites. Empty = access_logs
+	// stay in the main DATABASE_URL (fully backwards compatible).
+	AuditDatabaseURL string
+	// AuditAdminDatabaseURL, when set, is the ADMIN/owner identity for the audit
+	// Postgres: it runs the audit-DB migrations (schema + append-only REVOKE) at
+	// startup and performs retention prune (DELETE) which the restricted runtime
+	// role cannot. Empty = no separate admin pool; falls back to the main DB for
+	// those operations. Pair it with AuditDatabaseURL. (RD-1147)
+	AuditAdminDatabaseURL string
+	ExplorerDatabaseURL   string
 	// IndexerURL, when non-empty, enables the gRPC chain-indexer backend for
 	// explorer reads. Methods not yet ported to gRPC fall back to direct
 	// SQL on the explorer postgres. Leave empty to use SQL exclusively.
@@ -736,6 +749,8 @@ func Load() *Config {
 		SIEMFallbackLogPath:                 getEnv("SIEM_FALLBACK_LOG_PATH", ""),
 		AuditIntegrityVerifyInterval:        auditIntegrityInterval,
 		AuditTamperWebhookURL:               auditTamperWebhookURL,
+		AuditDatabaseURL:                    getEnv("AUDIT_DATABASE_URL", ""),
+		AuditAdminDatabaseURL:               getEnv("AUDIT_ADMIN_DATABASE_URL", ""),
 		ExplorerDatabaseURL:                 getEnv("EXPLORER_DATABASE_URL", ""),
 		IndexerURL:                          getEnv("INDEXER_URL", ""),
 		TunnelURLFile:                       getEnv("TUNNEL_URL_FILE", ""),

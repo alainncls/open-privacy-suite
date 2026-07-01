@@ -16,6 +16,7 @@
 #
 # SECRETS ARE NOT ALLOWED HERE. Keep JWT_SECRET, JWT_REFRESH_SECRET,
 # ADMIN_API_TOKEN, OPERATOR_API_TOKEN, AZURE_AD_CLIENT_SECRET, DATABASE_URL,
+# AUDIT_DATABASE_URL, AUDIT_ADMIN_DATABASE_URL, EXPLORER_DATABASE_URL,
 # REDIS_URL / REDIS_PASSWORD, RPC_API_KEY, OAUTH_FIRST_PARTY_CLIENTS and similar in the
 # environment or your secrets manager. The proxy REFUSES TO START if it finds
 # one of these in this file.
@@ -39,6 +40,15 @@ PORT = "8080"                                    # server listen port
 
 # Database / Redis — connection STRINGS are secrets; set them in the environment:
 #   DATABASE_URL, EXPLORER_DATABASE_URL, REDIS_URL
+#
+# Separate append-only audit database for access_logs (optional; RD-1147). Set
+# BOTH in the environment (they are secrets — DSNs with passwords):
+#   AUDIT_ADMIN_DATABASE_URL — admin/owner role: runs the audit-DB migrations
+#                              (schema + the append-only REVOKE) and retention prune.
+#   AUDIT_DATABASE_URL       — runtime role: MUST connect as the RESTRICTED
+#                              privacy_proxy_app role, or the append-only seal
+#                              won't bite. Unset both = access_logs stay in the
+#                              main database (unchanged).
 
 # -----------------------------------------------------------------------------
 # Authentication (Privado ID / Billions)

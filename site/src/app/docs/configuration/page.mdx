@@ -39,7 +39,7 @@ COMPLIANCE_DEFAULT_MODE = "enforce"
 **`version` is required.** The file must declare a top-level `version` (currently `1`). The proxy refuses to start on a missing or unsupported version, so a file written for a future schema fails loudly instead of being silently mis-read.
 
 <Callout variant="danger" title="Secrets are not allowed in the config file">
-Secrets — `JWT_SECRET`, `JWT_REFRESH_SECRET`, `ADMIN_API_TOKEN`, `OPERATOR_API_TOKEN`, `AZURE_AD_CLIENT_SECRET`, `DATABASE_URL`, `EXPLORER_DATABASE_URL`, `REDIS_URL` / `REDIS_PASSWORD`, `RPC_API_KEY`, `RPC_API_KEY_ENCRYPTION_KEY`, `OAUTH_FIRST_PARTY_CLIENTS` — must live in your environment or secrets manager, never in a plaintext config file. **The proxy refuses to start if it finds one of these in the file**, naming the offending key. Inject secrets via the environment, which overrides the file anyway.
+Secrets — `JWT_SECRET`, `JWT_REFRESH_SECRET`, `ADMIN_API_TOKEN`, `OPERATOR_API_TOKEN`, `AZURE_AD_CLIENT_SECRET`, `DATABASE_URL`, `AUDIT_DATABASE_URL`, `AUDIT_ADMIN_DATABASE_URL`, `EXPLORER_DATABASE_URL`, `REDIS_URL` / `REDIS_PASSWORD`, `RPC_API_KEY`, `RPC_API_KEY_ENCRYPTION_KEY`, `OAUTH_FIRST_PARTY_CLIENTS` — must live in your environment or secrets manager, never in a plaintext config file. **The proxy refuses to start if it finds one of these in the file**, naming the offending key. Inject secrets via the environment, which overrides the file anyway.
 </Callout>
 
 A fully-commented template lives at `config.example.toml` in the repository root — copy and trim it:
@@ -112,6 +112,21 @@ The access log is a tamper-evident hash chain (an ISO 27001 / SOC 2 detective co
 ]} />
 
 **Durable-buffer note:** with `AUDIT_BUFFER_DIR` set, an entry is durable on the local volume the instant the request returns, but only reaches the (replicated, backed-up) database when the sealer next runs. Keep the buffer on a durable/replicated volume and the seal interval short so the un-sealed window stays small.
+
+### Separate append-only audit database
+
+You can isolate the access log in its own PostgreSQL so the running proxy can **append** access-log rows but cannot rewrite or delete history. Set both DSNs (they are secrets — keep them in the environment / your secrets manager, not the config file):
+
+<EnvTable vars={[
+  { name: "AUDIT_DATABASE_URL", default: "(empty)", description: "Runtime connection string for the separate access-log database. Must connect as the RESTRICTED database role — the one that has INSERT + SELECT on access_logs but not UPDATE/DELETE. Empty = access_logs stay in DATABASE_URL (unchanged)." },
+  { name: "AUDIT_ADMIN_DATABASE_URL", default: "(empty)", description: "Admin/owner connection string for the same database. The proxy uses it to run the audit-database migrations at startup (schema + the append-only tightening) and to run retention pruning (which the restricted runtime role cannot do). Pair it with AUDIT_DATABASE_URL." },
+]} />
+
+When both are set, the proxy migrates the audit database at startup, then reads and writes all access-log data there; the main `DATABASE_URL` no longer holds access logs. Leave both empty for the default single-database deployment.
+
+**Deployment dependency — the restricted role is what makes this work.** The append-only guarantee comes from the *database role* the runtime DSN connects as, not from the proxy. `AUDIT_DATABASE_URL` **must** connect as the restricted role (the one migration `058` calls `privacy_proxy_app`, further tightened to INSERT-only on the audit database). If `AUDIT_DATABASE_URL` connects as the database owner instead, the proxy still works but the seal does **nothing** — the owner can update and delete rows. `AUDIT_ADMIN_DATABASE_URL` is the owner DSN and is used only for migrations and retention pruning.
+
+If the audit database is unreachable, access-log writes fail the same way they do today (best-effort on the request path); the request itself is not blocked. A fail-closed mode is not yet available.
 
 ---
 

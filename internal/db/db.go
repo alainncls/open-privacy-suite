@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"strings"
 	"sync"
@@ -239,18 +240,36 @@ func (d *DB) Close() error {
 
 // Migrate runs all pending database migrations using tern.
 func (d *DB) Migrate(ctx context.Context) error {
+	return d.migrateFS(ctx, migrations.FS, "schema_version")
+}
+
+// MigrateAuditOnly applies the audit-database-only migration FS (RD-1147). It
+// MUST run against the audit database's admin/owner pool AFTER Migrate (the
+// shared FS) has created the access_logs table + the 058 roles there. It uses a
+// SEPARATE version table (schema_version_audit) so its sequence is tracked
+// independently of the shared schema. Never call this against the main
+// DATABASE_URL: it seals access_logs to INSERT-only, which would break the
+// main-DB retention worker that prunes access_logs under the app role.
+func (d *DB) MigrateAuditOnly(ctx context.Context, auditFS fs.FS) error {
+	return d.migrateFS(ctx, auditFS, "schema_version_audit")
+}
+
+// migrateFS runs the pending migrations in fsys, tracking applied versions in
+// the given tern version table. Kept private; callers use Migrate /
+// MigrateAuditOnly which pin the FS + version table together.
+func (d *DB) migrateFS(ctx context.Context, fsys fs.FS, versionTable string) error {
 	pgxConn, err := d.connectPgxUTC(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to connect for migrations: %w", err)
 	}
 	defer pgxConn.Close(ctx)
 
-	migrator, err := migrate.NewMigrator(ctx, pgxConn, "schema_version")
+	migrator, err := migrate.NewMigrator(ctx, pgxConn, versionTable)
 	if err != nil {
 		return fmt.Errorf("failed to create migrator: %w", err)
 	}
 
-	if err := migrator.LoadMigrations(migrations.FS); err != nil {
+	if err := migrator.LoadMigrations(fsys); err != nil {
 		return fmt.Errorf("failed to load migrations: %w", err)
 	}
 

@@ -769,8 +769,10 @@ func (s *Server) getGrantActivityLogs(c *gin.Context) {
 		}
 	}
 
-	// 7. Query activity logs scoped to grant time bounds
-	logs, total, err := s.db.GetActivityLogsForGrant(c.Request.Context(), grantID, limit, offset)
+	// 7. Query activity logs scoped to grant time bounds.
+	// RD-1147: resolve the grant's target + time window from the main DB, then
+	// read access_logs from the audit DB (they may be different databases now).
+	logs, total, err := s.getActivityLogsForGrant(c.Request.Context(), grantID, limit, offset)
 	if err != nil {
 		respondInternalError(c, "failed to get activity logs")
 		return
@@ -1065,10 +1067,10 @@ func (s *Server) auditGrantFullReveal(c *gin.Context, viewerDID, endpoint, targe
 		ResourceType:    rbac.ResourceTypeDisclosureGrant,
 		ResourceName:    endpoint,
 		NewValue: map[string]any{
-			"endpoint":                  endpoint,
-			"target":                    target,
-			"counterparties_revealed":   stats.GrantFullReveals,
-			"reveal_class":              "disclosure_grant_full_counterparty",
+			"endpoint":                endpoint,
+			"target":                  target,
+			"counterparties_revealed": stats.GrantFullReveals,
+			"reveal_class":            "disclosure_grant_full_counterparty",
 		},
 		IPAddress: c.ClientIP(),
 	}
