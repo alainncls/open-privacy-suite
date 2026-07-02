@@ -26,7 +26,7 @@ set -eu
 
 AUDIT_DB="${POSTGRES_DB}_audit"
 
-psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-SQL
+psql -v ON_ERROR_STOP=1 -v app_pw="$AUDIT_APP_PASSWORD" --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-SQL
     -- The separate audit database. The app connects here and migrates it; it
     -- never issues CREATE DATABASE itself.
     SELECT 'CREATE DATABASE ${AUDIT_DB}'
@@ -34,12 +34,17 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-S
 
     -- Restricted runtime role, with LOGIN + password so AUDIT_DATABASE_URL can
     -- connect as it and the append-only seal (INSERT+SELECT on access_logs) bites.
+    -- The password is passed as a psql variable, never interpolated into a SQL
+    -- string literal: :'app_pw' safely single-quotes it into a session GUC here,
+    -- and format(%L) safely quotes it server-side inside the DO block (psql does
+    -- not expand :vars inside a \$\$-quoted body).
+    SELECT set_config('init_audit.app_pw', :'app_pw', false);
     DO \$\$
     BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'privacy_proxy_app') THEN
-            CREATE ROLE privacy_proxy_app LOGIN PASSWORD '${AUDIT_APP_PASSWORD}';
+            EXECUTE format('CREATE ROLE privacy_proxy_app LOGIN PASSWORD %L', current_setting('init_audit.app_pw'));
         ELSE
-            ALTER ROLE privacy_proxy_app WITH LOGIN PASSWORD '${AUDIT_APP_PASSWORD}';
+            EXECUTE format('ALTER ROLE privacy_proxy_app WITH LOGIN PASSWORD %L', current_setting('init_audit.app_pw'));
         END IF;
     END\$\$;
 

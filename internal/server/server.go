@@ -75,13 +75,19 @@ const (
 type Server struct {
 	db *db.DB
 	// auditDB is the RUNTIME handle for the access_logs audit trail (RD-1147).
-	// When AUDIT_DATABASE_URL is set it points at a separate append-only audit
-	// Postgres opened as the restricted privacy_proxy_app role; otherwise it
-	// aliases db (main). All access_logs reads/writes go through this handle.
+	// auditDB is the RUNTIME handle for the separate append-only audit Postgres
+	// that holds access_logs (RD-1147). AUDIT_DATABASE_URL should connect as the
+	// restricted privacy_proxy_app role so the append-only seal bites; when unset
+	// it is DERIVED to "<name>_audit" (a separate DB, owner creds, so the seal is
+	// not enforced) — never main. It aliases db (main) only in the co-located case
+	// where the resolved DSN equals DATABASE_URL (dev/tests). All access_logs
+	// reads/writes go through this handle.
 	auditDB *db.DB
 	// auditAdminDB is the ADMIN/owner handle for the audit Postgres (RD-1147):
-	// runs audit-DB migrations and access_logs retention prune (DELETE). Aliases
-	// db (main) when AUDIT_ADMIN_DATABASE_URL is unset.
+	// runs audit-DB migrations and access_logs retention prune (DELETE). When
+	// AUDIT_ADMIN_DATABASE_URL is unset it is DERIVED to "<name>_audit" (a
+	// separate DB), never main; it aliases db (main) only when the resolved DSN
+	// equals DATABASE_URL (co-located dev/tests, where the pool is reused).
 	auditAdminDB         *db.DB
 	rbacAccessCtrl       *rbac.AccessController
 	proxy                *proxy.Proxy
@@ -109,11 +115,13 @@ type Server struct {
 	siemForwarder        *audit.SIEMForwarder
 	retentionCleaner     *audit.RetentionCleaner
 	auditIntegrityWorker *audit.IntegrityWorker
-	// auditIntegrityWorkerRBAC verifies the rbac_audit_log chain against the MAIN
-	// DB when access_logs has been split to a separate audit DB (RD-1147): the
-	// two chains then live in different databases and cannot share one verifier
-	// connection. nil when the audit DB is not separated (the primary worker
-	// verifies both chains, as before).
+	// auditIntegrityWorkerRBAC verifies the rbac_audit_log chain on the MAIN DB.
+	// RD-1147 ALWAYS splits the two chains across databases (access_logs in the
+	// audit DB, rbac_audit_log in main) and one verifier connection cannot span
+	// two databases — so the primary worker is scoped to the access_logs chain
+	// (audit DB) and this second worker covers rbac_audit_log (main). Both are
+	// created together when AUDIT_INTEGRITY_VERIFY_INTERVAL > 0; nil only when
+	// verification is disabled (interval 0).
 	auditIntegrityWorkerRBAC *audit.IntegrityWorker
 	visibilityReconciler     *VisibilityReconciler // M7 outbox drain
 	redisCloser              io.Closer
@@ -364,6 +372,18 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	if cfg.AuditAdminDatabaseURL == "" || cfg.AuditDatabaseURL == "" {
 		database.Close()
 		return nil, fmt.Errorf("audit database URL unresolved: DATABASE_URL must be a parseable postgres:// URL so the <name>_audit default can be derived, or set AUDIT_ADMIN_DATABASE_URL / AUDIT_DATABASE_URL explicitly (RD-1147)")
+	}
+
+	// RD-1147 isolation guard: in production an audit DSN must never point at the
+	// main database. Unset DSNs derive a SEPARATE "<name>_audit" DB, so equality
+	// here can only be an explicit misconfiguration that would run the audit
+	// migrations against main and recreate access_logs there — silently defeating
+	// the isolation guarantee. Co-location stays allowed in dev/tests, where the
+	// pool is intentionally reused.
+	if cfg.Environment == "production" &&
+		(cfg.AuditDatabaseURL == cfg.DatabaseURL || cfg.AuditAdminDatabaseURL == cfg.DatabaseURL) {
+		database.Close()
+		return nil, fmt.Errorf("RD-1147: in production the audit database must be separate from the main database — AUDIT_DATABASE_URL / AUDIT_ADMIN_DATABASE_URL must not equal DATABASE_URL (leave them unset to derive a separate <name>_audit DB)")
 	}
 
 	// Admin/owner pool: open WITHOUT running the main migration FS (the audit DB
