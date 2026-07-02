@@ -269,6 +269,8 @@ Manage the organization's sanctioned address blocklist. Add addresses to immedia
 ### 6. Logs Tab
 Immutable audit trail of all compliance decisions. Filter by decision type, transfer type, token address, user DID, and date range. Logs cannot be deleted or modified.
 
+Transfers allowed under [monitor mode](#enforcement-mode-enforce-vs-monitor) that *would* have been blocked under `enforce` are tagged with a **"Would block"** marker next to the decision (and a "Would have blocked" indicator in the row detail), so a monitored allow is never mistaken for a normal one.
+
 ---
 
 ## Example Scenario

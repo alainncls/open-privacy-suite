@@ -113,6 +113,64 @@ describe('ComplianceLogList', () => {
         expect(screen.getByText('$2,000.00')).toBeInTheDocument();
       });
     });
+
+    it('marks a monitored (would_block) row and surfaces it in the detail dialog (RD-1160)', async () => {
+      // A monitor-mode would-have-blocked transfer: decision is `allowed` but
+      // would_block=true, with the reason it would have blocked. The list must
+      // distinguish it from a plain allow — in the row and in the detail dialog.
+      server.use(
+        http.get('/api/v1/admin/orgs/:orgId/compliance/logs', () =>
+          HttpResponse.json({
+            data: [{
+              id: 99,
+              org_id: 'org-1',
+              user_id: 'user-9',
+              user_external_id: 'did:test:monitored',
+              transfer_type: 'eth',
+              from_address: '0x1111111111111111111111111111111111111111',
+              to_address: '0x2222222222222222222222222222222222222222',
+              amount_wei: '5000000000000000000',
+              amount_fiat: 5000,
+              threshold_fiat: 1000,
+              decision: 'allowed',
+              would_block: true,
+              denial_reason: 'threshold_exceeded',
+              created_at: '2024-01-16T09:00:00Z',
+            }],
+            total: 1, limit: 25, offset: 0,
+          })
+        )
+      );
+
+      const user = userEvent.setup();
+      renderWithComplianceContext(<ComplianceLogList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('did:test:monitored')).toBeInTheDocument();
+      });
+
+      // Row shows BOTH the green `allowed` decision AND a would-block marker,
+      // so a monitored allow is not mistaken for a plain allow.
+      expect(screen.getByText('allowed')).toBeInTheDocument();
+      expect(screen.getByText(/would.?block/i)).toBeInTheDocument();
+
+      // Detail dialog also surfaces the would-have-blocked state.
+      await user.click(screen.getByText('did:test:monitored').closest('tr')!);
+      await waitFor(() => {
+        expect(screen.getByText(/would have blocked/i)).toBeInTheDocument();
+      });
+    });
+
+    it('does not mark a plain allowed row as would-block (RD-1160)', async () => {
+      // Default mock: alice is a plain allow (no would_block) — no marker.
+      renderWithComplianceContext(<ComplianceLogList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('did:test:alice')).toBeInTheDocument();
+      });
+
+      expect(screen.queryByText(/would.?block/i)).not.toBeInTheDocument();
+    });
   });
 
   describe('Filters', () => {
