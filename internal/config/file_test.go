@@ -114,31 +114,35 @@ func TestLoadConfigFile_MissingFilePathErrors(t *testing.T) {
 }
 
 func TestLoadConfigFile_SecretKeyRejected(t *testing.T) {
-	// Secrets must never be sourced from the file — the proxy refuses to load a
-	// file containing one, naming the offending key (but NOT its value), and
-	// stays in pure-env mode. Cover all three secret-class credentials: the
-	// full-power ADMIN_API_TOKEN and the restricted OPERATOR_API_TOKEN
-	// (RD-1132/RD-1140), both sent as X-Admin-Token, and SIEM_AUTH_HEADER — the
-	// verbatim outbound Authorization header to the SIEM webhook (RD-1141).
+	// Secrets must never be sourced from the config file — the proxy refuses to
+	// load a file containing ANY secret-class key, names the offending key (but
+	// NOT its value), and stays in pure-env mode. Iterate the authoritative
+	// denylist (secretKeys) rather than a hand-picked few, so every current key
+	// is covered and a newly-added one is guarded automatically. This closes the
+	// AUDIT_CHECKPOINT_KEY gap (RD-1112) and covers OPERATOR_API_TOKEN /
+	// SIEM_AUTH_HEADER (RD-1140/1141), the JWT/DSN/RPC-key/OAuth secrets, etc.
 	const secretValue = "super-secret-token-value-DO-NOT-LEAK"
-	for _, key := range []string{"ADMIN_API_TOKEN", "OPERATOR_API_TOKEN", "SIEM_AUTH_HEADER"} {
+	if len(secretKeys) == 0 {
+		t.Fatal("secretKeys denylist is empty — nothing is guarded")
+	}
+	for key := range secretKeys {
 		t.Run(key, func(t *testing.T) {
 			resetFileConfig(t)
 			path := writeConfigFile(t, "version = 1\nBASE_URL = \"https://ok\"\n"+key+" = \""+secretValue+"\"\n")
 			t.Setenv("CONFIG_FILE", path)
 			err := loadConfigFile()
 			if err == nil {
-				t.Fatal("expected rejection when a secret key is in the config file, got nil")
+				t.Fatalf("expected rejection when secret key %q is in the config file, got nil", key)
 			}
 			if !strings.Contains(err.Error(), key) {
 				t.Errorf("error should name the offending secret key %q, got: %v", key, err)
 			}
-			// Fail-closed: the loader must not leak the secret VALUE in the error.
+			// Fail-closed: the loader must never echo the secret VALUE.
 			if strings.Contains(err.Error(), secretValue) {
-				t.Errorf("error must NOT echo the secret value, got: %v", err)
+				t.Errorf("error must NOT echo the secret value for %q, got: %v", key, err)
 			}
 			if fileConfig != nil {
-				t.Errorf("expected fileConfig nil when the file is rejected, got %v", fileConfig)
+				t.Errorf("expected fileConfig nil when %q is rejected, got %v", key, fileConfig)
 			}
 		})
 	}
