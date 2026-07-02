@@ -116,7 +116,7 @@ func TestLoadConfigFile_MissingFilePathErrors(t *testing.T) {
 func TestLoadConfigFile_SecretKeyRejected(t *testing.T) {
 	// Secrets must never be sourced from the file — the proxy refuses to load a
 	// file containing one, naming the offending key (but NOT its value), and
-	// stays in pure-env mode. Cover all three secret-class credentials: the
+	// stays in pure-env mode. Cover all four secret-class credentials: the
 	// full-power ADMIN_API_TOKEN and the restricted OPERATOR_API_TOKEN
 	// (RD-1132/RD-1140), both sent as X-Admin-Token, SIEM_AUTH_HEADER — the
 	// verbatim outbound Authorization header to the SIEM webhook (RD-1141) — and
