@@ -1597,13 +1597,23 @@ func (s *Server) countVisibleAddressTxs(ctx context.Context, address, viewerDID 
 // model countAcrossPages handles. Bounded by maxScan so the cost stays finite
 // for very active addresses/tokens; beyond maxScan the count under-reports,
 // which is safe (it never over-reports rows the viewer cannot see).
+//
+// keyOf returns a stable per-row identity for the re-serve guard: if a page's
+// head row repeats, the backend ignored `offset` and re-served an earlier page
+// (the gRPC GetTransfersByToken / GetInternalTransactionsByAddress feeds do
+// exactly this — they send only PageSize). We stop before counting the repeat,
+// so a non-paginating backend under-reports rather than over-reports — the same
+// guarantee countAcrossPages enforces with its cursor check.
 func countAcrossOffsetPages[T any](
 	fetch func(offset int) ([]T, error),
 	perPageCount func([]T) (int, error),
+	keyOf func(T) string,
 	pageSize int,
 	maxScan int,
 ) (int, error) {
 	count, offset := 0, 0
+	var prevHead string
+	haveHead := false
 	for offset < maxScan {
 		page, err := fetch(offset)
 		if err != nil {
@@ -1612,6 +1622,13 @@ func countAcrossOffsetPages[T any](
 		if len(page) == 0 {
 			break
 		}
+		// Re-serve guard: an unchanged head row means the backend ignored offset
+		// and re-served a counted page — stop before double-counting.
+		head := keyOf(page[0])
+		if haveHead && head == prevHead {
+			break
+		}
+		prevHead, haveHead = head, true
 		n, err := perPageCount(page)
 		if err != nil {
 			return 0, err
@@ -1669,6 +1686,7 @@ func (s *Server) countVisibleAddressInternalTxs(ctx context.Context, address, vi
 			}
 			return len(redacted), nil
 		},
+		func(t explorer.InternalTransaction) string { return strconv.FormatInt(t.ID, 10) },
 		perPage,
 		maxScan,
 	)
@@ -1694,6 +1712,7 @@ func (s *Server) countVisibleTokenTransfers(ctx context.Context, tokenAddress, v
 			}
 			return len(redacted), nil
 		},
+		func(t explorer.TokenTransfer) string { return strconv.FormatInt(t.ID, 10) },
 		perPage,
 		maxScan,
 	)
@@ -1719,6 +1738,7 @@ func (s *Server) countVisibleTokenHolders(ctx context.Context, tokenAddress, vie
 			}
 			return len(redacted), nil
 		},
+		func(h explorer.TokenHolder) string { return h.Address },
 		perPage,
 		maxScan,
 	)

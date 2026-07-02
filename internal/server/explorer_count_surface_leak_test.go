@@ -195,6 +195,132 @@ func TestExplorerAddressStats_AllCountsVisibilityFiltered_RD1154(t *testing.T) {
 	})
 }
 
+// TestExplorerToken_CountsVisibilityFiltered_RD1154 is the token-page companion
+// to the address-stats parity guard above — the surface RD-1154 cites as the
+// motivating leak ("Transfers 7 / 3 rows visible" on the token page). The token
+// page's "Transfers" and "Holders" badges must equal the rows the viewer can
+// actually load on the matching token list surfaces, never the raw
+// tokens.transfer_count / holder_count aggregate. Before RD-1154 both were RAW.
+//
+// Invariant, asserted per viewer:
+//
+//	getExplorerToken.<Count> == len(visible list rows for that viewer)  AND  != raw
+//
+// MUTATION CHECK: revert the countVisibleTokenTransfers / countVisibleTokenHolders
+// recompute in getExplorerToken (fall back to GetToken's raw counts) and the
+// badges become 50/10, breaking both the parity and the "!= raw" assertions.
+func TestExplorerToken_CountsVisibilityFiltered_RD1154(t *testing.T) {
+	srv, database, conn := setupTestServerForExplorerTransactions(t)
+	ctx := context.Background()
+
+	_, err := conn.ExecContext(ctx, tokenSchema)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = conn.ExecContext(context.Background(),
+			"DROP TABLE IF EXISTS token_transfers; DROP TABLE IF EXISTS token_balances; DROP TABLE IF EXISTS tokens")
+	})
+	_, err = conn.ExecContext(ctx, "TRUNCATE tokens, token_balances, token_transfers CASCADE")
+	require.NoError(t, err)
+
+	// Org-owned token contract: group members see it at Full, so getExplorerToken
+	// runs the visibility recompute (not the pseudonymous zero-out path).
+	token := "0xc0ffee0000000000000000000000000000000abc"
+	groupID := registerOrgContract(t, database, token)
+
+	aliceDID := "did:test:alice_tokcnt"
+	aliceUserID := createTestUserForExplorer(t, database, aliceDID)
+	adminGroupID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO groups (id, org_id, slug, name, depth, path, is_org_admin) VALUES ($1, (SELECT org_id FROM groups WHERE id = $2), 'admins-tokcnt', 'Admins', 0, 'admins-tokcnt', true)",
+		adminGroupID, groupID)
+	require.NoError(t, err)
+	addUserToGroup(t, database, aliceUserID, adminGroupID)
+	addUserToGroup(t, database, aliceUserID, groupID)
+
+	eveDID := "did:test:eve_tokcnt"
+	eveUserID := createTestUserForExplorer(t, database, eveDID)
+	addUserToGroup(t, database, eveUserID, groupID)
+
+	hiddenA := "0xdead000000000000000000000000000000000a01"
+	hiddenB := "0xdead000000000000000000000000000000000a02"
+	blockNum := seedExplorerBlock(t, conn)
+
+	// Raw aggregates the pre-RD-1154 handler leaked (seedToken: 50 transfers / 10 holders).
+	seedToken(t, conn, token, "TKN", "Test Token", "ERC-20")
+	const rawTransfers, rawHolders = 50, 10
+
+	// A handful of real transfers/holders (≪ the raw 50/10), so the recomputed
+	// survivor count can never coincide with the raw aggregate.
+	txHashes := []string{"0xtokcnt_0", "0xtokcnt_1", "0xtokcnt_2"}
+	parties := [][2]string{{hiddenA, hiddenB}, {hiddenB, hiddenA}, {hiddenA, hiddenB}}
+	for i, h := range txHashes {
+		seedExplorerTransaction(t, conn, blockNum, h, parties[i][0], parties[i][1])
+		_, err = conn.ExecContext(ctx,
+			`INSERT INTO token_transfers (tx_hash, log_index, token_address, from_address, to_address, value, block_number)
+			 VALUES ($1, 0, $2, $3, $4, 1000, $5)`, h, token, parties[i][0], parties[i][1], blockNum)
+		require.NoError(t, err)
+	}
+	for _, holder := range []string{hiddenA, hiddenB} {
+		_, err = conn.ExecContext(ctx,
+			`INSERT INTO token_balances (address, token_address, block_number, balance) VALUES ($1, $2, $3, 1000)`,
+			holder, token, blockNum)
+		require.NoError(t, err)
+	}
+
+	router := setupTokenRouter(srv)
+
+	getToken := func(t *testing.T, did string) explorer.Token {
+		t.Helper()
+		req := httptest.NewRequest("GET", "/api/v1/explorer/tokens/"+token, nil)
+		addBearerToken(t, req, srv, did)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		require.Equal(t, http.StatusOK, w.Code, "token page should be 200 for a viewer who can see the token")
+		var tok explorer.Token
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &tok))
+		return tok
+	}
+	// listLen returns the viewer's visible row count on a token list surface,
+	// which returns a {"data":[...]} envelope.
+	listLen := func(t *testing.T, did, suffix string) int {
+		t.Helper()
+		req := httptest.NewRequest("GET", "/api/v1/explorer/tokens/"+token+suffix, nil)
+		addBearerToken(t, req, srv, did)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		require.Equal(t, http.StatusOK, w.Code, "token list %s should be 200", suffix)
+		var env struct {
+			Data []json.RawMessage `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &env))
+		return len(env.Data)
+	}
+
+	assertParity := func(t *testing.T, did string) explorer.Token {
+		t.Helper()
+		tok := getToken(t, did)
+		assert.Equal(t, listLen(t, did, "/transfers"), tok.TransferCount,
+			"Transfers badge must equal the viewer's visible transfer-list length")
+		assert.Equal(t, listLen(t, did, "/holders"), tok.HolderCount,
+			"Holders badge must equal the viewer's visible holder-list length")
+		assert.NotEqual(t, rawTransfers, tok.TransferCount, "TransferCount must not be the raw aggregate")
+		assert.NotEqual(t, rawHolders, tok.HolderCount, "HolderCount must not be the raw aggregate")
+		return tok
+	}
+
+	var aliceTok, eveTok explorer.Token
+	t.Run("admin badges match admin's visible rows (never raw)", func(t *testing.T) {
+		aliceTok = assertParity(t, aliceDID)
+	})
+	t.Run("restricted viewer badges match viewer's visible rows (never raw)", func(t *testing.T) {
+		eveTok = assertParity(t, eveDID)
+	})
+	t.Run("restricted viewer never sees more than the admin", func(t *testing.T) {
+		assert.LessOrEqual(t, eveTok.TransferCount, aliceTok.TransferCount)
+		assert.LessOrEqual(t, eveTok.HolderCount, aliceTok.HolderCount)
+	})
+}
+
 // TestExplorerInternalTx_ParticipantRevealLabeledCounterparty_RD1155 pins the
 // reason-tag fix: when an internal-tx trace address is revealed because the
 // viewer is a transfer PARTICIPANT of the parent tx (the RD-1009 union), it must
