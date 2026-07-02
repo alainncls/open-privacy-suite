@@ -49,18 +49,18 @@ type ContractStore interface {
 //
 // Returns a tri-state EventRulesResolution:
 //   - Wildcard == true                  ⇒ all events for this contract are
-//                                          visible to the viewer; allowlist
-//                                          is irrelevant. Mirrors the
-//                                          rbac.EventRulesField{"*"} state.
+//     visible to the viewer; allowlist
+//     is irrelevant. Mirrors the
+//     rbac.EventRulesField{"*"} state.
 //   - Wildcard == false, len(Rules) > 0 ⇒ allowlist mode; only listed
-//                                          topic0s pass.
+//     topic0s pass.
 //   - Wildcard == false, len(Rules) == 0 ⇒ **deny-all** (RD-842 / RD-888).
-//                                          Same as `event_rules: null` in
-//                                          the database — operator intent
-//                                          is "no events visible until
-//                                          rules are configured." Anonymous
-//                                          logs (no topic0) are also
-//                                          blocked in this mode.
+//     Same as `event_rules: null` in
+//     the database — operator intent
+//     is "no events visible until
+//     rules are configured." Anonymous
+//     logs (no topic0) are also
+//     blocked in this mode.
 //
 // Implementations MUST return the deny-all state when there is no
 // applicable grant for the viewer on the contract. **Never default to
@@ -585,6 +585,16 @@ type RedactOpts struct {
 	// hashes are never dropped, and their addresses get full visibility.
 	VisibleTxHashes map[string]bool
 
+	// ParticipantTxHashes is a LABEL-ONLY subset of VisibleTxHashes: the tx
+	// hashes visible to the viewer because the viewer is a transfer
+	// participant of them (the RD-1009 union), as opposed to a genuine
+	// visibleTo share. It does NOT affect row survival — VisibleTxHashes
+	// alone drives that. It only lets a redactor tag a revealed counterparty
+	// address as ReasonParticipantOverride ("Counterparty") rather than
+	// ReasonVisibleToGrant ("Shared") when the reveal is due to participation,
+	// not sharing (RD-1155). A nil map reproduces the pre-RD-1155 labels.
+	ParticipantTxHashes map[string]bool
+
 	// ViewerIsAdmin indicates the viewer has admin-level access (org admin
 	// or admin claim). Admins see all contract activity including txs from
 	// private users — G10 non-participant drop does not apply to admins.
@@ -959,6 +969,11 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 			aLower := strings.ToLower(addr)
 			if viewerIsParticipant && isNonIdentifiable(baseLvl) {
 				redactedTx.AddressMetadata[aLower] = ReasonParticipantOverride
+			} else if ropts.ParticipantTxHashes[strings.ToLower(tx.Hash)] && isNonIdentifiable(baseLvl) {
+				// RD-1155: the parent tx is visible because the viewer is a
+				// transfer participant of it (RD-1009 union), not via a
+				// visibleTo share — label "Counterparty", not "Shared".
+				redactedTx.AddressMetadata[aLower] = ReasonParticipantOverride
 			} else if txVisibleToViewer && isNonIdentifiable(baseLvl) {
 				redactedTx.AddressMetadata[aLower] = ReasonVisibleToGrant
 			} else if meta, ok := visibilityMapDetailed[aLower]; ok {
@@ -1226,6 +1241,10 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 			aLower := strings.ToLower(addr)
 			if viewerIsParticipant && isNonIdentifiable(baseLvl) {
 				redacted.AddressMetadata[aLower] = ReasonParticipantOverride
+			} else if ropts.ParticipantTxHashes[strings.ToLower(t.TxHash)] && isNonIdentifiable(baseLvl) {
+				// RD-1155: parent tx visible via the transfer-participant union
+				// (RD-1009), not a visibleTo share — "Counterparty", not "Shared".
+				redacted.AddressMetadata[aLower] = ReasonParticipantOverride
 			} else if txVisibleToViewer && isNonIdentifiable(baseLvl) {
 				redacted.AddressMetadata[aLower] = ReasonVisibleToGrant
 			} else if meta, ok := visMapDetailed[aLower]; ok {
@@ -1449,6 +1468,10 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 		setMeta := func(addr string, baseLvl VisibilityLevel) {
 			aLower := strings.ToLower(addr)
 			if viewerIsParticipant && isNonIdentifiable(baseLvl) {
+				redacted.AddressMetadata[aLower] = ReasonParticipantOverride
+			} else if ropts.ParticipantTxHashes[strings.ToLower(t.TxHash)] && isNonIdentifiable(baseLvl) {
+				// RD-1155: parent tx visible via the transfer-participant union
+				// (RD-1009), not a visibleTo share — "Counterparty", not "Shared".
 				redacted.AddressMetadata[aLower] = ReasonParticipantOverride
 			} else if txVisibleToViewer && isNonIdentifiable(baseLvl) {
 				redacted.AddressMetadata[aLower] = ReasonVisibleToGrant

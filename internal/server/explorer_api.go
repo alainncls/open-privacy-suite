@@ -923,9 +923,10 @@ func (s *Server) addDisclosureAddressToFilter(filter *explorer.VisibilityFilter,
 	}
 	// Copy to avoid mutating the original — including VisibleTxHashes.
 	newFilter := &explorer.VisibilityFilter{
-		AllPrivate:       filter.AllPrivate,
-		VisibleAddresses: make([]string, len(filter.VisibleAddresses)+1),
-		VisibleTxHashes:  append([]string(nil), filter.VisibleTxHashes...),
+		AllPrivate:          filter.AllPrivate,
+		VisibleAddresses:    make([]string, len(filter.VisibleAddresses)+1),
+		VisibleTxHashes:     append([]string(nil), filter.VisibleTxHashes...),
+		ParticipantTxHashes: append([]string(nil), filter.ParticipantTxHashes...),
 	}
 	copy(newFilter.VisibleAddresses, filter.VisibleAddresses)
 	newFilter.VisibleAddresses[len(filter.VisibleAddresses)] = address
@@ -942,7 +943,16 @@ func redactOptsFromFilter(filter *explorer.VisibilityFilter) explorer.RedactOpts
 	for _, h := range filter.VisibleTxHashes {
 		m[strings.ToLower(h)] = true
 	}
-	return explorer.RedactOpts{VisibleTxHashes: m}
+	// RD-1155: carry the label-only participant-union subset through so the
+	// redactor can distinguish participation from a visibleTo share.
+	var pm map[string]bool
+	if len(filter.ParticipantTxHashes) > 0 {
+		pm = make(map[string]bool, len(filter.ParticipantTxHashes))
+		for _, h := range filter.ParticipantTxHashes {
+			pm[strings.ToLower(h)] = true
+		}
+	}
+	return explorer.RedactOpts{VisibleTxHashes: m, ParticipantTxHashes: pm}
 }
 
 // buildRedactOptsForViewer builds RedactOpts for single-item endpoints
@@ -1065,10 +1075,10 @@ func (s *Server) auditGrantFullReveal(c *gin.Context, viewerDID, endpoint, targe
 		ResourceType:    rbac.ResourceTypeDisclosureGrant,
 		ResourceName:    endpoint,
 		NewValue: map[string]any{
-			"endpoint":                  endpoint,
-			"target":                    target,
-			"counterparties_revealed":   stats.GrantFullReveals,
-			"reveal_class":              "disclosure_grant_full_counterparty",
+			"endpoint":                endpoint,
+			"target":                  target,
+			"counterparties_revealed": stats.GrantFullReveals,
+			"reveal_class":            "disclosure_grant_full_counterparty",
 		},
 		IPAddress: c.ClientIP(),
 	}
@@ -1391,6 +1401,11 @@ func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string) *e
 			for h := range transferTxs {
 				if !existing[h] {
 					filter.VisibleTxHashes = append(filter.VisibleTxHashes, h)
+					// RD-1155: track the participant-union hashes separately so
+					// the redactor labels these reveals "Counterparty" rather than
+					// "Shared". Label-only — VisibleTxHashes still drives survival
+					// and SQL filtering exactly as before.
+					filter.ParticipantTxHashes = append(filter.ParticipantTxHashes, h)
 					existing[h] = true
 				}
 			}
@@ -1577,6 +1592,153 @@ func (s *Server) countVisibleAddressTxs(ctx context.Context, address, viewerDID 
 	)
 }
 
+// countAcrossOffsetPages sums redaction survivors across an offset-paginated
+// dataset — for stores that expose (limit, offset) rather than the cursor
+// model countAcrossPages handles. Bounded by maxScan so the cost stays finite
+// for very active addresses/tokens; beyond maxScan the count under-reports,
+// which is safe (it never over-reports rows the viewer cannot see).
+func countAcrossOffsetPages[T any](
+	fetch func(offset int) ([]T, error),
+	perPageCount func([]T) (int, error),
+	pageSize int,
+	maxScan int,
+) (int, error) {
+	count, offset := 0, 0
+	for offset < maxScan {
+		page, err := fetch(offset)
+		if err != nil {
+			return 0, err
+		}
+		if len(page) == 0 {
+			break
+		}
+		n, err := perPageCount(page)
+		if err != nil {
+			return 0, err
+		}
+		count += n
+		if len(page) < pageSize {
+			break // last page
+		}
+		offset += len(page)
+	}
+	return count, nil
+}
+
+// countVisibleAddressTransfers returns the visibility-aware, post-redaction
+// token-transfer count for an address (RD-1154), mirroring
+// countVisibleAddressTxs over the token_transfers feed (cursor-paginated).
+func (s *Server) countVisibleAddressTransfers(ctx context.Context, address, viewerDID string, opts explorer.RedactOpts) (int, error) {
+	const (
+		perPage = 1000
+		maxScan = 10000
+	)
+	return countAcrossPages(
+		func(before *uint64) ([]explorer.TokenTransfer, error) {
+			return s.explorerStore.GetTransfersByAddress(ctx, address, perPage, before)
+		},
+		func(t explorer.TokenTransfer) uint64 { return t.BlockNumber },
+		func(page []explorer.TokenTransfer) (int, error) {
+			redacted, err := s.explorerRedactor.RedactTransfers(ctx, page, viewerDID, opts)
+			if err != nil {
+				return 0, err
+			}
+			return len(redacted), nil
+		},
+		maxScan,
+	)
+}
+
+// countVisibleAddressInternalTxs returns the visibility-aware, post-redaction
+// internal-tx count for an address (RD-1154). GetInternalTransactionsByAddress
+// is offset-paginated, so it uses countAcrossOffsetPages.
+func (s *Server) countVisibleAddressInternalTxs(ctx context.Context, address, viewerDID string, opts explorer.RedactOpts) (int, error) {
+	const (
+		perPage = 1000
+		maxScan = 10000
+	)
+	return countAcrossOffsetPages(
+		func(offset int) ([]explorer.InternalTransaction, error) {
+			itxs, _, err := s.explorerStore.GetInternalTransactionsByAddress(ctx, address, perPage, offset)
+			return itxs, err
+		},
+		func(page []explorer.InternalTransaction) (int, error) {
+			redacted, err := s.explorerRedactor.RedactInternalTransactions(ctx, page, viewerDID, opts)
+			if err != nil {
+				return 0, err
+			}
+			return len(redacted), nil
+		},
+		perPage,
+		maxScan,
+	)
+}
+
+// countVisibleTokenTransfers returns the visibility-aware, post-redaction
+// transfer count for a token contract (RD-1154) — the token page's "Transfers"
+// badge. GetTransfersByToken is offset-paginated.
+func (s *Server) countVisibleTokenTransfers(ctx context.Context, tokenAddress, viewerDID string, opts explorer.RedactOpts) (int, error) {
+	const (
+		perPage = 1000
+		maxScan = 10000
+	)
+	return countAcrossOffsetPages(
+		func(offset int) ([]explorer.TokenTransfer, error) {
+			transfers, _, err := s.explorerStore.GetTransfersByToken(ctx, tokenAddress, perPage, offset)
+			return transfers, err
+		},
+		func(page []explorer.TokenTransfer) (int, error) {
+			redacted, err := s.explorerRedactor.RedactTransfers(ctx, page, viewerDID, opts)
+			if err != nil {
+				return 0, err
+			}
+			return len(redacted), nil
+		},
+		perPage,
+		maxScan,
+	)
+}
+
+// countVisibleTokenHolders returns the visibility-aware, post-redaction holder
+// count for a token contract (RD-1154) — the token page's "Holders" badge.
+// RedactTokenHolders drops holders whose address is Hidden to the viewer.
+func (s *Server) countVisibleTokenHolders(ctx context.Context, tokenAddress, viewerDID string) (int, error) {
+	const (
+		perPage = 1000
+		maxScan = 10000
+	)
+	return countAcrossOffsetPages(
+		func(offset int) ([]explorer.TokenHolder, error) {
+			holders, _, err := s.explorerStore.GetTokenHolders(ctx, tokenAddress, perPage, offset)
+			return holders, err
+		},
+		func(page []explorer.TokenHolder) (int, error) {
+			redacted, err := s.explorerRedactor.RedactTokenHolders(ctx, page, viewerDID)
+			if err != nil {
+				return 0, err
+			}
+			return len(redacted), nil
+		},
+		perPage,
+		maxScan,
+	)
+}
+
+// visibleCountOrZero returns a per-viewer, visibility-aware count, failing SAFE:
+// on error it logs loudly and returns 0 — never the raw pre-computed aggregate.
+// RD-758/RD-1154: a count-computation error must not fall through to the
+// unfiltered total, which would leak how many rows the viewer cannot see. 0 is
+// the safe floor — it can never over-report hidden rows — and keeps the stats
+// page functional if a derived-table query fails transiently.
+func visibleCountOrZero(count int, err error, surface, address string) int {
+	if err != nil {
+		slog.Error("explorer: visibility-aware count failed; badge falls back to 0 (never the raw aggregate)",
+			"surface", surface, "address", address, "err", err)
+		return 0
+	}
+	return count
+}
+
 func (s *Server) getExplorerAddressStats(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -1599,32 +1761,30 @@ func (s *Server) getExplorerAddressStats(c *gin.Context) {
 		return
 	}
 
-	// G22: Always compute live filtered tx count from the transactions table
-	// instead of using the pre-computed address_stats.tx_count, which may be
-	// stale and does not respect visibility filtering. Same class of fix as
-	// block transaction count (RD-758).
+	// RD-1154 / G22: the pre-computed address_stats aggregate counts (TxCount,
+	// TokenTransferCount, InternalTxCount) are RAW — they ignore the viewer's
+	// visibility, so a restricted viewer would see totals larger than the rows
+	// they can actually load, leaking how many rows are hidden from them
+	// (count-disclosure — RD-758). Recompute all three live by paging the
+	// underlying rows through the SAME redactor + opts the list endpoints use
+	// and summing survivors, so every badge matches the visible rows. Paging —
+	// rather than one fetch — is required because in privacy/gRPC mode the
+	// indexer clamps page size to ~100. A shared opts accumulates full-view
+	// stats across the three passes for one audit entry. visibleCountOrZero
+	// fails SAFE: a counting error yields 0, never the raw aggregate.
 	resolvedDID := viewerDID
-	filter := s.buildVisibilityFilter(c.Request.Context(), resolvedDID)
-
-	// If the viewer can see this address via disclosure grant, ensure the
-	// target address is in the visibility filter's allowlist so the filtered
-	// tx count includes transactions involving this address.
-	normalizedAddr := strings.ToLower(address)
-	if s.viewerHasFullDisclosureGrant(c.Request.Context(), resolvedDID, normalizedAddr) {
-		filter = s.addDisclosureAddressToFilter(filter, normalizedAddr)
-	}
-
-	// Page through the address's transactions and run RedactTransactions on each
-	// page to get the accurate post-G10 count (the SQL-level count doesn't
-	// account for the non-participant drop (G10) or calldata participant
-	// detection). Paging — rather than one fetch — is required because in
-	// privacy/gRPC mode the indexer clamps page size to ~100, which previously
-	// capped this count at 100 for active addresses.
 	opts := s.buildRedactOptsForViewer(c.Request.Context(), resolvedDID)
-	if txCount, err := s.countVisibleAddressTxs(c.Request.Context(), address, resolvedDID, opts); err == nil {
-		stats.TxCount = txCount
-		s.auditAdminUserTxView(c, resolvedDID, "address_stats", address, opts.Stats)
-	}
+
+	txCount, txErr := s.countVisibleAddressTxs(c.Request.Context(), address, resolvedDID, opts)
+	stats.TxCount = visibleCountOrZero(txCount, txErr, "transactions", address)
+
+	transferCount, trErr := s.countVisibleAddressTransfers(c.Request.Context(), address, resolvedDID, opts)
+	stats.TokenTransferCount = visibleCountOrZero(transferCount, trErr, "token_transfers", address)
+
+	internalCount, inErr := s.countVisibleAddressInternalTxs(c.Request.Context(), address, resolvedDID, opts)
+	stats.InternalTxCount = visibleCountOrZero(internalCount, inErr, "internal_transactions", address)
+
+	s.auditAdminUserTxView(c, resolvedDID, "address_stats", address, opts.Stats)
 
 	c.JSON(http.StatusOK, stats)
 }
@@ -2515,6 +2675,19 @@ func (s *Server) getExplorerToken(c *gin.Context) {
 		token.L1Address = nil
 		token.USDPrice = nil
 		token.IconURL = nil
+	} else {
+		// RD-1154: GetToken's TransferCount/HolderCount are RAW aggregates that
+		// ignore the viewer's visibility — a viewer who can see the token but
+		// only a subset of its transfers/holders would otherwise learn how many
+		// are hidden (count-disclosure — RD-758). Recompute both as filtered
+		// survivor counts so the badges match the rows the viewer can load.
+		// visibleCountOrZero fails SAFE: a counting error yields 0, never raw.
+		ctx := c.Request.Context()
+		opts := s.buildRedactOptsForViewer(ctx, viewerDID)
+		tc, tcErr := s.countVisibleTokenTransfers(ctx, address, viewerDID, opts)
+		token.TransferCount = visibleCountOrZero(tc, tcErr, "token_transfers", address)
+		hc, hcErr := s.countVisibleTokenHolders(ctx, address, viewerDID)
+		token.HolderCount = visibleCountOrZero(hc, hcErr, "token_holders", address)
 	}
 
 	c.JSON(http.StatusOK, token)
