@@ -106,35 +106,6 @@ func countChainRows(t *testing.T, database *db.DB, chainName string) int64 {
 	return n
 }
 
-// setupIsolatedIntegrityTestDB is setupIntegrityTestDB's isolated sibling for
-// tests that exercise the GLOBAL "access_logs" checkpoint/anchor chain.
-//
-// Why a dedicated database: audit.Verifier.Verify only accepts the known
-// "access_logs" chain (an unknown chain_name is rejected), so these tests
-// cannot isolate via a per-test chain. And CI runs `go test ./internal/...
-// -race` WITHOUT `-p 1` (unlike `make test-unit`), so every package hits the
-// SHARED TEST_DATABASE_URL Postgres in parallel. A concurrent package writing
-// an "access_logs" signed checkpoint under a different HMAC key makes this
-// test's verifier read that foreign checkpoint and fail as
-// checkpoint_signature_invalid. Forcing a dedicated Postgres container gives
-// the chain exclusively to this test — exactly what local runs already do when
-// TEST_DATABASE_URL is unset, which is why these tests pass locally but flaked
-// in CI. (Mirrors setupIntegrityTestDB minus the TEST_DATABASE_URL branch.)
-func setupIsolatedIntegrityTestDB(t *testing.T) *db.DB {
-	t.Helper()
-	dbURL, cleanup := db.SetupTestContainer(t)
-	t.Cleanup(cleanup)
-	database, err := db.New(dbURL)
-	if err != nil {
-		t.Fatalf("db.New: %v", err)
-	}
-	if err := db.ResetTestDatabase(database); err != nil {
-		t.Fatalf("ResetTestDatabase: %v", err)
-	}
-	t.Cleanup(func() { _ = database.Close() })
-	return database
-}
-
 // TestAuditWritePath_BufferSealerChain_Integration drives the full async audit
 // write path against a real Pebble buffer + real Postgres (RD-1112 gap #1):
 //
@@ -291,7 +262,7 @@ func TestAuditWritePath_BufferSealerChain_Integration(t *testing.T) {
 // OK on the same truncated chain — i.e. the checkpoint is what makes the
 // difference.
 func TestAuditWritePath_CheckpointTailTruncation_Alarm(t *testing.T) {
-	database := setupIsolatedIntegrityTestDB(t) // dedicated DB: shared "access_logs" checkpoint chain (see helper)
+	database := setupIntegrityTestDB(t)
 	ctx := context.Background()
 
 	const chainName = "access_logs"
@@ -515,7 +486,7 @@ func TestAuditWritePath_MultiChainName_IndependentWalk(t *testing.T) {
 //     checkpoint was written at the current head; (d) the verifier no longer
 //     alarms and resumes clean from the recovery point.
 func TestAuditWritePath_BreakGlassReAnchor_Integration(t *testing.T) {
-	database := setupIsolatedIntegrityTestDB(t) // dedicated DB: shared "access_logs" checkpoint chain (see helper)
+	database := setupIntegrityTestDB(t)
 	ctx := context.Background()
 
 	const chainName = "access_logs"
