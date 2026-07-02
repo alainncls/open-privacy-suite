@@ -33,8 +33,11 @@ import { RBACTestFixture } from '../../helpers/rbac-fixtures';
 // blocked. Sanctions still block."; Save button "Save Configuration"; success
 // banner "Configuration saved successfully".
 //
-// A brand-new org has no saved config, so ComplianceConfig treats the form as
-// dirty and Save is enabled — this lets us persist a mode-only change.
+// Switching the enforcement mode marks the form dirty and enables Save. NOTE:
+// this spec originally surfaced an RD-1044 bug — ComplianceConfig.isDirty did
+// NOT track enforcement_mode, so a mode-only change (the exact operator action
+// here) left Save disabled and the switch was unsaveable. Fixed in the same
+// change: enforcement_mode is now part of isDirty.
 // ---------------------------------------------------------------------------
 
 const MONITOR_WARNING =
@@ -73,7 +76,7 @@ test.describe('Compliance monitor mode (RD-1044)', () => {
     // The amber warning appears, explicitly noting sanctions still block.
     await expect(page.getByText(MONITOR_WARNING)).toBeVisible();
 
-    // Save (enabled for a new org — no config exists yet) and confirm success.
+    // Save is now enabled (the mode switch marked the form dirty) — persist it.
     await page.getByRole('button', { name: /Save Configuration/ }).click();
     await expect(page.getByText('Configuration saved successfully')).toBeVisible({ timeout: 10000 });
 
