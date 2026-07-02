@@ -468,7 +468,13 @@ func signAndWriteCheckpoint(ctx context.Context, t *testing.T, store audit.Check
 		HeadID:    headID,
 		HeadHash:  headHash,
 		RowCount:  rowCount,
-		CreatedAt: time.Now().UTC(),
+		// Deliberate sub-microsecond ns component: Postgres timestamptz keeps
+		// only microseconds, so this is exactly the bit that must NOT influence
+		// the signed content — the checkpoint has to still verify after the DB
+		// round-trip. Plain time.Now() on a microsecond-granular clock (e.g.
+		// macOS) would mask the ns-vs-µs bug; this makes the guard deterministic
+		// on every platform.
+		CreatedAt: time.Now().UTC().Truncate(time.Microsecond).Add(347 * time.Nanosecond),
 	}
 	if err := audit.SignCheckpoint(signer, &c); err != nil {
 		return err
