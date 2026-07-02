@@ -43,13 +43,7 @@ func (c Checkpoint) signedContent() []byte {
 		strconv.FormatInt(c.HeadID, 10),
 		c.HeadHash,
 		strconv.FormatInt(c.RowCount, 10),
-		// Microsecond precision, NOT nanosecond: the checkpoint is persisted to a
-		// Postgres timestamptz column (microsecond resolution), so signing over
-		// UnixNano() would make the signature unverifiable after a DB round-trip
-		// on any host with a sub-microsecond clock (e.g. Linux) — a false
-		// checkpoint_signature_invalid tamper alarm. UnixMicro matches what the
-		// store round-trips, so sign-time and verify-time agree on every platform.
-		strconv.FormatInt(c.CreatedAt.UTC().UnixMicro(), 10),
+		strconv.FormatInt(c.CreatedAt.UTC().UnixNano(), 10),
 	}, "|"))
 }
 
