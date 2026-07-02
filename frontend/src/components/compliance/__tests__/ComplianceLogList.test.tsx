@@ -171,6 +171,36 @@ describe('ComplianceLogList', () => {
 
       expect(screen.queryByText(/would.?block/i)).not.toBeInTheDocument();
     });
+
+    it('does not mark a denied row even if would_block is set (RD-1160 gating)', async () => {
+      // would_block is only meaningful for decision='allowed' (monitor mode). If
+      // it ever appears on a denied row, the marker must NOT show — the "allowed
+      // in monitor mode" semantics would otherwise be contradictory.
+      server.use(
+        http.get('/api/v1/admin/orgs/:orgId/compliance/logs', () =>
+          HttpResponse.json({
+            data: [{
+              id: 98, org_id: 'org-1', user_id: 'user-8', user_external_id: 'did:test:denied',
+              transfer_type: 'eth',
+              from_address: '0x1111111111111111111111111111111111111111',
+              to_address: '0x2222222222222222222222222222222222222222',
+              amount_wei: '1', amount_fiat: 10, decision: 'denied',
+              would_block: true, denial_reason: 'sanctioned_address',
+              created_at: '2024-01-16T09:00:00Z',
+            }],
+            total: 1, limit: 25, offset: 0,
+          })
+        )
+      );
+      renderWithComplianceContext(<ComplianceLogList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('did:test:denied')).toBeInTheDocument();
+      });
+
+      expect(screen.getByText('denied')).toBeInTheDocument();
+      expect(screen.queryByText(/would.?block/i)).not.toBeInTheDocument();
+    });
   });
 
   describe('Filters', () => {

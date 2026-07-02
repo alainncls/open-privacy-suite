@@ -231,7 +231,7 @@ export default function ComplianceLogList() {
                       <Badge variant={log.decision === 'allowed' ? 'success' : 'destructive'}>
                         {log.decision}
                       </Badge>
-                      {log.would_block && (
+                      {log.would_block && log.decision === 'allowed' && (
                         <Badge variant="warning" title="Allowed in monitor mode — would have been blocked under enforce">
                           Would block
                         </Badge>
@@ -350,7 +350,7 @@ export default function ComplianceLogList() {
                   </Badge>
                 </div>
 
-                {selectedLog.would_block && (
+                {selectedLog.would_block && selectedLog.decision === 'allowed' && (
                   <>
                     <span className="text-neutral-500 font-medium">Monitor mode</span>
                     <div>
