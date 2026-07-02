@@ -648,7 +648,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	if cfg.AuditBufferDir != "" {
 		auditBuf, bufErr := buffer.Open(cfg.AuditBufferDir)
 		if bufErr != nil {
-			return nil, fmt.Errorf("async audit buffer init: %w", bufErr)
+			return nil, fmt.Errorf("async audit buffer init (AUDIT_BUFFER_DIR=%q): %w", cfg.AuditBufferDir, bufErr)
 		}
 		s.auditBuffer = auditBuf
 

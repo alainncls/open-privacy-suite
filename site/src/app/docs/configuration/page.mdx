@@ -113,7 +113,7 @@ The access log is a tamper-evident hash chain (an ISO 27001 / SOC 2 detective co
 
 **Durable-buffer note:** with `AUDIT_BUFFER_DIR` set, an entry is durable on the local volume the instant the request returns, but only reaches the (replicated, backed-up) database when the sealer next runs. Keep the buffer on a durable/replicated volume and the seal interval short so the un-sealed window stays small.
 
-**Volume ownership:** the proxy runs as a non-root user (uid 1000), and the buffer open is **fail-hard** — if the directory isn't writable the backend will not start (with an error naming the uid). A fresh **Docker named volume** mounted at the image's pre-created buffer path (`/var/lib/pp/auditbuf`) inherits the right ownership automatically, so no `chown` is needed. On **Kubernetes**, set the pod's `securityContext.fsGroup: 1000` so the mounted volume is group-writable. For any other path or a bind mount, ensure the directory is owned by uid 1000.
+**Volume ownership:** the proxy runs as a non-root user (uid 1000), and the buffer open is **fail-hard** — if the directory isn't writable the backend will not start (with an error naming the uid). A fresh **Docker named volume** mounted at the image's pre-created buffer path (`/var/lib/pp/auditbuf`) inherits the right ownership automatically, so no `chown` is needed. On **Kubernetes**, set the pod's `securityContext.fsGroup: 1000` so the mounted volume is group-writable. For any other path or a bind mount, ensure the directory is writable by uid 1000 (owned by it, or group-writable via a matching `fsGroup`).
 
 ---
 

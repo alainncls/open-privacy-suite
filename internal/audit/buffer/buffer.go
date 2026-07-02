@@ -117,7 +117,7 @@ func bufferDirError(dir string, err error) error {
 	if errors.Is(err, fs.ErrPermission) {
 		return fmt.Errorf("audit buffer dir %q is not writable by the proxy's runtime user (uid %d): %w — "+
 			"mount a volume owned by that uid (on Docker a named volume inherits the image's pre-owned buffer dir; "+
-			"on Kubernetes set the pod securityContext fsGroup to that uid)", dir, os.Getuid(), err)
+			"on Kubernetes set the pod securityContext fsGroup to gid %d)", dir, os.Getuid(), err, os.Getgid())
 	}
 	return fmt.Errorf("prepare audit buffer dir %q: %w", dir, err)
 }
