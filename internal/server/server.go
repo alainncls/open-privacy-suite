@@ -369,24 +369,52 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	// Admin/owner pool: open WITHOUT running the main migration FS (the audit DB
 	// must NOT get users/contracts/groups/rbac_audit_log/etc), then apply the
 	// lean audit-only migration set that builds the entire audit schema.
-	auditAdminDB, err := db.NewWithoutMigrate(cfg.AuditAdminDatabaseURL, db.WithPool(cfg.DBMaxOpenConns, cfg.DBMaxIdleConns, cfg.DBConnMaxLifetime))
-	if err != nil {
-		database.Close()
-		return nil, fmt.Errorf("failed to open audit admin database: %w", err)
+	//
+	// RD-1147 connection-pool reuse: when an audit DSN resolves to the SAME
+	// database as DATABASE_URL (co-located deployments and the test harness,
+	// which point every DSN at one Postgres), REUSE the main pool instead of
+	// opening a second/third pool against the same server. Without this each
+	// Server holds up to 3× the connections on one Postgres and the full test
+	// suite exhausts max_connections ("sorry, too many clients already"). The
+	// append-only seal is not enforced in this mode anyway (owner credentials),
+	// consistent with the documented co-located/derived-default behaviour. The
+	// Close() logic already guards against double-closing a reused pool.
+	var auditAdminDB *db.DB
+	if cfg.AuditAdminDatabaseURL == cfg.DatabaseURL {
+		auditAdminDB = database
+	} else {
+		auditAdminDB, err = db.NewWithoutMigrate(cfg.AuditAdminDatabaseURL, db.WithPool(cfg.DBMaxOpenConns, cfg.DBMaxIdleConns, cfg.DBConnMaxLifetime))
+		if err != nil {
+			database.Close()
+			return nil, fmt.Errorf("failed to open audit admin database: %w", err)
+		}
 	}
 	if mErr := auditAdminDB.MigrateAuditOnly(context.Background(), migrationsaudit.FS); mErr != nil {
-		auditAdminDB.Close()
+		if auditAdminDB != database {
+			auditAdminDB.Close()
+		}
 		database.Close()
 		return nil, fmt.Errorf("failed to apply lean audit migrations: %w", mErr)
 	}
 
 	// Runtime pool: restricted role, NO migrations (it lacks DDL rights; the
-	// admin pool above already migrated the audit DB).
-	auditDB, err := db.NewWithoutMigrate(cfg.AuditDatabaseURL, db.WithPool(cfg.DBMaxOpenConns, cfg.DBMaxIdleConns, cfg.DBConnMaxLifetime))
-	if err != nil {
-		auditAdminDB.Close()
-		database.Close()
-		return nil, fmt.Errorf("failed to open audit runtime database: %w", err)
+	// admin pool above already migrated the audit DB). Reuse the main or admin
+	// pool when the runtime DSN matches (see the pool-reuse note above).
+	var auditDB *db.DB
+	switch {
+	case cfg.AuditDatabaseURL == cfg.DatabaseURL:
+		auditDB = database
+	case cfg.AuditDatabaseURL == cfg.AuditAdminDatabaseURL:
+		auditDB = auditAdminDB
+	default:
+		auditDB, err = db.NewWithoutMigrate(cfg.AuditDatabaseURL, db.WithPool(cfg.DBMaxOpenConns, cfg.DBMaxIdleConns, cfg.DBConnMaxLifetime))
+		if err != nil {
+			if auditAdminDB != database {
+				auditAdminDB.Close()
+			}
+			database.Close()
+			return nil, fmt.Errorf("failed to open audit runtime database: %w", err)
+		}
 	}
 	if cfg.AuditDatabaseURL == cfg.AuditAdminDatabaseURL {
 		// Derived-default deployment (or an operator pointing both DSNs at the
