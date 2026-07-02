@@ -482,6 +482,33 @@ func (s *Server) deleteRBACUser(c *gin.Context) {
 
 // Membership handlers
 
+// membershipListItem is a membership-with-details plus a server-computed
+// `expired` flag, so the admin UI can tell a live time-boxed grant from one
+// whose window has already lapsed. `expired` is computed against the same UTC
+// clock the RBAC resolver uses for its `expires_at > NOW()` access filter
+// (RD-1157), so the badge the UI shows matches enforcement exactly. The raw
+// expires_at is still carried on the embedded membership.
+type membershipListItem struct {
+	Membership *rbac.UserMembership `json:"membership"`
+	Group      *rbac.Group          `json:"group"`
+	Expired    bool                 `json:"expired"`
+}
+
+// withExpiryStatus maps memberships-with-details to list items, flagging any
+// whose expires_at is in the past relative to now. A nil expires_at is a
+// permanent membership and is never flagged expired.
+func withExpiryStatus(memberships []*rbac.MembershipWithDetails, now time.Time) []membershipListItem {
+	items := make([]membershipListItem, 0, len(memberships))
+	for _, m := range memberships {
+		if m == nil {
+			continue
+		}
+		expired := m.Membership != nil && m.Membership.ExpiresAt != nil && m.Membership.ExpiresAt.Before(now)
+		items = append(items, membershipListItem{Membership: m.Membership, Group: m.Group, Expired: expired})
+	}
+	return items
+}
+
 func (s *Server) listUserMemberships(c *gin.Context) {
 	// RD-1132: tenant-confidential read — not readable with the operator token.
 	if denyOperatorTenantRead(c) {
@@ -531,7 +558,7 @@ func (s *Server) listUserMemberships(c *gin.Context) {
 		}
 		memberships = filtered
 	}
-	c.JSON(http.StatusOK, memberships)
+	c.JSON(http.StatusOK, withExpiryStatus(memberships, time.Now().UTC()))
 }
 
 // parseMembershipExpiry reads the optional `expires_at` field of a

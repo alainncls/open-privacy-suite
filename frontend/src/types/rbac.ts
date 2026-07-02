@@ -217,6 +217,7 @@ export interface EffectivePermissions {
 export interface MembershipWithDetails {
   membership: UserMembership;
   group: Group;
+  expired?: boolean; // server-computed: true when expires_at is in the past (RD-1157)
 }
 
 export interface AccessCheckRequest {
