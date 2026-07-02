@@ -201,7 +201,7 @@ func TestImpersonation_RejectsSuperAdminToken(t *testing.T) {
 // TestImpersonation_RejectsOperatorToken (RD-1132, RD-1159 Phase 2) is the
 // explicit operator-token companion to TestImpersonation_RejectsSuperAdminToken.
 // The gate at impersonation.go:203 rejects
-// `auth_method == "admin_token" || "operator_token"`, but the pre-existing test
+// `auth_method == "admin_token" || auth_method == "operator_token"`, but the pre-existing test
 // only drove the FULL admin_token. RD-1132 introduced the restricted
 // operator_token principal, which — like the full token — bypasses
 // orgScopingMiddleware and therefore must be explicitly barred from

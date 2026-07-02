@@ -49,8 +49,9 @@ func azureIdentityFor(oid, tenantID string) *auth.AzureIdentity {
 }
 
 // runCompleteAzureLogin drives the shared post-identity provisioning helper the
-// way handleAzureCallback does, and returns the recorder. autoKYCNewUser mirrors
-// the s.config.AutoKYCAzureUser argument the real interactive callback passes.
+// way handleAzureCallback does, asserting the response inline (it returns nothing).
+// autoKYCNewUser mirrors the s.config.AutoKYCAzureUser argument the real
+// interactive callback passes.
 func runCompleteAzureLogin(t *testing.T, ts *testServerAzureTenants, identity *auth.AzureIdentity, autoKYCNewUser bool) {
 	t.Helper()
 	w := httptest.NewRecorder()

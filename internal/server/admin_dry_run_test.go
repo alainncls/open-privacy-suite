@@ -147,7 +147,7 @@ func TestDryRun_RejectsSuperAdminToken(t *testing.T) {
 
 // TestDryRun_RejectsOperatorToken (RD-1132, RD-1159 Phase 2) is the explicit
 // operator-token companion to TestDryRun_RejectsSuperAdminToken. The gate at
-// admin_dry_run.go:110 rejects `auth_method == "admin_token" || "operator_token"`,
+// admin_dry_run.go:110 rejects `auth_method == "admin_token" || auth_method == "operator_token"`,
 // but the pre-existing test only drove the FULL admin_token. RD-1132 split the
 // single X-Admin-Token principal into admin_token (full) + operator_token
 // (restricted platform onboarder); impersonating a user reads tenant data as
