@@ -421,6 +421,62 @@ func TestUpdateComplianceConfig_UnknownPricePolicy(t *testing.T) {
 	}
 }
 
+// TestUpdateComplianceConfig_Currency locks in the RD-1158 fix: a tier-2 org
+// admin can set their org's currency through the per-org config endpoint
+// (previously this required the super-admin base-currency switch and 403'd from
+// the dashboard), an invalid currency is rejected with 400 (not silently
+// ignored), and the value is normalised + persisted.
+func TestUpdateComplianceConfig_Currency(t *testing.T) {
+	ts := setupTestServerForCompliance(t)
+	seed := seedComplianceTestData(t, ts.db)
+
+	ctx := context.Background()
+	orgID := seed.orgID
+
+	tests := []struct {
+		name         string
+		body         string
+		wantStatus   int
+		wantCurrency string
+	}{
+		{
+			name:         "valid currency persists",
+			body:         `{"currency": "eur"}`,
+			wantStatus:   http.StatusOK,
+			wantCurrency: "eur",
+		},
+		{
+			name:         "uppercase is normalised to lowercase",
+			body:         `{"currency": "GBP"}`,
+			wantStatus:   http.StatusOK,
+			wantCurrency: "gbp",
+		},
+		{
+			name:         "unsupported currency rejected, prior value unchanged",
+			body:         `{"currency": "btc"}`,
+			wantStatus:   http.StatusBadRequest,
+			wantCurrency: "gbp", // unchanged from the previous case
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodPut, "/", bytes.NewBuffer([]byte(tc.body)))
+			c.Params = gin.Params{gin.Param{Key: "org_id", Value: orgID}}
+
+			ts.updateComplianceConfig(c)
+
+			assert.Equal(t, tc.wantStatus, w.Code, "body: %s", w.Body.String())
+
+			cfg, err := ts.db.GetComplianceConfig(ctx, orgID)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantCurrency, cfg.Currency)
+		})
+	}
+}
+
 // createBareOrg inserts an organization with NO compliance_config row and
 // returns its id. The compliance config is created lazily by the first PUT
 // /compliance/config — this is the exact precondition RD-1111 needs (the bug

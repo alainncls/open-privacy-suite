@@ -94,6 +94,11 @@ type ComplianceConfig struct {
 	OrgID              string             `json:"org_id"`
 	Enabled            bool               `json:"enabled"`
 	ThresholdFiat      float64            `json:"threshold_fiat"`
+	// Currency is the per-org fiat currency (usd/eur/chf/gbp/aed) that
+	// threshold_fiat is denominated in and that transfers are valued against
+	// (RD-1158). Per-org so one org's currency choice can never fail-close
+	// another org. An empty value resolves to "usd".
+	Currency           string             `json:"currency"`
 	UnknownPricePolicy UnknownPricePolicy `json:"unknown_price_policy"`
 	// EnforcementMode is enforce (block, default) or monitor (allow + record)
 	// for monitor-eligible violations. An empty value resolves to the cluster

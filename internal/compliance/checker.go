@@ -165,8 +165,17 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 		}, nil
 	}
 
-	// Read base currency once for the entire decision — used for audit trail.
-	currency, _ := c.store.GetSystemSetting(ctx, "base_currency")
+	// Per-org currency (RD-1158): the transfer is valued in — and threshold_fiat
+	// is denominated in — this org's own currency, not a cluster-wide setting, so
+	// one org's currency choice can never fail-close another. Read once for the
+	// whole decision (valuation + audit snapshot). Defensive fallback for a
+	// pre-RD-1158 / unset config: the global base_currency default, then usd.
+	// Production rows always have currency set (migration 068 default 'usd'), so
+	// the global is never consulted when a per-org currency exists.
+	currency := config.Currency
+	if currency == "" {
+		currency, _ = c.store.GetSystemSetting(ctx, "base_currency")
+	}
 	if currency == "" {
 		currency = "usd"
 	}
