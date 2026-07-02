@@ -28,21 +28,25 @@ func TestWithExpiryStatus(t *testing.T) {
 
 	items := withExpiryStatus([]*rbac.MembershipWithDetails{
 		mk("past", &past),
+		mk("boundary", &now), // expires_at == now: resolver admits only expires_at > NOW(), so this is already expired
 		mk("future", &future),
 		mk("permanent", nil),
 		nil, // defensive: nil entries are skipped
 	}, now)
 
-	if len(items) != 3 {
-		t.Fatalf("want 3 items (nil skipped), got %d", len(items))
+	if len(items) != 4 {
+		t.Fatalf("want 4 items (nil skipped), got %d", len(items))
 	}
 	if !items[0].Expired {
 		t.Error("membership with a past expires_at must be flagged expired")
 	}
-	if items[1].Expired {
-		t.Error("membership with a future expires_at must NOT be flagged expired")
+	if !items[1].Expired {
+		t.Error("membership with expires_at == now must be flagged expired (resolver uses expires_at > NOW())")
 	}
 	if items[2].Expired {
+		t.Error("membership with a future expires_at must NOT be flagged expired")
+	}
+	if items[3].Expired {
 		t.Error("permanent membership (nil expires_at) must NOT be flagged expired")
 	}
 
