@@ -97,7 +97,8 @@ type ComplianceConfig struct {
 	// Currency is the per-org fiat currency (usd/eur/chf/gbp/aed) that
 	// threshold_fiat is denominated in and that transfers are valued against
 	// (RD-1158). Per-org so one org's currency choice can never fail-close
-	// another org. An empty value resolves to "usd".
+	// another org. An empty value resolves to the global base_currency setting,
+	// then to "usd" (see Server.orgCurrency).
 	Currency           string             `json:"currency"`
 	UnknownPricePolicy UnknownPricePolicy `json:"unknown_price_policy"`
 	// EnforcementMode is enforce (block, default) or monitor (allow + record)

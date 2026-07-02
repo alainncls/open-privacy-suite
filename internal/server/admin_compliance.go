@@ -88,7 +88,14 @@ func (s *Server) defaultEnforcementMode() compliance.EnforcementMode {
 // computed or displayed, so display/record valuation stays consistent with the
 // currency the compliance checker actually enforces for the org.
 func (s *Server) orgCurrency(ctx context.Context, orgID string) string {
-	if cfg, err := s.db.GetComplianceConfig(ctx, orgID); err == nil && cfg != nil && cfg.Currency != "" {
+	cfg, err := s.db.GetComplianceConfig(ctx, orgID)
+	if err != nil {
+		// Fall back rather than fail the caller, but leave a diagnostic: a
+		// transient lookup failure here would otherwise silently value a
+		// transfer/record against the wrong currency with no signal.
+		slog.WarnContext(ctx, "orgCurrency: compliance-config lookup failed; falling back to base/system currency",
+			"org_id", orgID, "error", err)
+	} else if cfg != nil && cfg.Currency != "" {
 		return cfg.Currency
 	}
 	if c, err := s.db.GetSystemSetting(ctx, "base_currency"); err == nil && c != "" {
@@ -220,7 +227,7 @@ func (s *Server) updateComplianceConfig(c *gin.Context) {
 	// has no cross-org effect, so it is allowed on this org-admin-gated path
 	// (unlike the global base-currency switch, which stays super-admin only).
 	if input.Currency != nil {
-		cur := strings.ToLower(*input.Currency)
+		cur := strings.ToLower(strings.TrimSpace(*input.Currency))
 		if !compliance.IsValidCurrency(cur) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported currency; valid options: usd, eur, chf, gbp, aed"})
 			return
