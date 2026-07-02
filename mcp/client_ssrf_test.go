@@ -38,9 +38,13 @@ func TestClientDoesNotFollowRedirects_SEC1325(t *testing.T) {
 		t.Fatalf("newHTTPClient: %v", err)
 	}
 
-	// The 302 must NOT be followed — we don't care what do() returns for it,
-	// only that the redirect target was never contacted.
-	_, _ = c.get("/anything")
+	// The 302 must NOT be followed. With CheckRedirect => ErrUseLastResponse the
+	// call returns the 302 as-is (no error), so asserting the request succeeded
+	// guarantees redirect handling was actually exercised — otherwise a transport
+	// failure would leave metadataHit==false and produce a false green below.
+	if _, err := c.get("/anything"); err != nil {
+		t.Fatalf("SEC-1325: request errored before redirect handling was exercised: %v", err)
+	}
 
 	if metadataHit.Load() {
 		t.Fatal("SEC-1325: client followed a redirect to the metadata endpoint (SSRF)")
