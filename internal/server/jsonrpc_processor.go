@@ -744,7 +744,17 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	// have no event logs, so visibleTo is rejected for them.
 	var visibleTo []string
 	if req.Method == "eth_sendTransaction" {
-		visibleTo = extractAndStripVisibleTo(req)
+		// RD-1163: accept a top-level `visibleTo`/`privateFor` (DIDs and/or ETH
+		// addresses, resolved fail-closed) alongside the params[0] form; union
+		// them. Top-level is read first — the param extractor rebuilds the body
+		// and would otherwise drop the top-level field before it is read.
+		topRaw := extractAndStripTopLevelVisibleTo(req)
+		paramDIDs := extractAndStripVisibleTo(req)
+		var resolver ethAddressResolver
+		if r, ok := p.rbacAccessCtrl.Store().(ethAddressResolver); ok {
+			resolver = r
+		}
+		visibleTo = unionVisibleToDIDs(paramDIDs, resolveVisibleToEntries(ctx, resolver, topRaw))
 		if len(visibleTo) > visibleToMaxSize {
 			return &ProcessResult{
 				Error: &ProcessError{
@@ -2029,10 +2039,18 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 		return compErr
 	}
 
-	// Extract and strip visibleTo from second param (if present) before forwarding.
-	// Only accepted on contract calls — plain transfers have no event logs.
-	var rawTxVisibleTo []string
-	rawTxVisibleTo = extractAndStripRawTxVisibleTo(req)
+	// Extract and strip visibleTo before forwarding. RD-1163: accept a top-level
+	// `visibleTo`/`privateFor` (DIDs and/or ETH addresses, resolved fail-closed)
+	// alongside the params[1] form; union them. Top-level is read first (the param
+	// extractor rebuilds the body and would otherwise drop it). Only accepted on
+	// contract calls — plain transfers have no event logs.
+	topRaw := extractAndStripTopLevelVisibleTo(req)
+	paramDIDs := extractAndStripRawTxVisibleTo(req)
+	var vtResolver ethAddressResolver
+	if r, ok := p.rbacAccessCtrl.Store().(ethAddressResolver); ok {
+		vtResolver = r
+	}
+	rawTxVisibleTo := unionVisibleToDIDs(paramDIDs, resolveVisibleToEntries(ctx, vtResolver, topRaw))
 	if len(rawTxVisibleTo) > visibleToMaxSize {
 		return &ProcessResult{
 			Error: &ProcessError{
@@ -3286,6 +3304,154 @@ func extractAndStripRawTxVisibleTo(req *ProcessRequest) []string {
 		}
 	}
 	return nil
+}
+
+// ethAddressResolver resolves an ETH address to its linked DID. Implemented by
+// *db.DB (GetDIDByEthAddress); the processor's rbac store satisfies it via a type
+// assertion (mirrors the optional-capability TxVisibilitySaver pattern). When the
+// store does not implement it, address entries are dropped (fail-closed).
+type ethAddressResolver interface {
+	GetDIDByEthAddress(ctx context.Context, ethAddress string) (string, error)
+}
+
+// extractAndStripTopLevelVisibleTo reads a top-level `visibleTo` field — or its
+// Quorum-compatible alias `privateFor` — from the JSON-RPC envelope (a sibling of
+// `params`), removes it from req.Body so it is never forwarded to the node, and
+// returns the raw recipient entries (DIDs and/or 0x ETH addresses, unresolved).
+// This is the standard convention for per-tx privacy metadata (RD-1163). The
+// param-embedded forms (params[0].visibleTo / params[1].visibleTo) remain
+// supported for back-compat and are unioned with this at the call site.
+//
+// Must be called BEFORE the param extractors: those rebuild req.Body from
+// {jsonrpc,method,params,id} and would drop the top-level field before it is read.
+func extractAndStripTopLevelVisibleTo(req *ProcessRequest) []string {
+	if len(req.Body) == 0 {
+		return nil
+	}
+	var env map[string]json.RawMessage
+	if err := json.Unmarshal(req.Body, &env); err != nil {
+		return nil
+	}
+	vtRaw, hasVT := env["visibleTo"]
+	pfRaw, hasPF := env["privateFor"]
+	if !hasVT && !hasPF {
+		return nil
+	}
+	entries := append(parseVisibleToRawList(vtRaw), parseVisibleToRawList(pfRaw)...)
+	// Strip both keys so neither reaches the node, then rebuild the body.
+	delete(env, "visibleTo")
+	delete(env, "privateFor")
+	if rebuilt, err := json.Marshal(env); err == nil {
+		req.Body = rebuilt
+	}
+	return entries
+}
+
+// parseVisibleToRawList parses a JSON array of strings (["did:..","0x.."]) into a
+// slice of non-empty raw entries. Non-array / non-string values are ignored.
+func parseVisibleToRawList(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var arr []string
+	if err := json.Unmarshal(raw, &arr); err == nil {
+		out := make([]string, 0, len(arr))
+		for _, s := range arr {
+			if s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	var anyArr []any
+	if err := json.Unmarshal(raw, &anyArr); err == nil {
+		out := make([]string, 0, len(anyArr))
+		for _, v := range anyArr {
+			if s, ok := v.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// resolveVisibleToEntries turns raw visibleTo entries (DIDs and/or ETH addresses)
+// into a deduped DID list. DIDs are validated (isValidDID); ETH addresses are
+// resolved to their linked DID via resolver. FAIL-CLOSED: an address with no
+// linked DID (or when no resolver is available, or on lookup error) is dropped —
+// it never widens visibility. Non-DID / non-address entries are ignored.
+func resolveVisibleToEntries(ctx context.Context, resolver ethAddressResolver, entries []string) []string {
+	if len(entries) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(entries))
+	seen := make(map[string]struct{}, len(entries))
+	for _, e := range entries {
+		var did string
+		switch {
+		case isValidDID(e):
+			did = e
+		case isEthAddress(e) && resolver != nil:
+			d, err := resolver.GetDIDByEthAddress(ctx, strings.ToLower(e))
+			if err != nil || d == "" {
+				continue // fail-closed: unknown/unresolvable address is dropped
+			}
+			did = d
+		default:
+			continue
+		}
+		if _, dup := seen[did]; dup {
+			continue
+		}
+		seen[did] = struct{}{}
+		out = append(out, did)
+	}
+	return out
+}
+
+// isEthAddress reports whether s is a 0x-prefixed 20-byte hex address.
+func isEthAddress(s string) bool {
+	if len(s) != 42 || s[0] != '0' || (s[1] != 'x' && s[1] != 'X') {
+		return false
+	}
+	for i := 2; i < len(s); i++ {
+		ch := s[i]
+		switch {
+		case ch >= '0' && ch <= '9':
+		case ch >= 'a' && ch <= 'f':
+		case ch >= 'A' && ch <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// unionVisibleToDIDs returns the deduped union of two DID lists, preserving order
+// (all of a, then new entries from b).
+func unionVisibleToDIDs(a, b []string) []string {
+	if len(b) == 0 {
+		return a
+	}
+	if len(a) == 0 {
+		return b
+	}
+	out := make([]string, 0, len(a)+len(b))
+	seen := make(map[string]struct{}, len(a)+len(b))
+	for _, s := range a {
+		if _, dup := seen[s]; !dup {
+			seen[s] = struct{}{}
+			out = append(out, s)
+		}
+	}
+	for _, s := range b {
+		if _, dup := seen[s]; !dup {
+			seen[s] = struct{}{}
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // rebuildRequestBody reconstructs the JSON-RPC request body from the modified params.
