@@ -181,16 +181,20 @@ In addition to Explorer API redaction, logs returned by `eth_getLogs` and `eth_g
 
 The bypass does NOT apply to users with `deploy`, `write`, `read`, or `upgrade` claims only.
 
-| Viewer | Event rules configured | Address in topics | Log visible? |
-|--------|----------------------|-------------------|-------------|
-| Admin on contract | Any | Any | **Yes** (bypass) |
-| Org admin | Any | Any | **Yes** (bypass via admin claim) |
-| Read user | `null` (default) | Yes | Yes |
-| Read user | `null` (default) | No | No |
-| Read user | `[Transfer]` | N/A | Only Transfer logs |
-| Read user | `[]` (deny all) | Any | No |
-| No access to contract | Any | Any | No |
-| `perms == nil` | N/A | N/A | No (fail-closed) |
+**Participant/sender admission (RD-1162):** a viewer who is a **participant** of a log's transaction — their linked address is the tx `from` or `to` — sees that transaction's logs **on contracts they have a grant to**, even when the event is not in their `event_rules` allowlist and carries no address of theirs (e.g. `PaymentCompleted(bytes32 indexed key, string id)`, keyed by a business identifier). The viewer authored/participated in the tx and already knows its contents, so this reveals nothing new (same rationale as §G21). It is **bounded by contract-grant access** — logs from contracts the viewer has no grant on stay dropped, so a tx that internally touched a foreign-org contract never leaks that contract's logs (mirrors the explorer participant override, §3.7: Redacted→Full, Hidden stays dropped). Participation is threaded in via `TxVisibilityContext.ParticipantTxHashes`: the receipt path derives it from the receipt's `from`/`to`; the `eth_getLogs` path resolves each tx's sender via a batched upstream `eth_getTransactionByHash` (log entries do not carry the sender). It slots **after** the deny-when-no-ABI (RD-875) and M15 dynamic-payload gates — participation relaxes only the allowlist/param/self checks, never the embedded-address protections, so an event with a dynamic non-indexed payload still requires the operator's `events_allow_dynamic_payload` attestation before even its participants see it.
+
+| Viewer | Event rules configured | Address in topics | Participant of tx | Log visible? |
+|--------|----------------------|-------------------|-------------------|-------------|
+| Admin on contract | Any | Any | Any | **Yes** (bypass) |
+| Org admin | Any | Any | Any | **Yes** (bypass via admin claim) |
+| Read user, grant on contract | `null` (default) | Yes | Any | Yes |
+| Read user, grant on contract | `null` (default) | No | **Yes** | **Yes** (RD-1162; if it clears the no-ABI + M15 gates) |
+| Read user, grant on contract | `null` (default) | No | No | No |
+| Read user, grant on contract | `[Transfer]` | N/A | No | Only Transfer logs |
+| Read user, grant on contract | `[]` (deny all) | Any | No | No |
+| Read user, grant on contract | `[]` (deny all) | No | **Yes** | **Yes** (RD-1162) |
+| No access to contract (Hidden emitter) | Any | Any | **Yes** | **No** (participation does not override the grant bound) |
+| `perms == nil` | N/A | N/A | Any | No (fail-closed) |
 
 ### 3.5 TokenHolder (Explorer API)
 
@@ -300,18 +304,18 @@ The disclosed party themselves always renders at their own grant level via the v
 
 ### 3.8 RPC Layer (`eth_getTransactionByHash`, `eth_getTransactionReceipt`, `eth_getLogs`, `eth_getBlockByNumber`, `eth_getBlockReceipts`)
 
-At the RPC layer, visibility is binary: the caller either is or is not a participant (one of their linked addresses matches `from` or `to`).
+At the RPC layer, the tx envelope (`eth_getTransactionByHash` / `eth_getTransactionReceipt`) is binary on participation (one of the caller's linked addresses matches `from`/`to`); the **logs** inside a receipt, and `eth_getLogs`, are additionally RBAC/event-rule filtered by `FilterEventLogs` (§3.4.1).
 
 | Method | Participant behavior | Non-participant behavior | Implemented | Tested |
 |--------|---------------------|--------------------------|-------------|--------|
 | `eth_getTransactionByHash` | Full transaction returned | `null` | Yes | Yes |
-| `eth_getTransactionReceipt` | Full receipt with logs | `null` | Yes | Yes |
-| `eth_getLogs` | Entries where a topic address matches a linked address | Entry removed from array | Yes | Yes |
+| `eth_getTransactionReceipt` | Receipt returned; logs event-rule filtered, **plus** the participant sees their own tx's logs on granted contracts even if address-less (RD-1162, §3.4.1) | `null` | Yes | Yes |
+| `eth_getLogs` | Entries where a topic address matches a linked address, **or** (RD-1162) entries of a tx the caller participated in on a granted contract (bounded by grant + no-ABI/M15 gates) | Entry removed from array | Yes | Yes |
 | `eth_getLogs` topics[0..3] | All 4 slots scanned for private addresses | Non-matching entries removed | Yes | Yes |
 | `eth_getLogs` data field (no ABI) | Whole log denied at RPC layer regardless of event_rules; explorer layer also denies via the unified ABIResolver | — | Yes | Yes | G5 closed (RD-875 RPC + RD-889 explorer) — see §3.4 row for `data (when emitter full + NO ABI)` |
 | `eth_getBlockByNumber` (`fullTxObjects=true`) | Full block; all txs | Non-participant txs removed | Yes | Yes |
 | `eth_getBlockByNumber` (`fullTxObjects=false`) | Passes through | Passes through | Yes | Yes |
-| `eth_getBlockReceipts` | All receipts in block | Non-participant receipts removed | Yes | Yes |
+| `eth_getBlockReceipts` | Participant receipts kept; their logs still topic-address filtered by the *simple* path (`filterReceiptLogs`), so an address-less own-tx log is not yet admitted here | Non-participant receipts removed | Yes | Yes |
 | `logsBloom` in blocks | All-zero (256 bytes) for every viewer | — | Yes | Yes | G6 closed (RD-873) |
 
 **`eth_call` internal-call validation (RD-915).** The table above covers response-side filtering. `eth_call` has a separate gating layer at the *request* boundary: every call is traced via `debug_traceCall` and every internal `CALL`/`STATICCALL`/`DELEGATECALL` frame is checked against the caller's org membership (`internal/server/jsonrpc_processor.go` `validateEthCallWithTracing`). Without this, a same-org wrapper contract could STATICCALL into a foreign-org private contract and bubble up the result through the return value — defeating cross-org isolation on the read side even if the response itself contains no addresses to redact. Tracing is uncached on the read path because proxy-pattern contracts (EIP-1967, Diamond, Beacon, transparent upgradeable) can re-target their internal calls by rewriting a storage slot, so a `(from,to,data,value)` cache yields stale "allow" decisions after a cross-org upgrade. `from` is rebound to the JWT-bound EOA via `GetLinkedEthAddresses`; spoofed `from` is rejected (not silently rebound — preserves audit trail). See `docs/rd-915-design.md`.

@@ -70,6 +70,18 @@ type TxVisibilityContext struct {
 	ViewerDID           string              // The DID of the user viewing the logs
 	TxVisibility        map[string][]string // tx_hash (lowercase) -> visible_to_dids
 	UnlockableContracts map[string]bool     // contract address (lowercase) -> unlock pre-resolved true
+
+	// ParticipantTxHashes (RD-1162) is the pre-resolved set of transaction
+	// hashes (lowercase) the viewer participated in — their linked address is
+	// the tx `from` or `to`. When a log belongs to one of these txs AND the
+	// viewer holds a grant on the emitting contract, the log is admitted even
+	// if the event is not in the viewer's event_rules allowlist and carries no
+	// address of theirs — they authored/participated in the tx and already
+	// know its contents. Populated by the RPC layer: the receipt path derives
+	// it from the receipt's from/to; the eth_getLogs path resolves each tx's
+	// sender via a batched upstream eth_getTransactionByHash. Empty/nil = no
+	// participant admission (backward compatible).
+	ParticipantTxHashes map[string]bool
 }
 
 // logEntry is the minimal structure needed to inspect an Ethereum log for
@@ -232,6 +244,32 @@ func FilterEventLogs(
 		}
 
 		access := perms.GetContractAccess(contractAddr)
+
+		// RD-1162: participant/sender bypass of the event-rule allowlist.
+		// If the caller is a participant (from/to) of this log's transaction
+		// AND holds a grant on the emitting contract, the log is visible even
+		// when the event is not in their event_rules allowlist or carries no
+		// address of theirs (e.g. PaymentCompleted, keyed by a business id).
+		// They authored/participated in the tx and already know its contents.
+		//
+		// Bounded by contract access (access != nil): logs emitted by contracts
+		// the viewer has no grant on stay dropped, so a tx that internally
+		// touched a foreign-org contract never leaks that contract's logs —
+		// mirroring the explorer participant override (REDACTION_SPEC §3.7),
+		// which upgrades Redacted→Full but keeps Hidden dropped.
+		//
+		// Slots AFTER the deny-no-ABI (RD-875) and M15 dynamic-payload gates
+		// above (consistent with the explorer, where participants do not bypass
+		// those): participation relaxes only the allowlist/param/self checks,
+		// never the embedded-address protections. So an address-less event on a
+		// granted contract becomes visible to its tx's participants, while an
+		// event with a dynamic non-indexed payload still requires the operator's
+		// events_allow_dynamic_payload attestation.
+		if access != nil && logTxIsParticipant(visCtx, rawLog) {
+			filtered = append(filtered, rawLog)
+			continue
+		}
+
 		if access == nil {
 			// No RBAC access to this contract — check visibleTo as fallback.
 			// The sender explicitly shared this tx with the viewer.
@@ -295,6 +333,24 @@ func isViewerInVisibleTo(visCtx *TxVisibilityContext, rawLog json.RawMessage) bo
 		}
 	}
 	return false
+}
+
+// logTxIsParticipant reports whether the transaction that produced this log
+// entry is one the caller participated in (their linked address is the tx
+// from/to), per the pre-resolved visCtx.ParticipantTxHashes set (RD-1162).
+// Nil/empty context or set = no participant information (backward compatible:
+// callers that do not resolve senders leave it nil and this returns false).
+func logTxIsParticipant(visCtx *TxVisibilityContext, rawLog json.RawMessage) bool {
+	if visCtx == nil || len(visCtx.ParticipantTxHashes) == 0 {
+		return false
+	}
+	var logMeta struct {
+		TransactionHash string `json:"transactionHash"`
+	}
+	if err := json.Unmarshal(rawLog, &logMeta); err != nil || logMeta.TransactionHash == "" {
+		return false
+	}
+	return visCtx.ParticipantTxHashes[strings.ToLower(logMeta.TransactionHash)]
 }
 
 // eventTopic0Matches checks if the given topic0 matches any event rule's Topic0,
