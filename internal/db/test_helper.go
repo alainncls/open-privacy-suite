@@ -108,6 +108,14 @@ func ResetTestDatabase(database *DB) error {
 		"revoked_tokens",
 		"access_logs",
 		"audit_chain_anchor",
+		// RD-1112 signed-checkpoint + break-glass tables. Stand-alone (no FK
+		// cascade from access_logs), so they must be reset explicitly. Without
+		// this, a checkpoint left by an earlier test/package on a SHARED Postgres
+		// (CI) survives, and the verifier — which validates every chain_name's
+		// checkpoint with the caller's single signer — rejects the foreign-key
+		// signature (checkpoint_signature_invalid), an order-dependent flake.
+		"audit_chain_checkpoint",
+		"audit_chain_reanchor",
 		"eth_address_links",
 		// RD-993: stand-alone audit table (no FK cascade), so explicit reset
 		// is required to keep tests isolated when they run against a shared
