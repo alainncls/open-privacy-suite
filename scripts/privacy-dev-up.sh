@@ -75,6 +75,11 @@ if [[ ! -f "$ENV_FILE" ]]; then
 # Gitignored via .env.* rule. Delete to rotate (then also run
 # 'docker compose ... down -v' to drop postgres volumes).
 PRIVACY_POSTGRES_PASSWORD=$(openssl rand -hex 32)
+# RD-1147: password for the restricted audit-DB runtime role (privacy_proxy_app).
+# The container's init hook (scripts/init-audit-db.sh) provisions the role with
+# this password; the backend's AUDIT_DATABASE_URL connects as it so the
+# access_logs append-only seal is enforced in dev.
+AUDIT_APP_PASSWORD=$(openssl rand -hex 32)
 INDEXER_POSTGRES_PASSWORD=$(openssl rand -hex 32)
 BLOCK_EXPLORER_POSTGRES_PASSWORD=$(openssl rand -hex 32)
 REDIS_PASSWORD=$(openssl rand -hex 32)

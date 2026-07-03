@@ -50,8 +50,16 @@ services:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=${PRIVACY_POSTGRES_PASSWORD:?PRIVACY_POSTGRES_PASSWORD is required in privacy mode}
       - POSTGRES_DB=privacy_proxy
+      # RD-1147: password for the restricted runtime role provisioned by
+      # scripts/init-audit-db.sh so AUDIT_DATABASE_URL connects as
+      # privacy_proxy_app and the append-only seal actually bites in dev.
+      - AUDIT_APP_PASSWORD=${AUDIT_APP_PASSWORD:?AUDIT_APP_PASSWORD is required in privacy mode (restricted audit-DB role)}
     volumes:
       - privacy-postgres-data:/var/lib/postgresql/data
+      # RD-1147: on first init, the CONTAINER provisions the "<db>_audit" database
+      # + the restricted privacy_proxy_app LOGIN role (mirrors POSTGRES_DB — one
+      # more DB, no new infra pattern). The app then migrates the audit DB.
+      - ./scripts/init-audit-db.sh:/docker-entrypoint-initdb.d/10-init-audit-db.sh:ro
     networks:
       - indexer-zone
     healthcheck:
@@ -168,6 +176,15 @@ services:
     environment:
       - NODE_URL=http://anvil:8545
       - DATABASE_URL=postgres://postgres:${PRIVACY_POSTGRES_PASSWORD:?PRIVACY_POSTGRES_PASSWORD is required in privacy mode}@privacy-postgres:5432/privacy_proxy?sslmode=disable
+      # RD-1147: access_logs lives in a SEPARATE append-only audit database
+      # (privacy_proxy_audit), provisioned by the container's init hook. Two DSNs
+      # so dev enforces the append-only seal:
+      #   AUDIT_ADMIN_DATABASE_URL — owner (postgres): runs the lean audit
+      #     migrations + retention prune (DELETE).
+      #   AUDIT_DATABASE_URL — restricted runtime role privacy_proxy_app
+      #     (INSERT+SELECT on access_logs, no UPDATE/DELETE) → the seal bites.
+      - AUDIT_ADMIN_DATABASE_URL=postgres://postgres:${PRIVACY_POSTGRES_PASSWORD:?PRIVACY_POSTGRES_PASSWORD is required in privacy mode}@privacy-postgres:5432/privacy_proxy_audit?sslmode=disable
+      - AUDIT_DATABASE_URL=postgres://privacy_proxy_app:${AUDIT_APP_PASSWORD:?AUDIT_APP_PASSWORD is required in privacy mode (restricted audit-DB role)}@privacy-postgres:5432/privacy_proxy_audit?sslmode=disable
       - PORT=8080
       # ENVIRONMENT is binary in code: only "production" is production;
       # anything else unlocks dev shortcuts (localhost in OAuth redirect

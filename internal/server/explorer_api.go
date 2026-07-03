@@ -769,8 +769,10 @@ func (s *Server) getGrantActivityLogs(c *gin.Context) {
 		}
 	}
 
-	// 7. Query activity logs scoped to grant time bounds
-	logs, total, err := s.db.GetActivityLogsForGrant(c.Request.Context(), grantID, limit, offset)
+	// 7. Query activity logs scoped to grant time bounds.
+	// RD-1147: resolve the grant's target + time window from the main DB, then
+	// read access_logs from the audit DB (they may be different databases now).
+	logs, total, err := s.getActivityLogsForGrant(c.Request.Context(), grantID, limit, offset)
 	if err != nil {
 		respondInternalError(c, "failed to get activity logs")
 		return
@@ -2044,6 +2046,20 @@ func (s *Server) getExplorerTransactionInternal(c *gin.Context) {
 	}
 	viewerDID := s.getViewerDIDFromRequest(c)
 	opts := s.buildRedactOptsForViewer(c.Request.Context(), viewerDID)
+
+	// RD-1122: thread the parent tx's from/to so the viewer's direct
+	// counterparty (already shown at the tx/Overview level) isn't over-redacted
+	// in nested trace frames. Mirrors getExplorerTransactionLogs' participant
+	// override. The redaction engine reveals these addresses per-side and only
+	// to a viewer who is themselves a parent participant, so deeper foreign-org
+	// frames stay redacted.
+	if parentTx, perr := s.explorerStore.GetTransaction(c.Request.Context(), hash); perr == nil && parentTx != nil {
+		opts.ParentParticipants = append(opts.ParentParticipants, parentTx.From)
+		if parentTx.To != nil {
+			opts.ParentParticipants = append(opts.ParentParticipants, *parentTx.To)
+		}
+	}
+
 	redacted, err := s.explorerRedactor.RedactInternalTransactions(c.Request.Context(), itxs, viewerDID, opts)
 	if err != nil {
 		respondInternalErrorAndLog(c, "redaction failed",

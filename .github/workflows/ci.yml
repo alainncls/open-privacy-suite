@@ -163,3 +163,17 @@ jobs:
         run: |
           npm ci
           npm run build
+
+  audit-buffer-volume:
+    name: Audit Buffer Volume (RD-1112)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      # Regression guard for the Dockerfile pre-own step: build the image, mount a
+      # fresh named volume, and assert the non-root runtime user can write the
+      # audit buffer dir. A broken chown passes `docker build` + Go tests but
+      # would fail the async buffer in prod — only this runtime check catches it.
+      - name: Verify async audit buffer is writable by the non-root user
+        run: bash scripts/verify-audit-buffer-volume.sh

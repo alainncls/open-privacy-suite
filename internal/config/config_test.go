@@ -721,6 +721,56 @@ func TestLoad_RPCAPIKeyHeader(t *testing.T) {
 	}
 }
 
+// TestLoad_AuditDatabaseURL_DerivedAndOverride locks the RD-1147 audit-DSN
+// resolution: when AUDIT_DATABASE_URL / AUDIT_ADMIN_DATABASE_URL are unset they
+// are DERIVED from DATABASE_URL as "<name>_audit" on the same server; an explicit
+// value overrides.
+func TestLoad_AuditDatabaseURL_DerivedAndOverride(t *testing.T) {
+	t.Run("derived from DATABASE_URL when unset", func(t *testing.T) {
+		t.Setenv("DATABASE_URL", "postgres://u:p@dbhost:5432/privacy_proxy?sslmode=disable")
+		t.Setenv("AUDIT_DATABASE_URL", "")
+		os.Unsetenv("AUDIT_DATABASE_URL")
+		t.Setenv("AUDIT_ADMIN_DATABASE_URL", "")
+		os.Unsetenv("AUDIT_ADMIN_DATABASE_URL")
+		cfg := Load()
+		want := "postgres://u:p@dbhost:5432/privacy_proxy_audit?sslmode=disable"
+		if cfg.AuditDatabaseURL != want {
+			t.Errorf("AuditDatabaseURL = %q, want derived %q", cfg.AuditDatabaseURL, want)
+		}
+		if cfg.AuditAdminDatabaseURL != want {
+			t.Errorf("AuditAdminDatabaseURL = %q, want derived %q", cfg.AuditAdminDatabaseURL, want)
+		}
+	})
+
+	t.Run("explicit values override the derived default", func(t *testing.T) {
+		t.Setenv("DATABASE_URL", "postgres://u:p@dbhost:5432/privacy_proxy?sslmode=disable")
+		t.Setenv("AUDIT_DATABASE_URL", "postgres://privacy_proxy_app:sekret@audithost:5432/audit?sslmode=require")
+		t.Setenv("AUDIT_ADMIN_DATABASE_URL", "postgres://owner:sekret@audithost:5432/audit?sslmode=require")
+		cfg := Load()
+		if cfg.AuditDatabaseURL != "postgres://privacy_proxy_app:sekret@audithost:5432/audit?sslmode=require" {
+			t.Errorf("explicit AUDIT_DATABASE_URL not honored: %q", cfg.AuditDatabaseURL)
+		}
+		if cfg.AuditAdminDatabaseURL != "postgres://owner:sekret@audithost:5432/audit?sslmode=require" {
+			t.Errorf("explicit AUDIT_ADMIN_DATABASE_URL not honored: %q", cfg.AuditAdminDatabaseURL)
+		}
+	})
+}
+
+// TestDeriveAuditDatabaseURL pins the derivation helper directly.
+func TestDeriveAuditDatabaseURL(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"postgres://u:p@h:5432/privacy_proxy?sslmode=disable", "postgres://u:p@h:5432/privacy_proxy_audit?sslmode=disable"},
+		{"postgres://u:p@h:5432/db", "postgres://u:p@h:5432/db_audit"},
+		{"not a url with spaces", ""},  // unparseable host → no derived default
+		{"postgres://u:p@h:5432/", ""}, // no db name → no derived default
+	}
+	for _, c := range cases {
+		if got := deriveAuditDatabaseURL(c.in); got != c.want {
+			t.Errorf("deriveAuditDatabaseURL(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestExtraRPCNamespaces_UnmarshalJSON(t *testing.T) {
 	t.Run("valid config with aliases", func(t *testing.T) {
 		input := `{

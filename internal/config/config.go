@@ -247,8 +247,27 @@ type Config struct {
 	// Default 'access_logs' (one global chain). For multi-instance, set a
 	// per-instance value (e.g. hostname / pod name) so each instance is the
 	// SOLE writer of its own chain — preventing the multi-writer chain fork.
-	AuditChainName      string
-	ExplorerDatabaseURL string
+	AuditChainName string
+	// AuditDatabaseURL is the RUNTIME identity for the SEPARATE, always-on
+	// append-only audit database that holds access_logs (RD-1147). access_logs is
+	// ALWAYS in a separate database — there is NO fallback to the main DB. This
+	// DSN SHOULD connect as the restricted privacy_proxy_app role so the
+	// append-only seal (INSERT+SELECT, no UPDATE/DELETE — audit migration 002)
+	// actually bites. When AUDIT_DATABASE_URL is unset it is DERIVED from
+	// DATABASE_URL by swapping the database name to "<name>_audit" on the SAME
+	// server; the derived default reuses DATABASE_URL's (owner) credentials, so
+	// the seal is NOT enforced on it — set an explicit URL with the restricted
+	// role to enforce the seal. An explicit URL may point at another server.
+	AuditDatabaseURL string
+	// AuditAdminDatabaseURL is the ADMIN/owner identity for the audit database
+	// (RD-1147): it runs the lean audit migrations at startup and performs
+	// retention prune (DELETE), which the restricted runtime role cannot. When
+	// unset it is DERIVED from DATABASE_URL the same way as AuditDatabaseURL
+	// ("<name>_audit" on the same server, DATABASE_URL credentials). The app
+	// NEVER runs CREATE DATABASE — infra must have provisioned the audit database
+	// already; the app only connects and migrates it.
+	AuditAdminDatabaseURL string
+	ExplorerDatabaseURL   string
 	// IndexerURL, when non-empty, enables the gRPC chain-indexer backend for
 	// explorer reads. Methods not yet ported to gRPC fall back to direct
 	// SQL on the explorer postgres. Leave empty to use SQL exclusively.
@@ -664,9 +683,23 @@ func Load() *Config {
 	nodeMaxConnsPerHost := getEnvInt("NODE_HTTP_MAX_CONNS_PER_HOST", 0)
 	nodeIdleConnTimeout := parseDurationEnv("NODE_HTTP_IDLE_CONN_TIMEOUT", 90*time.Second)
 
+	// RD-1147: access_logs ALWAYS lives in a separate audit database. When the
+	// two audit DSNs are unset, DERIVE them from DATABASE_URL by swapping the
+	// database name to "<name>_audit" on the same server (reusing DATABASE_URL's
+	// credentials). An explicit URL overrides (and may point at another server).
+	databaseURL := getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/privacy_proxy?sslmode=disable")
+	auditDatabaseURL := getEnv("AUDIT_DATABASE_URL", "")
+	if auditDatabaseURL == "" {
+		auditDatabaseURL = deriveAuditDatabaseURL(databaseURL)
+	}
+	auditAdminDatabaseURL := getEnv("AUDIT_ADMIN_DATABASE_URL", "")
+	if auditAdminDatabaseURL == "" {
+		auditAdminDatabaseURL = deriveAuditDatabaseURL(databaseURL)
+	}
+
 	return &Config{
 		NodeURL:                             getEnv("NODE_URL", "http://localhost:8545"),
-		DatabaseURL:                         getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/privacy_proxy?sslmode=disable"),
+		DatabaseURL:                         databaseURL,
 		DBMaxOpenConns:                      dbMaxOpen,
 		DBMaxIdleConns:                      dbMaxIdle,
 		DBConnMaxLifetime:                   dbConnMaxLifetime,
@@ -736,6 +769,8 @@ func Load() *Config {
 		SIEMFallbackLogPath:                 getEnv("SIEM_FALLBACK_LOG_PATH", ""),
 		AuditIntegrityVerifyInterval:        auditIntegrityInterval,
 		AuditTamperWebhookURL:               auditTamperWebhookURL,
+		AuditDatabaseURL:                    auditDatabaseURL,
+		AuditAdminDatabaseURL:               auditAdminDatabaseURL,
 		ExplorerDatabaseURL:                 getEnv("EXPLORER_DATABASE_URL", ""),
 		IndexerURL:                          getEnv("INDEXER_URL", ""),
 		TunnelURLFile:                       getEnv("TUNNEL_URL_FILE", ""),
@@ -1009,4 +1044,33 @@ func parseDurationEnv(key string, defaultValue time.Duration) time.Duration {
 		return defaultValue
 	}
 	return d
+}
+
+// deriveAuditDatabaseURL derives the default audit-database DSN from the main
+// DATABASE_URL by swapping the database name to "<name>_audit" on the SAME
+// server, reusing DATABASE_URL's credentials (RD-1147). This is the default when
+// AUDIT_DATABASE_URL / AUDIT_ADMIN_DATABASE_URL are unset. An explicit URL always
+// overrides (and may point at a different server / role).
+//
+// It supports the URL form (postgres://user:pass@host:port/dbname?params), which
+// is what DATABASE_URL uses everywhere in this codebase. If parsing fails or the
+// path has no database name, it returns "" — the caller then has no derived
+// default and the (missing) audit DB will fail loudly at startup, which is the
+// correct fail-closed behaviour for an unparseable DATABASE_URL.
+//
+// NOTE: the derived default reuses DATABASE_URL's credentials (the owner role),
+// so the append-only INSERT-only seal is NOT enforced on it — the seal bites
+// only when AUDIT_DATABASE_URL is set explicitly to connect as the restricted
+// privacy_proxy_app role. See docs/configuration.
+func deriveAuditDatabaseURL(databaseURL string) string {
+	u, err := url.Parse(databaseURL)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	name := strings.TrimPrefix(u.Path, "/")
+	if name == "" {
+		return ""
+	}
+	u.Path = "/" + name + "_audit"
+	return u.String()
 }
