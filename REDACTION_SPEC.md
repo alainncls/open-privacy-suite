@@ -479,13 +479,32 @@ Every redaction method must have unit tests covering the following scenarios. Te
 | Viewer not a participant, both sides Hidden | Entry dropped (no override) |
 | Two txs, viewer participates in one only | Override applies only to the participated tx |
 
+### RD-1162 — participant sees own-tx logs (RPC layer, §3.4.1)
+
+The participant/sender log admission requires the following cases. Adding the
+"Participant of tx" column to the §3.4.1 matrix pulls in these tests
+(`internal/rbac/event_filter_test.go` + `internal/server/*rd1162*_test.go`):
+
+| Scenario | Expected result | Test |
+|----------|-----------------|------|
+| Participant of a tx, address-less event, **granted** emitter | Log admitted | `TestFilterEventLogs_ParticipantSeesOwnTxLog_RD1162` |
+| Non-participant / non-matching tx, address-less event | Log dropped | `TestFilterEventLogs_ParticipantSeesOwnTxLog_RD1162` |
+| Participant, but **no grant** on emitter (Hidden/foreign-org) | Log dropped — the grant bound holds | `TestFilterEventLogs_ParticipantBounds_RD1162` |
+| Participant, granted emitter, but **no ABI** or **M15 dynamic payload** | Log dropped — participation slots AFTER those gates | `TestFilterEventLogs_ParticipantBounds_RD1162` |
+| Receipt glue: participant's address-less own-tx log, granted emitter → visible; non-granted → hidden | As stated | `TestFilterReceiptLogsWithEventRules_ParticipantSeesAddresslessOwnTxLog_RD1162` |
+| getLogs sender resolution (`buildParticipantTxHashes`): from-match, to-match, non-participant, unknown tx | Correct participant set | `TestBuildParticipantTxHashes_ResolvesParticipants_RD1162` |
+| getLogs sender resolution fails closed: no linked addrs / upstream unreachable / unparseable response / over the 256-tx cap | Empty set (pre-RD-1162 behaviour) | `TestBuildParticipantTxHashes_FailClosed_RD1162` |
+| Full getLogs path (resolve → filter): own-tx address-less log admitted, other-tx log dropped | 1 log (own tx only) | `TestGetLogsParticipantPath_AddresslessOwnTxLogAdmitted_RD1162` |
+
 ### Gap behavior must be explicitly asserted
 
-Do not allow a gap to become invisible through test omission. For each known gap (G4, G6), write a test that:
+Do not allow a gap to become invisible through test omission. For each known gap (e.g. G4, and the RD-1162 `eth_getBlockReceipts` gap below), write a test that:
 1. Sets up the exact scenario that triggers the gap.
-2. Asserts the **current (broken) behavior** with a comment: `// GAP G<N>: expected nil, returns actual value — fix before release`.
+2. Asserts the **current (broken) behavior** with a comment: `// GAP <id>: <current vs desired> — fix before release`.
 
 This makes gaps visible in CI output and prevents accidental regression to worse behavior.
+
+- **RD-1162 `eth_getBlockReceipts` gap:** `eth_getBlockReceipts` still uses the simple topic-address `filterReceiptLogs`, so a participant's address-less own-tx log is **not** admitted there (unlike `eth_getLogs` / `eth_getTransactionReceipt`, §3.4.1). Pinned by `TestFilterBlockReceipts_ParticipantAddresslessOwnTxLog_GAP_RD1162`, which asserts the current (gap) behavior so the fix — migrating `eth_getBlockReceipts` to the event-rules path (`FilterReceiptLogsWithEventRules`) — cannot land silently.
 
 ### Cross-redactor consistency (RD-1009 / G24 + follow-up)
 
