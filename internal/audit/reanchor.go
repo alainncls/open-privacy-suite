@@ -38,7 +38,7 @@ type ReAnchor struct {
 
 func (r ReAnchor) signedContent() []byte {
 	return []byte(strings.Join([]string{
-		"reanchor-v1",
+		"reanchor-v2",
 		r.ChainName,
 		r.Reason,
 		r.Actor,
@@ -46,7 +46,11 @@ func (r ReAnchor) signedContent() []byte {
 		r.FromHash,
 		strconv.FormatInt(r.ToHeadID, 10),
 		r.ToHash,
-		strconv.FormatInt(r.CreatedAt.UTC().UnixNano(), 10),
+		// MICROSECOND precision — see Checkpoint.signedContent: created_at is a
+		// Postgres TIMESTAMP (microsecond), so signing nanos breaks verification
+		// after the DB round-trip on sub-µs-resolution hosts (Linux). (v1 signed
+		// nanos; tag bumped to v2.)
+		strconv.FormatInt(r.CreatedAt.UTC().UnixMicro(), 10),
 	}, "|"))
 }
 

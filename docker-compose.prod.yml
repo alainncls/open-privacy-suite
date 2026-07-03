@@ -111,6 +111,14 @@ services:
       - FRONTEND_URL=${FRONTEND_URL:-${BASE_URL:-}}
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-${BASE_URL}}
       - TRUSTED_INTERNAL_CIDRS=${TRUSTED_INTERNAL_CIDRS:-}
+      # Async access-log auditing (RD-1112) — moves the audit write off the request
+      # hot path. Off by default. To enable, uncomment this AND the audit-buffer
+      # volume below. The buffer dir must be writable by the runtime user (uid 1000):
+      # the named volume mounts at the image's pre-owned path, so no chown is needed.
+      # On Kubernetes set the pod securityContext fsGroup: 1000 instead.
+      # - AUDIT_BUFFER_DIR=/var/lib/pp/auditbuf
+    # volumes:
+    #   - audit-buffer:/var/lib/pp/auditbuf
     networks:
       - internal
 
@@ -155,6 +163,7 @@ volumes:
   redis-data:
   caddy-data:
   caddy-config:
+  # audit-buffer:   # RD-1112 async audit buffer (uncomment with AUDIT_BUFFER_DIR above)
 
 networks:
   internal:

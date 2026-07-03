@@ -120,7 +120,8 @@ func TestLoadConfigFile_SecretKeyRejected(t *testing.T) {
 	// denylist (secretKeys) rather than a hand-picked few, so every current key
 	// is covered and a newly-added one is guarded automatically. This closes the
 	// AUDIT_CHECKPOINT_KEY gap (RD-1112) and covers OPERATOR_API_TOKEN /
-	// SIEM_AUTH_HEADER (RD-1140/1141), the JWT/DSN/RPC-key/OAuth secrets, etc.
+	// SIEM_AUTH_HEADER (RD-1140/1141), the RD-1147 separate-audit-database DSNs,
+	// the JWT/DSN/RPC-key/OAuth secrets, etc.
 	const secretValue = "super-secret-token-value-DO-NOT-LEAK"
 	if len(secretKeys) == 0 {
 		t.Fatal("secretKeys denylist is empty — nothing is guarded")

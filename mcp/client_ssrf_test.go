@@ -8,81 +8,145 @@ import (
 	"testing"
 )
 
-// SEC-1325 regression tests. The MCP admin client talks to one trusted upstream
-// (the configured base URL). It must NOT be steerable off that host — neither by
-// an HTTP redirect the upstream returns, nor by a caller-supplied path that
-// embeds a different host/scheme. Both are SSRF vectors toward loopback / cloud
-// metadata (169.254.169.254). These exercise the two mitigations:
-//   - newHTTPClient: CheckRedirect => http.ErrUseLastResponse (never follow)
-//   - do():          re-assert scheme/host/user from the trusted base URL
-// Written from the SSRF spec, not from current output: each fails if its
-// mitigation regresses (verified by temporarily removing CheckRedirect).
+// SEC-1325 regression tests for the SSRF mitigations in client.go (PR #343).
+//
+// The MCP admin client talks to a single, operator-configured upstream
+// (privacy-proxy). Two mitigations keep a caller-supplied path (a tool
+// argument) from steering a request off that trusted upstream toward an
+// internal/loopback/metadata endpoint (e.g. http://169.254.169.254/...):
+//
+//  1. CheckRedirect returns http.ErrUseLastResponse, so the shared *http.Client
+//     never FOLLOWS a redirect — a 30x from the upstream is surfaced as-is and
+//     no second request is issued to the Location target.
+//  2. do() re-asserts Scheme/Host/User from the trusted base URL on every call,
+//     so the outbound request can only ever address the configured upstream.
+//
+// These tests exercise the real request path (get()/do(), the lowest-level
+// methods that drive the shared client) and assert the metadata sentinel is
+// never contacted.
 
-func TestClientDoesNotFollowRedirects_SEC1325(t *testing.T) {
-	var metadataHit atomic.Bool
-	// Stand-in for an internal / cloud-metadata endpoint a redirect might target.
-	metadata := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		metadataHit.Store(true)
-		_, _ = w.Write([]byte(`{"imds":"secret"}`))
+// TestSSRF_RedirectNotFollowed is mitigation (1): a 302 whose Location points at
+// a metadata sentinel must NOT be followed. The client surfaces the redirect
+// response itself (302 < 400, so do() returns no error and an empty body) and
+// never issues a request to the sentinel.
+//
+// Verified load-bearing: with CheckRedirect removed from newHTTPClient, the Go
+// default client follows the 302, the sentinel is hit, and the leaked body is
+// returned to the caller — i.e. this test fails without the fix.
+func TestSSRF_RedirectNotFollowed(t *testing.T) {
+	var sentinelHits int32
+	sentinel := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&sentinelHits, 1)
+		// Stand in for the IMDS payload an SSRF would try to exfiltrate.
+		_, _ = w.Write([]byte(`{"AccessKeyId":"LEAKED","Token":"LEAKED"}`))
 	}))
-	defer metadata.Close()
+	defer sentinel.Close()
 
-	// The trusted upstream 302-redirects toward that endpoint.
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, metadata.URL+"/latest/meta-data/", http.StatusFound)
+		// Upstream tries to bounce the client onto the metadata endpoint.
+		w.Header().Set("Location", sentinel.URL+"/latest/meta-data/iam/security-credentials/")
+		w.WriteHeader(http.StatusFound) // 302
 	}))
 	defer upstream.Close()
 
-	c, err := newHTTPClient(upstream.URL, "tok")
+	client, err := newHTTPClient(upstream.URL, "test-admin-token")
 	if err != nil {
 		t.Fatalf("newHTTPClient: %v", err)
 	}
 
-	// The 302 must NOT be followed. With CheckRedirect => ErrUseLastResponse the
-	// call returns the 302 as-is (no error), so asserting the request succeeded
-	// guarantees redirect handling was actually exercised — otherwise a transport
-	// failure would leave metadataHit==false and produce a false green below.
-	if _, err := c.get("/anything"); err != nil {
-		t.Fatalf("SEC-1325: request errored before redirect handling was exercised: %v", err)
+	body, err := client.get("/api/v1/admin/orgs")
+	if err != nil {
+		// A 302 is < 400, so do() must NOT treat it as an HTTP error. If the
+		// redirect were followed and the sentinel 200'd, err would also be nil
+		// but the sentinel-hit assertion below would fire.
+		t.Fatalf("get returned error on a 302 (redirect should be surfaced, not followed): %v", err)
 	}
 
-	if metadataHit.Load() {
-		t.Fatal("SEC-1325: client followed a redirect to the metadata endpoint (SSRF)")
+	if hits := atomic.LoadInt32(&sentinelHits); hits != 0 {
+		t.Fatalf("SSRF: redirect was followed to the metadata sentinel (%d hit(s)) — CheckRedirect mitigation missing", hits)
+	}
+
+	// The 302 body is empty; the leaked credential payload must never reach the caller.
+	if string(body) == `{"AccessKeyId":"LEAKED","Token":"LEAKED"}` {
+		t.Fatalf("SSRF: leaked metadata body surfaced to caller: %q", string(body))
 	}
 }
 
-func TestClientPathCannotChangeHost_SEC1325(t *testing.T) {
-	var gotHost atomic.Value // string — the Host the upstream actually received
+// TestSSRF_HostRepinned is mitigation (2): no caller-supplied path — absolute
+// URL, scheme-relative //host, or embedded credentials — may move the outbound
+// request off the configured base host/scheme. We record the request the
+// upstream actually receives and assert it stayed on the trusted host, and that
+// a separate "evil" host is never contacted.
+func TestSSRF_HostRepinned(t *testing.T) {
+	var evilHits int32
+	evil := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&evilHits, 1)
+		_, _ = w.Write([]byte(`{"reached":"evil"}`))
+	}))
+	defer evil.Close()
+	evilURL, _ := url.Parse(evil.URL)
+	evilHost := evilURL.Host // e.g. 127.0.0.1:NNNNN
+
+	var gotHost string
+	var reqCount int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotHost.Store(r.Host)
-		_, _ = w.Write([]byte(`{}`))
+		atomic.AddInt32(&reqCount, 1)
+		gotHost = r.Host
+		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
 	defer upstream.Close()
-	base, err := url.Parse(upstream.URL)
-	if err != nil {
-		t.Fatalf("parse upstream url: %v", err)
-	}
+	upstreamURL, _ := url.Parse(upstream.URL)
+	wantHost := upstreamURL.Host
 
-	c, err := newHTTPClient(upstream.URL, "tok")
+	client, err := newHTTPClient(upstream.URL, "test-admin-token")
 	if err != nil {
 		t.Fatalf("newHTTPClient: %v", err)
 	}
 
-	// Each "path" embeds a foreign host/scheme. The request must still land on
-	// the configured upstream host — never on the embedded one.
-	for _, evilPath := range []string{
-		"http://169.254.169.254/latest/meta-data/",
-		"//169.254.169.254/x",
-		"https://evil.example.com/pwn",
-	} {
-		gotHost.Store("")
-		_, _ = c.get(evilPath)
-		got, _ := gotHost.Load().(string)
-		if got == "" {
-			t.Fatalf("path %q: the trusted upstream was never contacted", evilPath)
-		}
-		if got != base.Host {
-			t.Fatalf("SEC-1325: path %q reached host %q, want the configured upstream %q", evilPath, got, base.Host)
-		}
+	// Each of these tries, in a different way, to escape the configured upstream
+	// and address the evil host instead.
+	maliciousPaths := []string{
+		"http://" + evilHost + "/latest/meta-data/", // absolute URL with attacker host
+		"https://" + evilHost + "/x",                // absolute https URL
+		"//" + evilHost + "/x",                      // scheme-relative authority
+		"/api/v1/admin/orgs?next=http://" + evilHost, // attacker host smuggled in query
+		"user:pass@" + evilHost + "/x",              // embedded credentials + host
+	}
+
+	for _, p := range maliciousPaths {
+		t.Run(p, func(t *testing.T) {
+			gotHost = ""
+			// We don't care about the response here, only where the request went.
+			_, _ = client.get(p)
+
+			if gotHost != wantHost {
+				t.Fatalf("SSRF: request for path %q reached host %q, want trusted upstream %q", p, gotHost, wantHost)
+			}
+		})
+	}
+
+	if hits := atomic.LoadInt32(&evilHits); hits != 0 {
+		t.Fatalf("SSRF: the attacker-controlled host was contacted %d time(s) — host re-pinning missing", hits)
+	}
+	if atomic.LoadInt32(&reqCount) == 0 {
+		t.Fatal("test bug: upstream received no requests; the malicious paths never exercised do()")
+	}
+}
+
+// TestSSRF_NewClientNeverFollowsRedirect locks the constructor contract directly:
+// the shared client must install a CheckRedirect that refuses to follow. This is
+// a fast, unit-level guard against a future refactor silently dropping the hook.
+func TestSSRF_NewClientNeverFollowsRedirect(t *testing.T) {
+	client, err := newHTTPClient("https://upstream.invalid", "")
+	if err != nil {
+		t.Fatalf("newHTTPClient: %v", err)
+	}
+	if client.http.CheckRedirect == nil {
+		t.Fatal("SSRF: shared http.Client has no CheckRedirect hook — redirects would be followed")
+	}
+	// The hook must instruct net/http to use the last response (i.e. not follow).
+	req, _ := http.NewRequest(http.MethodGet, "https://upstream.invalid/x", nil)
+	if err := client.http.CheckRedirect(req, nil); err != http.ErrUseLastResponse {
+		t.Fatalf("CheckRedirect returned %v, want http.ErrUseLastResponse (do-not-follow)", err)
 	}
 }

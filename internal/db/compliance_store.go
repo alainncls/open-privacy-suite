@@ -14,13 +14,13 @@ import (
 // Compliance Config operations
 
 func (d *DB) GetComplianceConfig(ctx context.Context, orgID string) (*compliance.ComplianceConfig, error) {
-	query := `SELECT id, org_id, enabled, threshold_fiat, unknown_price_policy, enforcement_mode, created_at, updated_at
+	query := `SELECT id, org_id, enabled, threshold_fiat, unknown_price_policy, enforcement_mode, currency, created_at, updated_at
 	          FROM compliance_config WHERE org_id = $1`
 
 	config := &compliance.ComplianceConfig{}
 	err := d.conn.QueryRowContext(ctx, query, orgID).Scan(
 		&config.ID, &config.OrgID, &config.Enabled, &config.ThresholdFiat, &config.UnknownPricePolicy,
-		&config.EnforcementMode, &config.CreatedAt, &config.UpdatedAt,
+		&config.EnforcementMode, &config.Currency, &config.CreatedAt, &config.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -51,20 +51,30 @@ func (d *DB) UpsertComplianceConfig(ctx context.Context, config *compliance.Comp
 		pricePolicy = compliance.UnknownPriceForbidden
 	}
 
-	query := `INSERT INTO compliance_config (id, org_id, enabled, threshold_fiat, unknown_price_policy, enforcement_mode)
-	          VALUES ($1, $2, $3, $4, $5, $6)
+	// RD-1158: currency is NOT NULL with a CHECK(usd|eur|chf|gbp|aed). Coalesce an
+	// unset value to "usd" (the prior implicit global default) so no caller can
+	// trip the constraint with an empty string.
+	currency := config.Currency
+	if currency == "" {
+		currency = "usd"
+	}
+
+	query := `INSERT INTO compliance_config (id, org_id, enabled, threshold_fiat, unknown_price_policy, enforcement_mode, currency)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7)
 	          ON CONFLICT (org_id) DO UPDATE SET
 	          enabled = EXCLUDED.enabled,
 	          threshold_fiat = EXCLUDED.threshold_fiat,
 	          unknown_price_policy = EXCLUDED.unknown_price_policy,
 	          enforcement_mode = EXCLUDED.enforcement_mode,
+	          currency = EXCLUDED.currency,
 	          updated_at = CURRENT_TIMESTAMP
 	          RETURNING created_at, updated_at`
 
 	config.EnforcementMode = mode
 	config.UnknownPricePolicy = pricePolicy
+	config.Currency = currency
 	return d.conn.QueryRowContext(ctx, query,
-		config.ID, config.OrgID, config.Enabled, config.ThresholdFiat, pricePolicy, mode,
+		config.ID, config.OrgID, config.Enabled, config.ThresholdFiat, pricePolicy, mode, currency,
 	).Scan(&config.CreatedAt, &config.UpdatedAt)
 }
 

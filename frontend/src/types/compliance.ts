@@ -9,6 +9,9 @@ export interface ComplianceConfig {
   org_id: string;
   enabled: boolean;
   threshold_fiat: number;
+  // Per-org fiat currency (RD-1158) that threshold_fiat is denominated in and
+  // that transfers are valued against. usd/eur/chf/gbp/aed.
+  currency: string;
   unknown_price_policy: 'allowed' | 'forbidden';
   enforcement_mode: EnforcementMode;
   created_at: string;
@@ -18,6 +21,7 @@ export interface ComplianceConfig {
 export interface UpdateComplianceConfigInput {
   enabled?: boolean;
   threshold_fiat?: number;
+  currency?: string;
   unknown_price_policy?: 'allowed' | 'forbidden';
   enforcement_mode?: EnforcementMode;
 }

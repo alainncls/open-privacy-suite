@@ -38,12 +38,18 @@ type Checkpoint struct {
 // processes and key types. A leading version tag allows future format changes.
 func (c Checkpoint) signedContent() []byte {
 	return []byte(strings.Join([]string{
-		"ckpt-v1",
+		"ckpt-v2",
 		c.ChainName,
 		strconv.FormatInt(c.HeadID, 10),
 		c.HeadHash,
 		strconv.FormatInt(c.RowCount, 10),
-		strconv.FormatInt(c.CreatedAt.UTC().UnixNano(), 10),
+		// MICROSECOND precision: created_at is a Postgres TIMESTAMP (microsecond
+		// resolution), so signing over UnixNano() breaks verification after the
+		// DB round-trip on any host whose clock has sub-microsecond resolution
+		// (e.g. Linux) — the sealed sub-µs digits are dropped on read-back and the
+		// recomputed signature no longer matches. UnixMicro() is stable across the
+		// round-trip on every platform. (v1 signed nanos; tag bumped to v2.)
+		strconv.FormatInt(c.CreatedAt.UTC().UnixMicro(), 10),
 	}, "|"))
 }
 

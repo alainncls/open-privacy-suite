@@ -1296,6 +1296,59 @@ func TestCheckerCheck_InteractionEdgeCases(t *testing.T) {
 	}
 }
 
+// TestCheckerCheck_PerOrgCurrency proves the checker values a transfer in the
+// ORG's own currency (config.Currency), not the cluster-wide base_currency
+// (RD-1158). config.Currency=eur is honoured even though the stale global
+// setting would value in USD and flip the decision — so one org's currency
+// choice can never affect another's enforcement.
+func TestCheckerCheck_PerOrgCurrency(t *testing.T) {
+	const orgID, userID = "org-1", "user-1"
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+	cfg := enabledConfig(1000)
+	cfg.Currency = "eur"
+	store := &mockComplianceStore{
+		config: cfg,
+		// The stale global would value in USD and DENY; it MUST be ignored now
+		// that currency is per-org.
+		systemSetting: "usd",
+		tokenPrice: nativePriceMultiCurrency(map[string]float64{
+			"usd": 5000,
+			"eur": 4000,
+		}),
+	}
+
+	// 0.22 ETH: EUR = 0.22 * 4000 = €880 (< €1000 → allowed);
+	//           USD = 0.22 * 5000 = $1100 (> $1000 → would be denied).
+	value := "0x" + new(big.Int).SetUint64(220000000000000000).Text(16)
+
+	checker := NewChecker(store, 24*time.Hour, 15*time.Minute)
+	result, err := checker.Check(context.Background(), &CheckRequest{
+		OrgID: orgID, UserID: userID, From: from, To: to, Value: value,
+	})
+	if err != nil {
+		t.Fatalf("Check() error: %v", err)
+	}
+	if !result.Allowed {
+		t.Fatalf("Allowed=false (reason %q): per-org EUR valuation should allow €880 < €1000; the global USD setting must be ignored", result.Reason)
+	}
+	if !strings.Contains(result.Reason, "below threshold") {
+		t.Errorf("Reason = %q, want 'below threshold'", result.Reason)
+	}
+	// The audit snapshot must record the per-org currency, not the global one.
+	if len(store.logs) == 0 {
+		t.Fatalf("expected a compliance decision log")
+	}
+	last := store.logs[len(store.logs)-1]
+	if last.Currency != "eur" {
+		t.Errorf("logged decision currency = %q, want %q (per-org snapshot)", last.Currency, "eur")
+	}
+	if last.AmountFiat == nil || *last.AmountFiat < 879 || *last.AmountFiat > 881 {
+		t.Errorf("logged amount_fiat = %v, want ~880 (valued in EUR, not USD)", last.AmountFiat)
+	}
+}
+
 func TestResolveTokenPrice_MultiCurrency(t *testing.T) {
 	const orgID = "org-1"
 	const userID = "user-1"

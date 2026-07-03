@@ -529,7 +529,7 @@ func TestRedactTransactions_PseudonymousAddress(t *testing.T) {
 // page (getGrantTransactions) already rendered the same tx with the
 // contract as External-XXXX; this test makes the regular path consistent.
 func TestRedactTransactions_PseudonymousGrant_DemotesPublicCounterparty(t *testing.T) {
-	bob := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"           // pseudonymously disclosed to viewer
+	bob := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"            // pseudonymously disclosed to viewer
 	publicContract := "0xcccccccccccccccccccccccccccccccccccccccc" // e.g. USDC — viewer sees it everywhere else
 
 	engine := newEngineDetailed(
@@ -3206,6 +3206,87 @@ func TestRedactInternalTransactions_NonParticipantDoesNotSeeHidden(t *testing.T)
 	}
 	if itx.Output != nil {
 		t.Errorf("Output should be nil for non-participant with hidden side")
+	}
+}
+
+// RD-1122: the tx originator sees their direct counterparty consistently across
+// nested trace frames (it is already shown at the tx/Overview level), while a
+// foreign-org contract reached only deep in the trace stays [PRIVATE]. This
+// asserts BOTH the fix (counterparty no longer over-redacted) and the per-side
+// cross-org guard (the non-parent side of a frame is never revealed).
+func TestRedactInternalTransactions_ParentParticipantRevealsCounterpartyAcrossNestedFrames_RD1122(t *testing.T) {
+	bob := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"     // viewer + parent `from`
+	cpty := "0xc0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0"    // parent `to`, private
+	pub := "0xdddddddddddddddddddddddddddddddddddddddd"     // public contract
+	foreign := "0xffffffffffffffffffffffffffffffffffffffff" // foreign-org, private, NOT a parent party
+
+	engine := newEngineWithLinkedAddrs(VisibilityMap{
+		bob:     VisibilityFull,
+		cpty:    VisibilityRedacted,
+		pub:     VisibilityFull,
+		foreign: VisibilityRedacted,
+	}, []string{bob})
+
+	// Nested frames (sub-calls of the top bob->cpty call). Bob is a direct
+	// from/to of NEITHER frame — only of the parent tx.
+	itxs := []InternalTransaction{
+		{ID: 1, TxHash: "0xtx", From: cpty, To: strPtr(pub)},     // cpty -> public
+		{ID: 2, TxHash: "0xtx", From: cpty, To: strPtr(foreign)}, // cpty -> foreign-org
+	}
+	opts := RedactOpts{ParentParticipants: []string{bob, cpty}}
+	result, err := engine.RedactInternalTransactions(context.Background(), itxs, "did:bob", opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 2 {
+		t.Fatalf("expected 2 internal txs, got %d", len(result))
+	}
+	// Frame 1: cpty (the originator's direct counterparty) is revealed instead
+	// of [PRIVATE] — the over-redaction this ticket fixes.
+	if result[0].From != cpty {
+		t.Errorf("frame1 From: parent counterparty should be revealed (was over-redacted), got %s", result[0].From)
+	}
+	if result[0].To == nil || *result[0].To != pub {
+		t.Errorf("frame1 To: public contract should be shown, got %v", result[0].To)
+	}
+	// Frame 2: cpty revealed (a parent party); foreign stays [PRIVATE] because it
+	// is NOT a parent party — proves the per-side reveal closes no cross-org leak.
+	if result[1].From != cpty {
+		t.Errorf("frame2 From: parent counterparty should be revealed, got %s", result[1].From)
+	}
+	if result[1].To == nil || *result[1].To != "[PRIVATE]" {
+		t.Errorf("frame2 To: foreign-org contract MUST stay [PRIVATE] (cross-org guard), got %v", result[1].To)
+	}
+}
+
+// RD-1122: the parent-participant reveal is gated on the VIEWER being a parent
+// participant (their linked EOA == parent from/to). A viewer who is not a
+// parent party gets no reveal — the counterparty stays [PRIVATE].
+func TestRedactInternalTransactions_ParentParticipantGateRequiresViewerParticipation_RD1122(t *testing.T) {
+	bob := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	cpty := "0xc0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0"
+	pub := "0xdddddddddddddddddddddddddddddddddddddddd"
+	charlie := "0xcccccccccccccccccccccccccccccccccccccccc" // viewer, NOT a parent party
+
+	engine := newEngineWithLinkedAddrs(VisibilityMap{
+		bob:  VisibilityFull,
+		cpty: VisibilityRedacted,
+		pub:  VisibilityFull,
+	}, []string{charlie})
+
+	itxs := []InternalTransaction{
+		{ID: 1, TxHash: "0xtx", From: cpty, To: strPtr(pub)},
+	}
+	opts := RedactOpts{ParentParticipants: []string{bob, cpty}}
+	result, err := engine.RedactInternalTransactions(context.Background(), itxs, "did:charlie", opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 internal tx, got %d", len(result))
+	}
+	if result[0].From != "[PRIVATE]" {
+		t.Errorf("non-participant viewer must NOT get the parent reveal; From should be [PRIVATE], got %s", result[0].From)
 	}
 }
 

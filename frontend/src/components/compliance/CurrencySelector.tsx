@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { Loader2, AlertCircle } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -7,36 +7,27 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
-import { useCurrency, CurrencyConflictError } from './CurrencyContext';
+import { useCurrency } from './CurrencyContext';
 
 export default function CurrencySelector() {
-  const { currency, allCurrencies, setCurrency, currencyInfo, loading } = useCurrency();
+  const { currency, allCurrencies, setCurrency, currencyInfo, loading, canEdit } = useCurrency();
   const [switching, setSwitching] = useState(false);
-  const [conflict, setConflict] = useState<CurrencyConflictError | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const handleChange = async (code: string) => {
     if (code === currency) return;
     setSwitching(true);
+    setError(null);
     try {
       await setCurrency(code);
     } catch (err) {
-      if (err instanceof CurrencyConflictError) {
-        setConflict(err);
-      }
+      // Surface the failure instead of silently reverting (the old behaviour
+      // swallowed the error, so the control just "blinked" back to the prior
+      // currency with no explanation).
+      const axiosErr = err as { response?: { data?: { error?: string } } };
+      setError(axiosErr?.response?.data?.error || 'Failed to change currency');
     } finally {
       setSwitching(false);
-    }
-  };
-
-  const handleForceSwitch = async () => {
-    if (!conflict) return;
-    setSwitching(true);
-    try {
-      await setCurrency(conflict.conflict.currency, true);
-    } finally {
-      setSwitching(false);
-      setConflict(null);
     }
   };
 
@@ -49,9 +40,18 @@ export default function CurrencySelector() {
     );
   }
 
-  const conflictDescription = conflict
-    ? `${conflict.conflict.affected_tokens.length} manual token price(s) do not have a price set for ${conflict.conflict.currency.toUpperCase()}. Affected: ${conflict.conflict.affected_tokens.map(t => t.symbol).join(', ')}. These tokens will BLOCK ALL TRANSACTIONS until prices are configured for this currency.`
-    : '';
+  // Currency is a per-org setting (RD-1158): editable when an org is in scope,
+  // read-only otherwise (e.g. the system Token Prices view with no org).
+  if (!canEdit) {
+    return (
+      <div className="flex items-center gap-2" data-testid="currency-selector">
+        <span className="text-sm text-[#6B7280]">Currency:</span>
+        <span className="text-sm font-medium">
+          {currencyInfo?.symbol} {currency.toUpperCase()}
+        </span>
+      </div>
+    );
+  }
 
   return (
     <div className="flex items-center gap-2">
@@ -82,15 +82,12 @@ export default function CurrencySelector() {
         </SelectContent>
       </Select>
 
-      <ConfirmDialog
-        open={!!conflict}
-        onOpenChange={(open) => { if (!open) setConflict(null); }}
-        title="Currency Switch Warning"
-        description={conflictDescription}
-        onConfirm={handleForceSwitch}
-        confirmLabel="Switch Anyway"
-        variant="warning"
-      />
+      {error && (
+        <span className="flex items-center gap-1 text-xs text-error" title={error} role="alert">
+          <AlertCircle className="w-3 h-3 shrink-0" />
+          <span className="max-w-[220px] truncate">{error}</span>
+        </span>
+      )}
     </div>
   );
 }

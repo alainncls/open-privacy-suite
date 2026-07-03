@@ -52,6 +52,8 @@ var secretKeys = map[string]bool{
 	"OPERATOR_API_TOKEN":         true, // restricted admin bearer token (X-Admin-Token); grants org create + org-admin minting (RD-1132)
 	"AZURE_AD_CLIENT_SECRET":     true,
 	"DATABASE_URL":               true, // bears a password in the DSN
+	"AUDIT_DATABASE_URL":         true, // separate append-only audit DB, restricted-role DSN (RD-1147)
+	"AUDIT_ADMIN_DATABASE_URL":   true, // separate append-only audit DB, admin/owner DSN (RD-1147)
 	"EXPLORER_DATABASE_URL":      true, // bears a password in the DSN
 	"REDIS_URL":                  true, // bears a password in the DSN
 	"REDIS_PASSWORD":             true,
