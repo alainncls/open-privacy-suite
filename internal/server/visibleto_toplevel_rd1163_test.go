@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -26,6 +28,62 @@ func (f fakeEthResolver) GetDIDByEthAddress(_ context.Context, addr string) (str
 		return "", f.err
 	}
 	return f.m[strings.ToLower(addr)], nil
+}
+
+// countingEthResolver records how many address lookups happen — used to prove
+// the over-cap guard resolves nothing (RD-1163 amplification fix).
+type countingEthResolver struct{ calls *int }
+
+func (c countingEthResolver) GetDIDByEthAddress(_ context.Context, addr string) (string, error) {
+	*c.calls++
+	return "did:test:" + strings.ToLower(addr), nil
+}
+
+// TestResolveTopLevelVisibleTo_CapBeforeResolve_RD1163 pins the fix for the
+// Copilot amplification finding on PR #364: an over-cap raw list is rejected
+// with a 400 BEFORE any address is resolved (zero DB lookups), so a client
+// cannot drive one GetDIDByEthAddress query per address for a list bounded only
+// by the request body size. A within-cap list resolves with lookups bounded by
+// visibleToMaxSize.
+func TestResolveTopLevelVisibleTo_CapBeforeResolve_RD1163(t *testing.T) {
+	addrs := func(n int) []string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = fmt.Sprintf("0x%040x", i+1) // 0x + 40 hex → valid isEthAddress, all distinct
+		}
+		return out
+	}
+
+	t.Run("over cap: rejected before any resolution", func(t *testing.T) {
+		calls := 0
+		got, capErr := resolveTopLevelVisibleTo(context.Background(), countingEthResolver{&calls}, addrs(visibleToMaxSize+1))
+		if capErr == nil {
+			t.Fatal("expected a 400 ProcessError for an over-cap list, got nil")
+		}
+		if capErr.StatusCode != http.StatusBadRequest {
+			t.Errorf("StatusCode = %d, want %d", capErr.StatusCode, http.StatusBadRequest)
+		}
+		if got != nil {
+			t.Errorf("expected nil result on reject, got %v", got)
+		}
+		if calls != 0 {
+			t.Errorf("resolver called %d times; must be 0 (no DB work before the cap check)", calls)
+		}
+	})
+
+	t.Run("at cap: resolves, lookups bounded by cap", func(t *testing.T) {
+		calls := 0
+		got, capErr := resolveTopLevelVisibleTo(context.Background(), countingEthResolver{&calls}, addrs(visibleToMaxSize))
+		if capErr != nil {
+			t.Fatalf("unexpected error at cap: %+v", capErr)
+		}
+		if len(got) != visibleToMaxSize {
+			t.Errorf("resolved %d DIDs, want %d", len(got), visibleToMaxSize)
+		}
+		if calls > visibleToMaxSize {
+			t.Errorf("resolver called %d times; must be <= %d", calls, visibleToMaxSize)
+		}
+	})
 }
 
 func eqStrs(a, b []string) bool {

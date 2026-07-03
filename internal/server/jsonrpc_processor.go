@@ -754,7 +754,11 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 		if r, ok := p.rbacAccessCtrl.Store().(ethAddressResolver); ok {
 			resolver = r
 		}
-		visibleTo = unionVisibleToDIDs(paramDIDs, resolveVisibleToEntries(ctx, resolver, topRaw))
+		resolvedTop, capErr := resolveTopLevelVisibleTo(ctx, resolver, topRaw)
+		if capErr != nil {
+			return &ProcessResult{Error: capErr}
+		}
+		visibleTo = unionVisibleToDIDs(paramDIDs, resolvedTop)
 		if len(visibleTo) > visibleToMaxSize {
 			return &ProcessResult{
 				Error: &ProcessError{
@@ -2050,7 +2054,11 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	if r, ok := p.rbacAccessCtrl.Store().(ethAddressResolver); ok {
 		vtResolver = r
 	}
-	rawTxVisibleTo := unionVisibleToDIDs(paramDIDs, resolveVisibleToEntries(ctx, vtResolver, topRaw))
+	resolvedTop, capErr := resolveTopLevelVisibleTo(ctx, vtResolver, topRaw)
+	if capErr != nil {
+		return &ProcessResult{Error: capErr}
+	}
+	rawTxVisibleTo := unionVisibleToDIDs(paramDIDs, resolvedTop)
 	if len(rawTxVisibleTo) > visibleToMaxSize {
 		return &ProcessResult{
 			Error: &ProcessError{
@@ -3408,6 +3416,23 @@ func resolveVisibleToEntries(ctx context.Context, resolver ethAddressResolver, e
 		out = append(out, did)
 	}
 	return out
+}
+
+// resolveTopLevelVisibleTo bounds the amplification risk flagged in RD-1163
+// review: it rejects an over-cap raw list BEFORE resolving any entry, so a
+// client cannot drive one GetDIDByEthAddress DB lookup per address for a list
+// bounded only by the request body size (MaxRequestBodySize, ~1MB). Within the
+// cap it resolves DIDs + ETH addresses fail-closed (see resolveVisibleToEntries),
+// so the number of address lookups is bounded by visibleToMaxSize. Returns a 400
+// ProcessError when the raw entry count exceeds visibleToMaxSize.
+func resolveTopLevelVisibleTo(ctx context.Context, resolver ethAddressResolver, topRaw []string) ([]string, *ProcessError) {
+	if len(topRaw) > visibleToMaxSize {
+		return nil, &ProcessError{
+			StatusCode: http.StatusBadRequest,
+			Message:    fmt.Sprintf("visibleTo list exceeds maximum size of %d entries", visibleToMaxSize),
+		}
+	}
+	return resolveVisibleToEntries(ctx, resolver, topRaw), nil
 }
 
 // isEthAddress reports whether s is a 0x-prefixed 20-byte hex address.
