@@ -586,37 +586,52 @@ Tests live alongside the redaction code in `internal/explorer/redaction/*_test.g
 
 ## 7. visibleTo — Per-Transaction Visibility Grants
 
-The `visibleTo` parameter (renamed from `logVisibleTo`) allows a transaction sender to grant full transaction and log visibility to specific DIDs.
+The `visibleTo` parameter lets a transaction sender grant full transaction and log visibility to specific recipients.
 
 ### Usage
 
-When sending a transaction via `eth_sendTransaction` or `eth_sendRawTransaction`, include a `visibleTo` field with an array of DIDs:
+**Recommended (RD-1163): a top-level `visibleTo` field on the JSON-RPC request** — a sibling of `params` — on either `eth_sendTransaction` or `eth_sendRawTransaction`. `privateFor` is accepted as an alias (Quorum/Tessera/Besu compatibility). Recipients may be **DIDs and/or ETH addresses**; addresses are resolved to their linked DID via `eth_address_links` — **fail-closed**: an address with no linked DID is dropped, never widening access.
 
 ```json
 {
-  "method": "eth_sendTransaction",
-  "params": [{
-    "from": "0x...",
-    "to": "0x...",
-    "data": "0x...",
-    "visibleTo": ["did:privado:alice", "did:privado:bob"]
-  }]
-}
-```
-
-For raw transactions, pass it as a second parameter:
-
-```json
-{
+  "jsonrpc": "2.0", "id": 1,
   "method": "eth_sendRawTransaction",
-  "params": ["0xf86c...", {"visibleTo": ["did:privado:alice"]}]
+  "params": ["0xf86c..."],
+  "visibleTo": ["did:privado:alice", "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"]
 }
 ```
+
+`privateFor` alias (identical semantics):
+
+```json
+{
+  "jsonrpc": "2.0", "id": 1,
+  "method": "eth_sendRawTransaction",
+  "params": ["0xf86c..."],
+  "privateFor": ["0x70997970C51812dc3A010C7d01b50e0d17dc79C8"]
+}
+```
+
+The top-level form is preferred: it works with standard Ethereum client libraries (which cannot express extra `params` on a standardized method) and matches the industry convention for per-tx privacy metadata.
+
+**Back-compat (param-embedded, DIDs only)** — still supported. `eth_sendTransaction` inside the tx object (`params[0]`):
+
+```json
+{"method":"eth_sendTransaction","params":[{"from":"0x...","to":"0x...","data":"0x...","visibleTo":["did:privado:alice"]}]}
+```
+
+`eth_sendRawTransaction` as a second param (`params[1]`):
+
+```json
+{"method":"eth_sendRawTransaction","params":["0xf86c...",{"visibleTo":["did:privado:alice"]}]}
+```
+
+All present forms are **unioned and deduped**; the combined list is capped at 32 recipients (`server.visibleToMaxSize`).
 
 ### Behavior
 
-- The `visibleTo` field is stripped before forwarding to the node (never sent on-chain).
-- The DID list is stored in `tx_visible_to` with the resulting tx hash.
+- All `visibleTo`/`privateFor` fields (top-level and param-embedded) are stripped before forwarding to the node (never sent on-chain).
+- Recipients are normalised to DIDs (ETH addresses resolved via `eth_address_links`, fail-closed) and the resulting DID list is stored in `tx_visible_to` with the resulting tx hash.
 - **Explorer views**: Transactions with `visibleTo` grants appear in regular Transactions and Token Transfers pages for the listed DIDs. The `buildVisibilityFilter` includes these tx hashes as an override to address-based filtering.
 - **JSON-RPC filtering**: Listed DIDs can see event logs from these transactions via `eth_getLogs`, even when `must_be=self` param rules would otherwise filter them. This extends (never restricts) existing access.
 - **Transaction and receipt access**: `visibleTo` overrides participant checks for both `eth_getTransactionByHash` and `eth_getTransactionReceipt`. A listed DID receives the full transaction/receipt even if they are not a from/to participant — the sender explicitly chose to share this transaction.
