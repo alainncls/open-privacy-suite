@@ -120,9 +120,10 @@ func TestLoadConfigFile_SecretKeyRejected(t *testing.T) {
 	// full-power ADMIN_API_TOKEN and the restricted OPERATOR_API_TOKEN
 	// (RD-1132/RD-1140), both sent as X-Admin-Token, SIEM_AUTH_HEADER — the
 	// verbatim outbound Authorization header to the SIEM webhook (RD-1141) — and
-	// AUDIT_CHECKPOINT_KEY, the HMAC key signing audit-chain checkpoints (RD-1112).
+	// AUDIT_CHECKPOINT_KEY, the HMAC key signing audit-chain checkpoints (RD-1112),
+	// and the RD-1147 separate-audit-database DSNs (they bear a password).
 	const secretValue = "super-secret-token-value-DO-NOT-LEAK"
-	for _, key := range []string{"ADMIN_API_TOKEN", "OPERATOR_API_TOKEN", "SIEM_AUTH_HEADER", "AUDIT_CHECKPOINT_KEY"} {
+	for _, key := range []string{"ADMIN_API_TOKEN", "OPERATOR_API_TOKEN", "SIEM_AUTH_HEADER", "AUDIT_CHECKPOINT_KEY", "AUDIT_DATABASE_URL", "AUDIT_ADMIN_DATABASE_URL"} {
 		t.Run(key, func(t *testing.T) {
 			resetFileConfig(t)
 			path := writeConfigFile(t, "version = 1\nBASE_URL = \"https://ok\"\n"+key+" = \""+secretValue+"\"\n")
