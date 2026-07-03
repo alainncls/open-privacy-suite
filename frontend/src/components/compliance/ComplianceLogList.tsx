@@ -227,9 +227,16 @@ export default function ComplianceLogList() {
                     {log.amount_fiat != null ? formatAmount(log.amount_fiat) : '—'}
                   </TableCell>
                   <TableCell>
-                    <Badge variant={log.decision === 'allowed' ? 'success' : 'destructive'}>
-                      {log.decision}
-                    </Badge>
+                    <div className="flex items-center gap-1.5">
+                      <Badge variant={log.decision === 'allowed' ? 'success' : 'destructive'}>
+                        {log.decision}
+                      </Badge>
+                      {log.would_block && log.decision === 'allowed' && (
+                        <Badge variant="warning" title="Allowed in monitor mode — would have been blocked under enforce">
+                          Would block
+                        </Badge>
+                      )}
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -342,6 +349,15 @@ export default function ComplianceLogList() {
                     {selectedLog.decision}
                   </Badge>
                 </div>
+
+                {selectedLog.would_block && selectedLog.decision === 'allowed' && (
+                  <>
+                    <span className="text-neutral-500 font-medium">Monitor mode</span>
+                    <div>
+                      <Badge variant="warning">Would have blocked</Badge>
+                    </div>
+                  </>
+                )}
 
                 {selectedLog.denial_reason && (
                   <>
