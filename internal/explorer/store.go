@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/lib/pq"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/lib/pq"
 )
 
 type Store struct {
@@ -237,7 +237,7 @@ func (s *Store) GetBlocksFiltered(ctx context.Context, limit int, beforeBlock *u
 		FROM transactions t 
 		WHERE t.block_number = ANY($%d)%s 
 		GROUP BY t.block_number`, nextArg, visClause)
-	
+
 	args := append(visArgs, pq.Array(blockNums))
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -593,6 +593,12 @@ type VisibilityFilter struct {
 	AllPrivate       bool     // when true, use allowlist mode (VisibleAddresses)
 	VisibleAddresses []string // allowlist mode: addresses with VisibilityFull
 	VisibleTxHashes  []string // tx hashes that are always visible (visibleTo override)
+	// ParticipantTxHashes is a LABEL-ONLY subset of VisibleTxHashes: hashes
+	// added by the RD-1009 transfer-participant union (visible because the
+	// viewer participates in the tx), NOT genuine visibleTo shares. It does
+	// not affect SQL filtering or row survival — it only lets the redactor
+	// label a revealed counterparty "Counterparty" vs "Shared" (RD-1155).
+	ParticipantTxHashes []string
 }
 
 // isFilterActive returns true if the filter has any effect.
