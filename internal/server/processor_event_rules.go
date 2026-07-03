@@ -67,7 +67,7 @@ func (p *JSONRPCProcessor) contractABIProvider(ctx context.Context) rbac.ABIProv
 // inspecting the contract's actual owning org first. See the
 // threat-model justification in the spec:
 //
-//   site/src/app/docs/rbac/page.mdx — "Registered (other org) → Denied"
+//	site/src/app/docs/rbac/page.mdx — "Registered (other org) → Denied"
 //
 // The function de-duplicates addresses, caches per-org permission
 // lookups within a single call, and returns an empty map on any error.
@@ -245,6 +245,92 @@ func (p *JSONRPCProcessor) buildVisibleToUnlockableMap(ctx context.Context, view
 		}
 		if rbac.IsViewerEligibleForVisibleToUnlock(ctx, p.rbacAccessCtrl, viewerDID, addrLower) {
 			out[addrLower] = true
+		}
+	}
+	return out
+}
+
+// participantResolveMaxTxs caps how many unique transactions an eth_getLogs
+// response may reference before RD-1162 participant admission is skipped for
+// that response. Resolving senders costs one batched upstream round trip whose
+// payload grows with the unique-tx count; beyond the cap we fall back to
+// pre-RD-1162 behaviour (address/event-rule/visibleTo only) rather than issue an
+// unbounded batch. Skips are logged.
+const participantResolveMaxTxs = 256
+
+// buildParticipantTxHashes resolves, for an eth_getLogs response, the set of the
+// response's transaction hashes (lowercase) that the caller participated in —
+// their linked address is the tx `from` or `to` (RD-1162). FilterEventLogs uses
+// this to admit logs of the caller's own transactions even when the event
+// carries no address of theirs, bounded there by contract-grant access.
+//
+// Log entries do not carry the sender, so each unique tx hash is resolved via a
+// single batched eth_getTransactionByHash call to the upstream node (bypassing
+// the client-facing batch rejection — this is a proxy→node call). Returns an
+// empty map (never nil-panics on lookup) when the caller has no linked
+// addresses, there are no tx hashes, the unique-tx count exceeds
+// participantResolveMaxTxs, or the upstream resolution fails — all fail toward
+// the pre-RD-1162 filtering, never toward over-exposure.
+func (p *JSONRPCProcessor) buildParticipantTxHashes(addrs []string, responseBody []byte) map[string]bool {
+	out := map[string]bool{}
+	if len(addrs) == 0 || p.proxy == nil {
+		return out
+	}
+	hashes := extractTxHashesFromResponse(responseBody)
+	if len(hashes) == 0 {
+		return out
+	}
+	if len(hashes) > participantResolveMaxTxs {
+		slog.Warn("RD-1162: getLogs response references too many txs to resolve senders; skipping participant admission",
+			"unique_txs", len(hashes), "cap", participantResolveMaxTxs)
+		return out
+	}
+
+	addrSet := make(map[string]bool, len(addrs))
+	for _, a := range addrs {
+		addrSet[strings.ToLower(a)] = true
+	}
+
+	// One batched eth_getTransactionByHash for all unique hashes. Results are
+	// matched by the returned tx's own hash, so batch ordering is irrelevant.
+	batch := make([]map[string]any, 0, len(hashes))
+	for i, h := range hashes {
+		batch = append(batch, map[string]any{
+			"jsonrpc": "2.0",
+			"method":  "eth_getTransactionByHash",
+			"params":  []any{h},
+			"id":      i,
+		})
+	}
+	reqBody, err := json.Marshal(batch)
+	if err != nil {
+		return out
+	}
+	respBody, _, err := p.proxy.Forward(reqBody)
+	if err != nil {
+		slog.Warn("RD-1162: failed to resolve tx senders for participant admission", "error", err)
+		return out
+	}
+
+	var results []struct {
+		Result *struct {
+			Hash string `json:"hash"`
+			From string `json:"from"`
+			To   string `json:"to"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(respBody, &results); err != nil {
+		slog.Warn("RD-1162: failed to parse tx-sender batch response", "error", err)
+		return out
+	}
+	for _, r := range results {
+		if r.Result == nil {
+			continue
+		}
+		from := strings.ToLower(r.Result.From)
+		to := strings.ToLower(r.Result.To)
+		if addrSet[from] || (to != "" && addrSet[to]) {
+			out[strings.ToLower(r.Result.Hash)] = true
 		}
 	}
 	return out

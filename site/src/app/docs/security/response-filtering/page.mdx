@@ -92,7 +92,7 @@ Transaction receipts contain execution results including status, gas used, and -
 | Yes | Receipt (but logs are filtered to only show those involving the user, and `logsBloom` is zeroed) |
 | No | `null` |
 
-Non-participants receive `null`, consistent with `eth_getTransactionByHash`. Importantly, even when a user is a participant, the receipt's `logs` array is filtered using the same strict rules as `eth_getLogs`, and the `logsBloom` is zeroed out to prevent leaking the total number or presence of redacted logs.
+Non-participants receive `null`, consistent with `eth_getTransactionByHash`. Even when a user is a participant, the receipt's `logs` array is filtered using the same rules as `eth_getLogs` (see below), and the `logsBloom` is zeroed out to prevent leaking the total number or presence of redacted logs. Note that "the same rules as `eth_getLogs`" includes the own-transaction rule below: a participant sees every log of their own transaction that was emitted by a contract they have access to — including events that do not carry their address (e.g. an event keyed by a business identifier).
 
 ---
 
@@ -118,7 +118,18 @@ For each log entry in the response:
 1. **Check all four topics including `topics[0]`** -- for standard (non-anonymous) events, `topics[0]` is the event signature hash (e.g., `keccak256("Transfer(address,address,uint256)")`). Because this is not a zero-padded address, the address-pattern check naturally skips it. For anonymous events (declared with the `anonymous` keyword), `topics[0]` may contain an indexed address parameter and is therefore scanned.
 2. **Check `topics[1]` through `topics[3]`** -- for each topic, extract the lower 20 bytes as an Ethereum address (topics are 32 bytes; addresses are the last 20 bytes, zero-padded on the left).
 3. **Compare each extracted address** against the user's linked ETH addresses (case-insensitive).
-4. **Keep the log entry** if at least one topic address matches a linked address. **Remove it** otherwise.
+4. **Keep the log entry** if at least one topic address matches a linked address. Otherwise, apply the own-transaction rule below; if that also does not apply, **remove it**.
+
+### Own-transaction logs
+
+An event does not always name its stakeholders in an indexed address topic — some contracts emit events keyed only by a business identifier (for example `PaymentCompleted(bytes32 paymentKey, string paymentId)`). Address matching alone would hide such an event from the very people it concerns, including the account that submitted the transaction.
+
+To close this, a user also sees the logs of **transactions they participated in** (their linked address is the transaction's `from` or `to`), for logs emitted by contracts they have access to — even when the event carries no address of theirs. This reveals nothing new: the user submitted (or received) the transaction and already knows its contents.
+
+This admission is bounded:
+
+- It applies **only to contracts the user has a grant on**. A log emitted by a contract the user cannot otherwise see stays hidden, even if it appeared in one of their transactions (for example, an internal call into another organization's private contract).
+- It does **not** relax the ABI and dynamic-payload requirements. An event whose contract has no registered ABI, or that carries a dynamic non-indexed parameter without the contract's `events_allow_dynamic_payload` setting enabled, remains hidden — those protections guard against leaking addresses embedded in the payload, and they apply to participants too.
 
 ### Example: ERC-20 Transfer event
 

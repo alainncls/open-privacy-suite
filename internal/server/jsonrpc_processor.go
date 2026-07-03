@@ -1057,6 +1057,18 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		// still has visibleTo entries. The filter handles this via visCtx.
 		perms := p.resolvePermsForFilter(ctx, result)
 		visCtx := p.buildTxVisibilityContext(ctx, req.UserID, responseBody)
+		// RD-1162: admit logs of transactions the caller participated in
+		// (their linked address is the tx from/to) even when the event carries
+		// no address of theirs — bounded in FilterEventLogs by contract-grant
+		// access. Senders aren't present in log entries, so resolve them via a
+		// batched upstream eth_getTransactionByHash (a no-op when the caller has
+		// no linked addresses or the unique-tx count exceeds the cap).
+		if participants := p.buildParticipantTxHashes(addrs, responseBody); len(participants) > 0 {
+			if visCtx == nil {
+				visCtx = &rbac.TxVisibilityContext{ViewerDID: req.UserID}
+			}
+			visCtx.ParticipantTxHashes = participants
+		}
 		// Org-scoped admin-bypass map, indexed by each log's emitting
 		// contract. Takes the internal user UUID (result.UserID), not
 		// the JWT DID — viewerAdminContracts queries user_memberships

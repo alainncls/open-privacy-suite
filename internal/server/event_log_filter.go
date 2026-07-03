@@ -227,6 +227,29 @@ func FilterReceiptLogsWithEventRules(
 	if isParticipant || isVisibleTo || isAdminOnTo {
 		id := rpcResponseID(responseBody)
 
+		// RD-1162: a participant (from/to) of this tx sees ALL of its logs on
+		// contracts they can access — not just logs carrying their address.
+		// Inject the tx hash into the participant set so FilterEventLogs admits
+		// address-less events (e.g. PaymentCompleted) instead of stripping them
+		// (bounded there by contract-grant access). Envelope participation was
+		// already established above; here we propagate it to the log filter,
+		// closing the "participant enough for the receipt, not for its logs"
+		// asymmetry.
+		if isParticipant {
+			var txMeta struct {
+				TransactionHash string `json:"transactionHash"`
+			}
+			if json.Unmarshal(raw, &txMeta) == nil && txMeta.TransactionHash != "" {
+				if visCtx == nil {
+					visCtx = &rbac.TxVisibilityContext{}
+				}
+				if visCtx.ParticipantTxHashes == nil {
+					visCtx.ParticipantTxHashes = make(map[string]bool, 1)
+				}
+				visCtx.ParticipantTxHashes[strings.ToLower(txMeta.TransactionHash)] = true
+			}
+		}
+
 		// Single-pass: applyEventRulesToReceipt calls FilterEventLogs which
 		// handles both event-rule and default address-based filtering.
 		// Pass the full per-log admin map so the per-log admin bypass in
@@ -321,4 +344,3 @@ func receiptWithEmptyLogs(rawReceipt json.RawMessage) json.RawMessage {
 	}
 	return out
 }
-
