@@ -22,9 +22,10 @@ import (
 // checks run against a controlled identity.
 //
 // Test headers:
-//   X-Test-Auth-Method: "jwt_admin" | "admin_token" | "" (empty = unauth)
-//   X-Test-Admin-Subject: <admin DID>  (jwt_admin only)
-//   X-Test-Admin-Org-IDs: <orgID,orgID2>  (jwt_admin only; comma-separated)
+//
+//	X-Test-Auth-Method: "jwt_admin" | "admin_token" | "" (empty = unauth)
+//	X-Test-Admin-Subject: <admin DID>  (jwt_admin only)
+//	X-Test-Admin-Org-IDs: <orgID,orgID2>  (jwt_admin only; comma-separated)
 type impersonationTestServer struct {
 	*testServerRBAC
 }
@@ -193,6 +194,24 @@ func TestImpersonation_RejectsSuperAdminToken(t *testing.T) {
 	w := impersonationGET(t, f.srv,
 		impersonatePath(f.userDID, f.orgID, "/api/v1/explorer/chain-id"),
 		"admin_token", "", nil)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, w.Body.String(), "X-Admin-Token credentials are not authorised")
+}
+
+// TestImpersonation_RejectsOperatorToken (RD-1132, RD-1159 Phase 2) is the
+// explicit operator-token companion to TestImpersonation_RejectsSuperAdminToken.
+// The gate at impersonation.go:203 rejects
+// `auth_method == "admin_token" || auth_method == "operator_token"`, but the pre-existing test
+// only drove the FULL admin_token. RD-1132 introduced the restricted
+// operator_token principal, which — like the full token — bypasses
+// orgScopingMiddleware and therefore must be explicitly barred from
+// impersonation (reading tenant data AS a user). Pins the operator arm of the
+// OR so it can't silently regress.
+func TestImpersonation_RejectsOperatorToken(t *testing.T) {
+	f := setupImpersonationFixture(t)
+	w := impersonationGET(t, f.srv,
+		impersonatePath(f.userDID, f.orgID, "/api/v1/explorer/chain-id"),
+		"operator_token", "", nil)
 	assert.Equal(t, http.StatusForbidden, w.Code)
 	assert.Contains(t, w.Body.String(), "X-Admin-Token credentials are not authorised")
 }
@@ -385,10 +404,10 @@ func TestImpersonation_SetsViewerOverrideContext(t *testing.T) {
 	imp.Use(f.srv.impersonationGateMiddleware())
 	imp.GET("/probe", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
-			"viewer":         getEffectiveViewerDID(c),
-			"impersonating":  isImpersonating(c),
-			"impersonator":   c.GetString(impersonationActorDIDContextKey),
-			"resolved_org":   c.GetString(impersonationOrgIDContextKey),
+			"viewer":        getEffectiveViewerDID(c),
+			"impersonating": isImpersonating(c),
+			"impersonator":  c.GetString(impersonationActorDIDContextKey),
+			"resolved_org":  c.GetString(impersonationOrgIDContextKey),
 		})
 	})
 
@@ -426,9 +445,9 @@ func TestImpersonation_StripsDefensiveHeaders(t *testing.T) {
 	imp.Use(f.srv.impersonationGateMiddleware())
 	imp.GET("/echo-headers", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
-			"admin_token":  c.Request.Header.Get("X-Admin-Token"),
-			"imp_did":      c.Request.Header.Get("X-Impersonate-User-DID"),
-			"imp_token":    c.Request.Header.Get("X-Impersonate-Token"),
+			"admin_token": c.Request.Header.Get("X-Admin-Token"),
+			"imp_did":     c.Request.Header.Get("X-Impersonate-User-DID"),
+			"imp_token":   c.Request.Header.Get("X-Impersonate-Token"),
 		})
 	})
 
