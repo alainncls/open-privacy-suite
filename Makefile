@@ -116,6 +116,13 @@ test-go: test-unit test-e2e
 test-unit:
 	go test ./internal/... -v -p 1 -timeout 10m
 
+# RD-1112: verify the async audit buffer is usable by the non-root runtime user
+# in a fresh Docker named volume (the prod deploy scenario). Catches a broken
+# Dockerfile pre-own step that a plain image build / Go tests would not.
+.PHONY: verify-audit-buffer
+verify-audit-buffer:
+	@bash scripts/verify-audit-buffer-volume.sh
+
 # Minimum coverage threshold (percentage) - start at 45%, increase over time
 MIN_COVERAGE ?= 45
 

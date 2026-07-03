@@ -1,7 +1,12 @@
 package buffer
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -100,5 +105,34 @@ func TestBufferDrainAfterSeq(t *testing.T) {
 	}
 	if len(entries) != 5 || entries[0].Seq != 16 {
 		t.Fatalf("drain afterSeq broken: %d entries, first seq %d", len(entries), entries[0].Seq)
+	}
+}
+
+// TestOpenRejectsUnwritableDirWithActionableError covers the prod deploy failure
+// mode: the non-root runtime user can't write a root-owned volume. Open must
+// fail fast with an operator-actionable message (name the uid + the fix), not a
+// bare EACCES from deep inside Pebble. (RD-1112)
+func TestOpenRejectsUnwritableDirWithActionableError(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("running as root bypasses directory permissions; cannot simulate an unwritable dir")
+	}
+	// A read-only (r-x) parent: this process cannot create the buffer dir inside it.
+	ro := filepath.Join(t.TempDir(), "readonly")
+	if err := os.Mkdir(ro, 0o500); err != nil {
+		t.Fatalf("mkdir readonly: %v", err)
+	}
+
+	_, err := Open(filepath.Join(ro, "auditbuf"))
+	if err == nil {
+		t.Fatal("Open must fail when the buffer dir is not writable")
+	}
+	if !errors.Is(err, fs.ErrPermission) {
+		t.Errorf("error should wrap fs.ErrPermission, got: %v", err)
+	}
+	// The message must be operator-actionable: name the runtime uid and the fix.
+	for _, want := range []string{"not writable", "uid", "fsGroup"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error missing %q; got: %v", want, err)
+		}
 	}
 }
