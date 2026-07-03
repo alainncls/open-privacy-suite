@@ -1,4 +1,4 @@
--- 068_compliance_config_currency.sql
+-- 069_compliance_config_currency.sql
 --
 -- WHAT:  Adds a per-org `currency` column to compliance_config.
 --
