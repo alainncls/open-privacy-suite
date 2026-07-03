@@ -109,4 +109,35 @@ func TestCountAcrossPages(t *testing.T) {
 			t.Errorf("count = %d, want %d (one page counted, then bounded break)", got, perPage)
 		}
 	})
+
+	t.Run("backend that ignores the before cursor is not double-counted", func(t *testing.T) {
+		// Regression guard for the gRPC chain-indexer backend, which ignores
+		// `before` and re-serves the first page on every call. The page[0]
+		// guard must break BEFORE counting the re-served page, so the first
+		// page is counted exactly once (the bug counted it on every fetch).
+		wantFirstPage := 0
+		for _, it := range feed[:perPage] {
+			if it.vis {
+				wantFirstPage++
+			}
+		}
+		calls := 0
+		fetchIgnoresBefore := func(_ *uint64) ([]item, error) {
+			calls++
+			// Always return the newest page, regardless of `before`.
+			return feed[:perPage], nil
+		}
+		got, err := countAcrossPages(fetchIgnoresBefore, cursorOf, survivors, 10000)
+		if err != nil {
+			t.Fatalf("countAcrossPages: %v", err)
+		}
+		if got != wantFirstPage {
+			t.Errorf("count = %d, want %d (re-served first page must be counted once, not doubled)", got, wantFirstPage)
+		}
+		// Two fetches expected: the first counts, the second trips the guard
+		// and breaks. Without the guard the loop would scan to maxScan.
+		if calls != 2 {
+			t.Errorf("fetch calls = %d, want 2 (count first page, then guard breaks on re-serve)", calls)
+		}
+	})
 }

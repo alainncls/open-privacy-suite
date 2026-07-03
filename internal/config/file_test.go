@@ -116,13 +116,14 @@ func TestLoadConfigFile_MissingFilePathErrors(t *testing.T) {
 func TestLoadConfigFile_SecretKeyRejected(t *testing.T) {
 	// Secrets must never be sourced from the file — the proxy refuses to load a
 	// file containing one, naming the offending key (but NOT its value), and
-	// stays in pure-env mode. Cover all three secret-class credentials: the
+	// stays in pure-env mode. Cover all four secret-class credentials: the
 	// full-power ADMIN_API_TOKEN and the restricted OPERATOR_API_TOKEN
 	// (RD-1132/RD-1140), both sent as X-Admin-Token, SIEM_AUTH_HEADER — the
 	// verbatim outbound Authorization header to the SIEM webhook (RD-1141) — and
-	// the RD-1147 separate-audit-database DSNs (they bear a password).
+	// AUDIT_CHECKPOINT_KEY, the HMAC key signing audit-chain checkpoints (RD-1112),
+	// and the RD-1147 separate-audit-database DSNs (they bear a password).
 	const secretValue = "super-secret-token-value-DO-NOT-LEAK"
-	for _, key := range []string{"ADMIN_API_TOKEN", "OPERATOR_API_TOKEN", "SIEM_AUTH_HEADER", "AUDIT_DATABASE_URL", "AUDIT_ADMIN_DATABASE_URL"} {
+	for _, key := range []string{"ADMIN_API_TOKEN", "OPERATOR_API_TOKEN", "SIEM_AUTH_HEADER", "AUDIT_CHECKPOINT_KEY", "AUDIT_DATABASE_URL", "AUDIT_ADMIN_DATABASE_URL"} {
 		t.Run(key, func(t *testing.T) {
 			resetFileConfig(t)
 			path := writeConfigFile(t, "version = 1\nBASE_URL = \"https://ok\"\n"+key+" = \""+secretValue+"\"\n")
