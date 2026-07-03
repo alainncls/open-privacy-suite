@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"strings"
 	"sync"
@@ -239,18 +240,40 @@ func (d *DB) Close() error {
 
 // Migrate runs all pending database migrations using tern.
 func (d *DB) Migrate(ctx context.Context) error {
+	return d.migrateFS(ctx, migrations.FS, "schema_version")
+}
+
+// MigrateAuditOnly applies the LEAN, STANDALONE audit-database migration set
+// (RD-1147) against the audit database's admin/owner pool. It builds the entire
+// audit schema from an EMPTY database — the roles, access_logs (+ its hash-chain
+// tables), and the append-only seal — and does NOT run the main migration FS, so
+// the audit DB never gets users / contracts / groups / rbac_audit_log / etc.
+//
+// It uses a SEPARATE tern version table (schema_version_audit) so its sequence
+// is independent of the main schema. Call it against the audit DSN only; never
+// against the main DATABASE_URL (that would seal access_logs to INSERT-only in
+// the main DB and break the main-DB retention worker — but under RD-1147 the
+// main DB no longer even has access_logs, so this simply must not point at main).
+func (d *DB) MigrateAuditOnly(ctx context.Context, auditFS fs.FS) error {
+	return d.migrateFS(ctx, auditFS, "schema_version_audit")
+}
+
+// migrateFS runs the pending migrations in fsys, tracking applied versions in
+// the given tern version table. Kept private; callers use Migrate /
+// MigrateAuditOnly which pin the FS + version table together.
+func (d *DB) migrateFS(ctx context.Context, fsys fs.FS, versionTable string) error {
 	pgxConn, err := d.connectPgxUTC(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to connect for migrations: %w", err)
 	}
 	defer pgxConn.Close(ctx)
 
-	migrator, err := migrate.NewMigrator(ctx, pgxConn, "schema_version")
+	migrator, err := migrate.NewMigrator(ctx, pgxConn, versionTable)
 	if err != nil {
 		return fmt.Errorf("failed to create migrator: %w", err)
 	}
 
-	if err := migrator.LoadMigrations(migrations.FS); err != nil {
+	if err := migrator.LoadMigrations(fsys); err != nil {
 		return fmt.Errorf("failed to load migrations: %w", err)
 	}
 

@@ -49,18 +49,18 @@ type ContractStore interface {
 //
 // Returns a tri-state EventRulesResolution:
 //   - Wildcard == true                  ⇒ all events for this contract are
-//                                          visible to the viewer; allowlist
-//                                          is irrelevant. Mirrors the
-//                                          rbac.EventRulesField{"*"} state.
+//     visible to the viewer; allowlist
+//     is irrelevant. Mirrors the
+//     rbac.EventRulesField{"*"} state.
 //   - Wildcard == false, len(Rules) > 0 ⇒ allowlist mode; only listed
-//                                          topic0s pass.
+//     topic0s pass.
 //   - Wildcard == false, len(Rules) == 0 ⇒ **deny-all** (RD-842 / RD-888).
-//                                          Same as `event_rules: null` in
-//                                          the database — operator intent
-//                                          is "no events visible until
-//                                          rules are configured." Anonymous
-//                                          logs (no topic0) are also
-//                                          blocked in this mode.
+//     Same as `event_rules: null` in
+//     the database — operator intent
+//     is "no events visible until
+//     rules are configured." Anonymous
+//     logs (no topic0) are also
+//     blocked in this mode.
 //
 // Implementations MUST return the deny-all state when there is no
 // applicable grant for the viewer on the contract. **Never default to
@@ -584,6 +584,16 @@ type RedactOpts struct {
 	// the viewer (via the visibleTo param). Transactions matching these
 	// hashes are never dropped, and their addresses get full visibility.
 	VisibleTxHashes map[string]bool
+
+	// ParentParticipants are the parent transaction's from/to addresses,
+	// threaded into RedactInternalTransactions by the single-hash handler
+	// (/transactions/:hash/internal). Used ONLY for the RD-1122 per-side
+	// reveal: when one of the viewer's linked EOAs is a parent participant,
+	// the parent's two parties (already shown at the tx/Overview level) are
+	// revealed across nested trace frames so the originator's direct
+	// counterparty isn't over-redacted. Empty for the block- and
+	// address-scoped internal-tx handlers, which have no single parent tx.
+	ParentParticipants []string
 
 	// ViewerIsAdmin indicates the viewer has admin-level access (org admin
 	// or admin claim). Admins see all contract activity including txs from
@@ -1347,11 +1357,44 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 		}
 	}
 
+	// RD-1122: parent-tx participants, threaded from the single-hash handler.
+	// The viewer is a "parent participant" iff one of their linked EOAs is the
+	// parent tx's from or to — computed ONCE (mirrors RedactLogs' isParticipant).
+	// This is intentionally restricted to linked-EOA participation: disclosure-
+	// grant / visibleTo viewers are handled by the existing per-frame lens paths
+	// below, and must NOT trigger the parent-participant reveal (doing so would
+	// surface the parent's real counterparty under a pseudonymous lens — the
+	// RD-1079 leak class).
+	parentParticipantSet := make(map[string]bool, len(ropts.ParentParticipants))
+	for _, pa := range ropts.ParentParticipants {
+		if pa != "" {
+			parentParticipantSet[strings.ToLower(pa)] = true
+		}
+	}
+	viewerIsParentParticipant := false
+	for pa := range parentParticipantSet {
+		if viewerAddrs[pa] {
+			viewerIsParentParticipant = true
+			break
+		}
+	}
+
 	var result []InternalTransaction
 	for _, t := range itxs {
 		viewerIsFrom := t.From != "" && viewerAddrs[strings.ToLower(t.From)]
 		viewerIsTo := t.To != nil && *t.To != "" && viewerAddrs[strings.ToLower(*t.To)]
 		viewerIsParticipant := viewerIsFrom || viewerIsTo
+
+		// RD-1122 per-side parent-participant flags: a frame side qualifies for
+		// reveal ONLY when its own address is itself one of the parent's two
+		// parties. NEVER blanket-reveal a frame — a frame's `to` is the
+		// CALL/STATICCALL/DELEGATECALL target and is attacker-influenceable, so
+		// revealing the non-parent side of a `parentParty -> foreignOrgContract`
+		// frame would leak a foreign-org private address. Revealing exactly the
+		// parent's parties discloses nothing new (they are already shown at the
+		// tx/Overview level by the existing top-frame participant override).
+		fromIsParentParty := viewerIsParentParticipant && t.From != "" && parentParticipantSet[strings.ToLower(t.From)]
+		toIsParentParty := viewerIsParentParticipant && t.To != nil && *t.To != "" && parentParticipantSet[strings.ToLower(*t.To)]
 
 		// visibleTo override: an internal tx inherits its parent's allowlist
 		// membership. When the parent tx is in VisibleTxHashes (either because
@@ -1382,6 +1425,19 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 			if isNonIdentifiable(toLevel) {
 				toLevel = VisibilityFull
 			}
+		}
+
+		// RD-1122 per-side parent-participant reveal. Reveal ONLY the side whose
+		// address is itself a parent party (see fromIsParentParty/toIsParentParty
+		// above). Strictly narrower than the both-sides override above: it never
+		// promotes the non-parent side of a frame, so a deep
+		// `parentParty -> foreignOrgContract` frame keeps the foreign contract at
+		// its standing (Redacted/Hidden) level — no cross-org leak.
+		if fromIsParentParty && isNonIdentifiable(fromLevel) {
+			fromLevel = VisibilityFull
+		}
+		if toIsParentParty && isNonIdentifiable(toLevel) {
+			toLevel = VisibilityFull
 		}
 
 		// Disclosure-grant lens (same shape as RedactTransactions, see the
@@ -1449,6 +1505,10 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 		setMeta := func(addr string, baseLvl VisibilityLevel) {
 			aLower := strings.ToLower(addr)
 			if viewerIsParticipant && isNonIdentifiable(baseLvl) {
+				redacted.AddressMetadata[aLower] = ReasonParticipantOverride
+			} else if viewerIsParentParticipant && parentParticipantSet[aLower] && isNonIdentifiable(baseLvl) {
+				// RD-1122: revealed because it is a party of the parent tx the
+				// viewer participated in (already shown at the tx/Overview level).
 				redacted.AddressMetadata[aLower] = ReasonParticipantOverride
 			} else if txVisibleToViewer && isNonIdentifiable(baseLvl) {
 				redacted.AddressMetadata[aLower] = ReasonVisibleToGrant

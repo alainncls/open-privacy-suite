@@ -39,7 +39,7 @@ COMPLIANCE_DEFAULT_MODE = "enforce"
 **`version` is required.** The file must declare a top-level `version` (currently `1`). The proxy refuses to start on a missing or unsupported version, so a file written for a future schema fails loudly instead of being silently mis-read.
 
 <Callout variant="danger" title="Secrets are not allowed in the config file">
-Secrets — `JWT_SECRET`, `JWT_REFRESH_SECRET`, `ADMIN_API_TOKEN`, `OPERATOR_API_TOKEN`, `AZURE_AD_CLIENT_SECRET`, `DATABASE_URL`, `EXPLORER_DATABASE_URL`, `REDIS_URL` / `REDIS_PASSWORD`, `RPC_API_KEY`, `RPC_API_KEY_ENCRYPTION_KEY`, `OAUTH_FIRST_PARTY_CLIENTS` — must live in your environment or secrets manager, never in a plaintext config file. **The proxy refuses to start if it finds one of these in the file**, naming the offending key. Inject secrets via the environment, which overrides the file anyway.
+Secrets — `JWT_SECRET`, `JWT_REFRESH_SECRET`, `ADMIN_API_TOKEN`, `OPERATOR_API_TOKEN`, `AZURE_AD_CLIENT_SECRET`, `DATABASE_URL`, `AUDIT_DATABASE_URL`, `AUDIT_ADMIN_DATABASE_URL`, `EXPLORER_DATABASE_URL`, `REDIS_URL` / `REDIS_PASSWORD`, `RPC_API_KEY`, `RPC_API_KEY_ENCRYPTION_KEY`, `OAUTH_FIRST_PARTY_CLIENTS` — must live in your environment or secrets manager, never in a plaintext config file. **The proxy refuses to start if it finds one of these in the file**, naming the offending key. Inject secrets via the environment, which overrides the file anyway.
 </Callout>
 
 A fully-commented template lives at `config.example.toml` in the repository root — copy and trim it:
@@ -114,6 +114,25 @@ The access log is a tamper-evident hash chain (an ISO 27001 / SOC 2 detective co
 **Durable-buffer note:** with `AUDIT_BUFFER_DIR` set, an entry is durable on the local volume the instant the request returns, but only reaches the (replicated, backed-up) database when the sealer next runs. Keep the buffer on a durable/replicated volume and the seal interval short so the un-sealed window stays small.
 
 **Volume ownership:** the proxy runs as a non-root user (uid 1000), and the buffer open is **fail-hard** — if the directory isn't writable the backend will not start (with an error naming the uid). A fresh **Docker named volume** mounted at the image's pre-created buffer path (`/var/lib/pp/auditbuf`) inherits the right ownership automatically, so no `chown` is needed. On **Kubernetes**, set the pod's `securityContext.fsGroup: 1000` so the mounted volume is group-writable. For any other path or a bind mount, ensure the directory is writable by uid 1000 (owned by it, or group-writable via a matching `fsGroup`).
+
+### Separate append-only audit database
+
+The access log **always** lives in its own PostgreSQL database, separate from your main `DATABASE_URL`. This lets the running proxy **append** access-log rows but not rewrite or delete history. The main database has no access-log table at all. Two connection strings control it (both are secrets — keep them in the environment / your secrets manager, not the config file):
+
+<EnvTable vars={[
+  { name: "AUDIT_DATABASE_URL", default: "derived from DATABASE_URL", description: "Runtime connection string for the audit database. Should connect as the RESTRICTED database role — the one with INSERT + SELECT on access_logs but not UPDATE/DELETE. That role is what makes the append-only seal bite." },
+  { name: "AUDIT_ADMIN_DATABASE_URL", default: "derived from DATABASE_URL", description: "Admin/owner connection string for the same database. The proxy uses it to run the audit-database migrations at startup and to run retention pruning (which the restricted runtime role cannot do)." },
+]} />
+
+At startup the proxy migrates the audit database (as the admin DSN), then reads and writes all access-log data there.
+
+**Infra provisions the database; the proxy only migrates it.** The proxy **never** runs `CREATE DATABASE`. You (your infrastructure-as-code — Terraform / RDS / etc.) must provision the audit database and the restricted role before the proxy starts; the proxy then connects and applies the lean audit schema. In the dev stack the Postgres container does this provisioning for you (see `scripts/init-audit-db.sh`).
+
+**Default (derived) DSNs.** If you leave `AUDIT_DATABASE_URL` / `AUDIT_ADMIN_DATABASE_URL` unset, each is derived from `DATABASE_URL` by swapping the database name to `<name>_audit` on the same server, reusing `DATABASE_URL`'s credentials. This is convenient, but the derived DSN connects as the **owner**, so the append-only seal is **not** enforced on it. For production, set `AUDIT_DATABASE_URL` explicitly to the restricted role.
+
+**Deployment dependency — the restricted role is what makes this work.** The append-only guarantee comes from the *database role* the runtime DSN connects as, not from the proxy. `AUDIT_DATABASE_URL` **must** connect as the restricted role (`privacy_proxy_app`, which the audit-database migration grants INSERT + SELECT on `access_logs`, no UPDATE/DELETE). If it connects as the owner instead (including the derived default), the proxy still works but the seal does **nothing** — the owner can update and delete rows. `AUDIT_ADMIN_DATABASE_URL` is the owner DSN and is used only for migrations and retention pruning.
+
+**Resilience.** Set `AUDIT_BUFFER_DIR` (see above) so a transient audit-database outage does not block request handling: entries are written to a durable local buffer and sealed into the audit database by a background worker when it is reachable again.
 
 ---
 
