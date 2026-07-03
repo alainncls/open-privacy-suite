@@ -1065,10 +1065,10 @@ func (s *Server) auditGrantFullReveal(c *gin.Context, viewerDID, endpoint, targe
 		ResourceType:    rbac.ResourceTypeDisclosureGrant,
 		ResourceName:    endpoint,
 		NewValue: map[string]any{
-			"endpoint":                  endpoint,
-			"target":                    target,
-			"counterparties_revealed":   stats.GrantFullReveals,
-			"reveal_class":              "disclosure_grant_full_counterparty",
+			"endpoint":                endpoint,
+			"target":                  target,
+			"counterparties_revealed": stats.GrantFullReveals,
+			"reveal_class":            "disclosure_grant_full_counterparty",
 		},
 		IPAddress: c.ClientIP(),
 	}
@@ -1864,6 +1864,20 @@ func (s *Server) getExplorerTransactionInternal(c *gin.Context) {
 	}
 	viewerDID := s.getViewerDIDFromRequest(c)
 	opts := s.buildRedactOptsForViewer(c.Request.Context(), viewerDID)
+
+	// RD-1122: thread the parent tx's from/to so the viewer's direct
+	// counterparty (already shown at the tx/Overview level) isn't over-redacted
+	// in nested trace frames. Mirrors getExplorerTransactionLogs' participant
+	// override. The redaction engine reveals these addresses per-side and only
+	// to a viewer who is themselves a parent participant, so deeper foreign-org
+	// frames stay redacted.
+	if parentTx, perr := s.explorerStore.GetTransaction(c.Request.Context(), hash); perr == nil && parentTx != nil {
+		opts.ParentParticipants = append(opts.ParentParticipants, parentTx.From)
+		if parentTx.To != nil {
+			opts.ParentParticipants = append(opts.ParentParticipants, *parentTx.To)
+		}
+	}
+
 	redacted, err := s.explorerRedactor.RedactInternalTransactions(c.Request.Context(), itxs, viewerDID, opts)
 	if err != nil {
 		respondInternalErrorAndLog(c, "redaction failed",
