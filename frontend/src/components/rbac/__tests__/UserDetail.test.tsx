@@ -257,6 +257,50 @@ describe('UserDetail', () => {
       });
     });
 
+    it('shows an "Expires" badge for an active time-boxed membership and "Expired" for a lapsed one (RD-1157)', async () => {
+      const future = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+      const past = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      const base = {
+        user_id: 'user-1',
+        source: 'admin' as const,
+        created_at: '2024-01-01T00:00:00Z',
+        updated_at: '2024-01-01T00:00:00Z',
+      };
+      const grp = (id: string, name: string) => ({
+        id,
+        org_id: 'org-1',
+        parent_id: null,
+        slug: id,
+        name,
+        description: '',
+        depth: 0,
+        path: id,
+        created_at: '2024-01-01T00:00:00Z',
+        updated_at: '2024-01-01T00:00:00Z',
+      });
+
+      server.use(
+        http.get('/api/v1/admin/users/:userId/memberships', () => {
+          return HttpResponse.json([
+            { membership: { ...base, id: 'm-active', group_id: 'g-active', expires_at: future }, group: grp('g-active', 'Regulator Access'), expired: false },
+            { membership: { ...base, id: 'm-expired', group_id: 'g-expired', expires_at: past }, group: grp('g-expired', 'Auditor Access'), expired: true },
+          ]);
+        })
+      );
+
+      renderUserDetail();
+
+      await waitFor(() => {
+        expect(screen.getByText('Regulator Access')).toBeInTheDocument();
+        expect(screen.getByText('Auditor Access')).toBeInTheDocument();
+      });
+
+      // Active time-boxed grant → "Expires <date>"; lapsed grant → "Expired <date>".
+      // (Group names deliberately avoid the words so the matchers are unambiguous.)
+      expect(screen.getByText(/^Expires /)).toBeInTheDocument();
+      expect(screen.getByText(/^Expired /)).toBeInTheDocument();
+    });
+
     it('does NOT show memberships not in API response', async () => {
       // Return empty memberships
       server.use(

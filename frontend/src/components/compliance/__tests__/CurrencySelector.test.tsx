@@ -62,70 +62,45 @@ describe('CurrencySelector', () => {
   });
 
   describe('Interactions', () => {
-    it('calls API when currency is changed', async () => {
+    it('persists the org currency via the per-org compliance config (RD-1158)', async () => {
       let putCalled = false;
-      let putBody: { currency: string } | null = null;
+      let putBody: { currency?: string } | null = null;
 
+      // Per-org: the switch writes the org's compliance config, NOT the global
+      // super-admin base-currency endpoint.
       server.use(
-        http.put('/api/v1/admin/compliance/currency', async ({ request }) => {
+        http.put('/api/v1/admin/orgs/:orgId/compliance/config', async ({ request }) => {
           putCalled = true;
-          putBody = await request.json() as { currency: string };
-          return HttpResponse.json({
-            currency: putBody.currency,
-            all_currencies: [
-              { code: 'usd', name: 'US Dollar', symbol: '$' },
-              { code: 'eur', name: 'Euro', symbol: '\u20ac' },
-              { code: 'chf', name: 'Swiss Franc', symbol: 'CHF' },
-              { code: 'gbp', name: 'British Pound', symbol: '\u00a3' },
-              { code: 'aed', name: 'UAE Dirham', symbol: 'AED' },
-            ],
-          });
+          putBody = await request.json() as { currency?: string };
+          return HttpResponse.json({ currency: putBody.currency });
         })
       );
 
       const user = userEvent.setup();
       renderWithComplianceContext(<CurrencySelector />);
 
-      // Wait for selector to load
+      // Wait for selector to load the org's current currency
       await waitFor(() => {
         expect(screen.getByText('$ USD')).toBeInTheDocument();
       });
 
-      // Open the dropdown
+      // Open the dropdown and select EUR
       await user.click(screen.getByTestId('currency-selector'));
-
-      // Wait for dropdown content to appear and select EUR
       await waitFor(() => {
         expect(screen.getByText('EUR')).toBeInTheDocument();
       });
-
       await user.click(screen.getByText('EUR'));
 
-      // Verify the API was called
       await waitFor(() => {
         expect(putCalled).toBe(true);
       });
-
       expect(putBody?.currency).toBe('eur');
     });
 
-    it('shows conflict warning when backend returns 409', async () => {
+    it('surfaces an error when the currency update fails (no silent revert)', async () => {
       server.use(
-        http.put('/api/v1/admin/compliance/currency', async ({ request }) => {
-          const body = await request.json() as { currency: string; force?: boolean };
-          if (body.force) {
-            return HttpResponse.json({
-              currency: body.currency,
-              message: `Base currency updated to ${body.currency.toUpperCase()}.`,
-              warning: '1 manual token(s) lack prices for EUR and will block transactions until updated.',
-              affected_tokens: [{ org_id: 'org-1', token_address: 'native', symbol: 'CUSTOM' }],
-            });
-          }
-          return HttpResponse.json({
-            error: '1 manual token price(s) do not have a price set for EUR; these tokens will block transactions until prices are configured. Set force=true to switch anyway.',
-            affected_tokens: [{ org_id: 'org-1', token_address: 'native', symbol: 'CUSTOM' }],
-            currency: 'eur',
-          }, { status: 409 });
+        http.put('/api/v1/admin/orgs/:orgId/compliance/config', async () => {
+          return HttpResponse.json({ error: 'unsupported currency' }, { status: 400 });
         })
       );
 
@@ -136,27 +111,17 @@ describe('CurrencySelector', () => {
         expect(screen.getByText('$ USD')).toBeInTheDocument();
       });
 
-      // Try to switch to EUR
       await user.click(screen.getByTestId('currency-selector'));
       await waitFor(() => {
         expect(screen.getByText('EUR')).toBeInTheDocument();
       });
       await user.click(screen.getByText('EUR'));
 
-      // Should show warning dialog
+      // The error is shown to the user instead of the old silent "blink".
       await waitFor(() => {
-        expect(screen.getByText('Currency Switch Warning')).toBeInTheDocument();
+        expect(screen.getByRole('alert')).toBeInTheDocument();
       });
-      expect(screen.getByText(/BLOCK ALL TRANSACTIONS/)).toBeInTheDocument();
-      expect(screen.getByText(/CUSTOM/)).toBeInTheDocument();
-
-      // Click "Switch Anyway" to force
-      await user.click(screen.getByRole('button', { name: 'Switch Anyway' }));
-
-      // Dialog should close
-      await waitFor(() => {
-        expect(screen.queryByText('Currency Switch Warning')).not.toBeInTheDocument();
-      });
+      expect(screen.getByText('unsupported currency')).toBeInTheDocument();
     });
 
     it('shows all available currencies in dropdown', async () => {
@@ -177,6 +142,18 @@ describe('CurrencySelector', () => {
         expect(screen.getByText('(British Pound)')).toBeInTheDocument();
         expect(screen.getByText('(UAE Dirham)')).toBeInTheDocument();
       });
+    });
+  });
+
+  describe('Per-org scope (RD-1158)', () => {
+    it('is read-only when no organization is in scope', async () => {
+      renderWithComplianceContext(<CurrencySelector />, { initialOrg: null });
+
+      await waitFor(() => {
+        expect(screen.getByText('$ USD')).toBeInTheDocument();
+      });
+      // No interactive dropdown when there is no org to scope the currency to.
+      expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
     });
   });
 });

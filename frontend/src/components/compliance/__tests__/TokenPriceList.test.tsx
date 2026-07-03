@@ -246,13 +246,12 @@ describe('TokenPriceList', () => {
             coingecko_enabled: true,
           });
         }),
-        http.put('/api/v1/admin/compliance/currency', async ({ request }) => {
-          const body = await request.json() as { currency: string };
-          currentCurrency = body.currency;
-          return HttpResponse.json({
-            currency: body.currency,
-            message: `Base currency updated to ${body.currency.toUpperCase()}`,
-          });
+        // RD-1158: currency is set per-org via the compliance config, not the
+        // global base-currency endpoint.
+        http.put('/api/v1/admin/orgs/:orgId/compliance/config', async ({ request }) => {
+          const body = await request.json() as { currency?: string };
+          if (body.currency) currentCurrency = body.currency;
+          return HttpResponse.json({ currency: currentCurrency });
         }),
         http.get('/api/v1/admin/compliance/system-token-prices', () => {
           systemPriceCallCount++;
