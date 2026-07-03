@@ -8,7 +8,7 @@ export const metadata = {
 
 # Travel Rule Compliance
 
-The Open Privacy Suite enforces FATF Recommendation 16, known as the "travel rule," for value transfers through the network. When a transfer's USD value meets or exceeds a configured threshold, the system requires pre-submitted documentation identifying both the originator (sender) and beneficiary (recipient) before allowing the transaction to proceed.
+The Open Privacy Suite enforces FATF Recommendation 16, known as the "travel rule," for value transfers through the network. When a transfer's fiat value (in the organization's configured [currency](#currency)) meets or exceeds a configured threshold, the system requires pre-submitted documentation identifying both the originator (sender) and beneficiary (recipient) before allowing the transaction to proceed.
 
 This regulatory requirement applies to Virtual Asset Service Providers (VASPs) and similar entities moving customer funds across blockchain networks.
 
@@ -63,7 +63,7 @@ Sanctions lists come in two scopes:
 
 **Executes if Layer 1 passes (no sanctioned addresses).**
 
-This layer converts the transfer amount to USD and compares it against the applicable threshold. Only transfers at or above the threshold proceed to Layer 3.
+This layer converts the transfer amount to the organization's configured [currency](#currency) and compares it against the applicable threshold. Only transfers at or above the threshold proceed to Layer 3.
 
 Conversion and threshold logic:
 
@@ -140,7 +140,7 @@ Used records cannot be deleted (they are immutable audit records). Unused or exp
 
 ### Threshold
 
-The dollar amount (in USD) above which a transfer requires travel rule documentation.
+The amount — in the organization's configured [currency](#currency) — at or above which a transfer requires travel rule documentation.
 
 **Types:**
 
@@ -158,6 +158,16 @@ The dollar amount (in USD) above which a transfer requires travel rule documenta
 
 - **$0** means every transfer requires documentation (no exceptions)
 - **null / not set** means compliance is effectively disabled (not recommended for regulated entities)
+
+### Currency
+
+Each organization values transfers — and denominates its thresholds — in **its own fiat currency**. Supported: **USD, EUR, CHF, GBP, AED** (default **USD**).
+
+This is a per-organization setting: an organization admin sets it alongside the other compliance settings for their organization, and it affects that organization only. One organization's currency choice never changes how another organization's transfers are valued or enforced.
+
+- The organization-wide and per-address thresholds are amounts in the organization's currency.
+- The transfer amount is converted to the organization's currency using the token prices configured for that currency (see [Token Prices](#token-prices)). If a token has no price in the organization's currency, the transfer **fails closed**.
+- Every compliance decision records the currency it was evaluated in, so audit logs stay unambiguous after a currency change.
 
 ### Sanctions List
 
@@ -177,7 +187,7 @@ Compliance thresholds are denominated in fiat, so the suite needs a fiat price f
 
 **Manual prices.** Administrators can set fixed prices per token, entered per currency across the five supported fiat currencies: **USD, EUR, CHF, GBP, AED**.
 
-For a given token and the active currency, the price resolves in this order:
+For a given token and the organization's currency, the price resolves in this order:
 
 1. Per-org price with a `coingecko_id` → latest CoinGecko system price
 2. Per-org price without a `coingecko_id` → the manually configured price
@@ -222,8 +232,8 @@ All paths under `/api/v1/admin/orgs/:org_id/compliance/`:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/config` | Retrieve compliance configuration (enabled status, threshold, enforcement mode) |
-| PUT | `/config` | Update compliance configuration (enable/disable, org-wide threshold, `enforcement_mode`) |
+| GET | `/config` | Retrieve compliance configuration (enabled status, threshold, `currency`, enforcement mode) |
+| PUT | `/config` | Update compliance configuration (enable/disable, org-wide threshold, `currency`, `enforcement_mode`) |
 | GET | `/tokens` | List all configured token prices |
 | PUT | `/tokens/:token_address` | Create or update price for a token |
 | DELETE | `/tokens/:token_address` | Remove token price configuration |

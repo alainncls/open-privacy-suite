@@ -82,6 +82,28 @@ func (s *Server) defaultEnforcementMode() compliance.EnforcementMode {
 
 // Compliance Config handlers
 
+// orgCurrency returns the fiat currency an org values transfers in (RD-1158):
+// the per-org compliance_config.currency, falling back to the global
+// base_currency default, then "usd". Use this anywhere a per-org fiat amount is
+// computed or displayed, so display/record valuation stays consistent with the
+// currency the compliance checker actually enforces for the org.
+func (s *Server) orgCurrency(ctx context.Context, orgID string) string {
+	cfg, err := s.db.GetComplianceConfig(ctx, orgID)
+	if err != nil {
+		// Fall back rather than fail the caller, but leave a diagnostic: a
+		// transient lookup failure here would otherwise silently value a
+		// transfer/record against the wrong currency with no signal.
+		slog.WarnContext(ctx, "orgCurrency: compliance-config lookup failed; falling back to base/system currency",
+			"org_id", orgID, "error", err)
+	} else if cfg != nil && cfg.Currency != "" {
+		return cfg.Currency
+	}
+	if c, err := s.db.GetSystemSetting(ctx, "base_currency"); err == nil && c != "" {
+		return c
+	}
+	return "usd"
+}
+
 func (s *Server) getComplianceConfig(c *gin.Context) {
 	// RD-1132: tenant-confidential read — not readable with the operator token.
 	if denyOperatorTenantRead(c) {
@@ -104,6 +126,7 @@ func (s *Server) getComplianceConfig(c *gin.Context) {
 			Enabled:         false,
 			ThresholdFiat:   1000,
 			EnforcementMode: s.defaultEnforcementMode(),
+			Currency:        "usd",
 		}
 	}
 
@@ -123,6 +146,11 @@ func (s *Server) updateComplianceConfig(c *gin.Context) {
 		ThresholdFiat      *float64                       `json:"threshold_fiat"`
 		UnknownPricePolicy *compliance.UnknownPricePolicy `json:"unknown_price_policy"`
 		EnforcementMode    *compliance.EnforcementMode    `json:"enforcement_mode"`
+		// RD-1158: per-org currency. This is now a normal per-org setting the
+		// org admin owns (no cross-org blast radius), so it lives on this
+		// per-org, org-admin-gated config endpoint rather than the global
+		// super-admin base-currency switch.
+		Currency *string `json:"currency"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		respondBadRequestAndLog(c, "invalid request body",
@@ -154,6 +182,7 @@ func (s *Server) updateComplianceConfig(c *gin.Context) {
 			// first PUT for a brand-new org.
 			UnknownPricePolicy: compliance.UnknownPriceForbidden,
 			EnforcementMode:    s.defaultEnforcementMode(),
+			Currency:           "usd",
 		}
 	}
 
@@ -163,6 +192,7 @@ func (s *Server) updateComplianceConfig(c *gin.Context) {
 		"threshold_fiat":       config.ThresholdFiat,
 		"unknown_price_policy": config.UnknownPricePolicy,
 		"enforcement_mode":     config.EnforcementMode,
+		"currency":             config.Currency,
 	}
 
 	if input.Enabled != nil {
@@ -192,6 +222,18 @@ func (s *Server) updateComplianceConfig(c *gin.Context) {
 		}
 		config.EnforcementMode = *input.EnforcementMode
 	}
+	// RD-1158: per-org currency. threshold_fiat is denominated in — and
+	// transfers are valued against — this currency. Setting it is per-org and
+	// has no cross-org effect, so it is allowed on this org-admin-gated path
+	// (unlike the global base-currency switch, which stays super-admin only).
+	if input.Currency != nil {
+		cur := strings.ToLower(strings.TrimSpace(*input.Currency))
+		if !compliance.IsValidCurrency(cur) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported currency; valid options: usd, eur, chf, gbp, aed"})
+			return
+		}
+		config.Currency = cur
+	}
 
 	if err := s.db.UpsertComplianceConfig(c.Request.Context(), config); err != nil {
 		internalError(c, "failed to save compliance config", err)
@@ -211,6 +253,7 @@ func (s *Server) updateComplianceConfig(c *gin.Context) {
 			"threshold_fiat":       config.ThresholdFiat,
 			"unknown_price_policy": config.UnknownPricePolicy,
 			"enforcement_mode":     config.EnforcementMode,
+			"currency":             config.Currency,
 		})
 
 	c.JSON(http.StatusOK, config)
@@ -312,11 +355,8 @@ func (s *Server) upsertTokenPrice(c *gin.Context) {
 		pricesByCurrency[k] = v
 	}
 
-	// Read active currency once
-	activeCurrency := "usd"
-	if c, err := s.db.GetSystemSetting(ctx, "base_currency"); err == nil && c != "" {
-		activeCurrency = c
-	}
+	// Read the org's active currency once (RD-1158: per-org, not global).
+	activeCurrency := s.orgCurrency(ctx, orgID)
 
 	// Resolve price_fiat from the prices being submitted (SQL || will merge with existing).
 	// If the caller didn't provide a price for the active currency, price_fiat stays 0
@@ -528,11 +568,9 @@ func (s *Server) createTravelRuleRecord(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
-	// Read base currency — needed for price resolution and audit snapshot
-	currency, _ := s.db.GetSystemSetting(ctx, "base_currency")
-	if currency == "" {
-		currency = "usd"
-	}
+	// Per-org currency (RD-1158) — needed for price resolution and the record's
+	// currency snapshot.
+	currency := s.orgCurrency(ctx, orgID)
 
 	priceFiat, decimals, err := s.resolveTokenPriceForRecord(ctx, orgID, tokenAddr, currency)
 	if err != nil {

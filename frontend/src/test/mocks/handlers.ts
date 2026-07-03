@@ -214,6 +214,7 @@ export const mockComplianceConfig: ComplianceConfigType = {
   org_id: 'org-1',
   enabled: true,
   threshold_fiat: 1000,
+  currency: 'usd',
   enforcement_mode: 'enforce',
   created_at: '2024-01-01T00:00:00Z',
   updated_at: '2024-01-01T00:00:00Z',
@@ -716,11 +717,12 @@ export const handlers = [
   }),
 
   http.put('/api/v1/admin/orgs/:orgId/compliance/config', async ({ request }) => {
-    const body = await request.json() as { enabled?: boolean; threshold_fiat?: number };
+    const body = await request.json() as { enabled?: boolean; threshold_fiat?: number; currency?: string };
     return HttpResponse.json({
       ...mockComplianceConfig,
       ...(body.enabled !== undefined && { enabled: body.enabled }),
       ...(body.threshold_fiat !== undefined && { threshold_fiat: body.threshold_fiat }),
+      ...(body.currency !== undefined && { currency: body.currency }),
       updated_at: new Date().toISOString(),
     });
   }),
