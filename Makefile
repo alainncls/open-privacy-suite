@@ -164,8 +164,11 @@ test-e2e:
 test-privacy-bypass:
 	go test -tags privacy_bypass -timeout 15m -v -run TestPrivacyModeBypassClosure ./e2e/...
 
-# E2E compose command - isolated from local dev
-E2E_COMPOSE = docker-compose -p privacy-proxy-e2e -f docker-compose.e2e.yml
+# E2E compose command - isolated from local dev.
+# Prefer Compose v1 (docker-compose) when present so local dev is unchanged;
+# fall back to the v2 plugin (docker compose) on CI runners that ship only v2.
+COMPOSE := $(shell command -v docker-compose >/dev/null 2>&1 && echo docker-compose || echo docker compose)
+E2E_COMPOSE = $(COMPOSE) -p privacy-proxy-e2e -f docker-compose.e2e.yml
 
 # Run Playwright E2E tests with Docker Compose (isolated environment)
 e2e: ensure-hooks
