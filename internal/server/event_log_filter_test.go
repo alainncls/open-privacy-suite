@@ -88,7 +88,7 @@ func TestFilterReceiptLogsWithEventRules_AllowedEventPreserved(t *testing.T) {
 		perms,
 		&testABIProviderServer{},
 		nil,
-	nil,
+		nil,
 	)
 
 	var resp struct {
@@ -119,6 +119,91 @@ func TestFilterReceiptLogsWithEventRules_AllowedEventPreserved(t *testing.T) {
 			t.Errorf("preserved log should have topic0=%s, got %v", allowedTopic0, log.Topics)
 		}
 	}
+}
+
+// TestFilterReceiptLogsWithEventRules_ParticipantSeesAddresslessOwnTxLog_RD1162
+// covers the receipt-path glue added in RD-1162 (addressing a Copilot review
+// note): FilterReceiptLogsWithEventRules must inject the receipt's
+// transactionHash into visCtx.ParticipantTxHashes so FilterEventLogs admits an
+// address-less log of the viewer's own tx (e.g. PaymentCompleted, keyed by a
+// business id) instead of stripping it — while the admission stays BOUNDED by
+// contract-grant access: a log from a contract the viewer has no grant on stays
+// hidden even for the tx participant. The existing RD-1162 tests exercise
+// FilterEventLogs directly; this one exercises the server-level receipt glue
+// (passing visCtx=nil so the function must build the context itself).
+func TestFilterReceiptLogsWithEventRules_ParticipantSeesAddresslessOwnTxLog_RD1162(t *testing.T) {
+	userAddr := "0xabc1234567890123456789012345678901234567"
+	grantedContract := "0xcontract0000000000000000000000000000001"
+	ungrantedContract := "0xcontract0000000000000000000000000000002"
+
+	// PaymentCompleted-style event: topic0 = event signature, topic1 = an
+	// indexed bytes32 record key (NOT an address). No topic matches the viewer
+	// and no event_rules are configured, so WITHOUT participant admission this
+	// log is denied — isolating the RD-1162 path under test.
+	eventTopic0 := "0xddd0000000000000000000000000000000000000000000000000000000000000"
+	recordKey := "0x1111111111111111111111111111111111111111111111111111111111111111"
+
+	// grantedContract is present (access != nil) with nil EventRules (deny-all
+	// baseline); ungrantedContract is absent (access == nil).
+	perms := &rbac.EffectivePermissions{
+		ContractAccess: map[string]rbac.ContractAccess{
+			grantedContract: {Claims: []rbac.Claim{}},
+		},
+	}
+
+	buildReceipt := func(emitter string) []byte {
+		receipt := map[string]any{
+			"from":            userAddr, // viewer is the tx sender → participant
+			"to":              emitter,
+			"status":          "0x1",
+			"transactionHash": "0xdeadbeef",
+			"logsBloom":       "0x1234",
+			"logs": []map[string]any{
+				{
+					"address": emitter,
+					"topics":  []string{eventTopic0, recordKey},
+					"data":    "0x",
+					// Real receipt logs carry the tx hash; logTxIsParticipant
+					// matches on it against the injected ParticipantTxHashes.
+					"transactionHash":  "0xdeadbeef",
+					"logIndex":         "0x0",
+					"transactionIndex": "0x0",
+				},
+			},
+		}
+		receiptJSON, _ := json.Marshal(receipt)
+		return []byte(`{"jsonrpc":"2.0","id":1,"result":` + string(receiptJSON) + `}`)
+	}
+
+	logCount := func(t *testing.T, out []byte) int {
+		t.Helper()
+		var resp struct {
+			Result *struct {
+				Logs []json.RawMessage `json:"logs"`
+			} `json:"result"`
+		}
+		if err := json.Unmarshal(out, &resp); err != nil {
+			t.Fatalf("output not valid JSON: %v\nraw: %s", err, out)
+		}
+		if resp.Result == nil {
+			t.Fatalf("expected non-null receipt for participant, got null\nraw: %s", out)
+		}
+		return len(resp.Result.Logs)
+	}
+
+	t.Run("granted emitter: participant sees address-less own-tx log", func(t *testing.T) {
+		got := FilterReceiptLogsWithEventRules(buildReceipt(grantedContract), []string{userAddr}, perms, &testABIProviderServer{}, nil, nil)
+		if n := logCount(t, got); n != 1 {
+			t.Errorf("participant should see their own tx's address-less log on a granted contract; got %d logs, want 1\nraw: %s", n, got)
+		}
+	})
+
+	t.Run("ungranted emitter: log stays hidden even for participant", func(t *testing.T) {
+		got := FilterReceiptLogsWithEventRules(buildReceipt(ungrantedContract), []string{userAddr}, perms, &testABIProviderServer{}, nil, nil)
+		if n := logCount(t, got); n != 0 {
+			t.Errorf("participant must NOT see a log from a contract they have no grant on (bound); got %d logs, want 0\nraw: %s", n, got)
+		}
+	})
 }
 
 // TestFilterReceiptLogsWithEventRules_NoEventRules_DenyAll verifies that
@@ -165,7 +250,7 @@ func TestFilterReceiptLogsWithEventRules_NoEventRules_DenyAll(t *testing.T) {
 		perms,
 		&testABIProviderServer{},
 		nil,
-	nil,
+		nil,
 	)
 
 	var resp struct {
@@ -225,7 +310,7 @@ func TestFilterReceiptLogsWithEventRules_NonParticipant_ReturnsNull(t *testing.T
 		perms,
 		&testABIProviderServer{},
 		nil,
-	nil,
+		nil,
 	)
 
 	var resp struct {
@@ -268,7 +353,7 @@ func TestFilterReceiptLogsWithEventRules_NilPerms_FailClosed(t *testing.T) {
 		nil, // nil perms = resolution failed
 		&testABIProviderServer{},
 		nil,
-	nil,
+		nil,
 	)
 
 	var resp struct {
@@ -339,7 +424,7 @@ func TestFilterReceiptLogsWithEventRules_MultipleContracts(t *testing.T) {
 		perms,
 		&testABIProviderServer{},
 		nil,
-	nil,
+		nil,
 	)
 
 	var resp struct {
@@ -370,8 +455,8 @@ func TestFilterReceiptLogsWithEventRules_EmptyEventRules_AllLogsStripped(t *test
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims:     []rbac.Claim{},
-				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{}, // empty = block all events
-			}},
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{}}}, // empty = block all events
+
 		},
 	}
 
@@ -403,7 +488,7 @@ func TestFilterReceiptLogsWithEventRules_EmptyEventRules_AllLogsStripped(t *test
 		perms,
 		&testABIProviderServer{},
 		nil,
-	nil,
+		nil,
 	)
 
 	var resp struct {
@@ -435,8 +520,8 @@ func TestFilterLogsWithEventRules_EmptyEventRules_AllLogsStripped(t *testing.T) 
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims:     []rbac.Claim{},
-				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{}, // empty = block all events
-			}},
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{}}}, // empty = block all events
+
 		},
 	}
 
@@ -463,7 +548,7 @@ func TestFilterLogsWithEventRules_EmptyEventRules_AllLogsStripped(t *testing.T) 
 		perms,
 		&testABIProviderServer{},
 		nil,
-	nil,
+		nil,
 	)
 
 	var resp struct {
@@ -513,7 +598,7 @@ func TestFilterReceiptLogsWithEventRules_LogsBloomZeroed(t *testing.T) {
 		perms,
 		&testABIProviderServer{},
 		nil,
-	nil,
+		nil,
 	)
 
 	var resp struct {
@@ -787,8 +872,8 @@ func TestFilterLogs_I18_EmptyRulesDenyAll(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims:     []rbac.Claim{},
-				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{}, // deny all
-			}},
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{}}}, // deny all
+
 		},
 	}
 
@@ -977,7 +1062,7 @@ func TestFilterReceipt_I27_MixedOrgs(t *testing.T) {
 
 	got := FilterReceiptLogsWithEventRules(
 		buildReceiptRPCResponse(t, receipt), []string{userAddr}, perms, &testABIProviderServer{}, nil,
-	nil,
+		nil,
 	)
 	logs := parseReceiptLogs(t, got)
 	if logs == nil {
@@ -1420,7 +1505,7 @@ func TestFilterReceipt_I21_FiltersReceiptLogs(t *testing.T) {
 
 	got := FilterReceiptLogsWithEventRules(
 		buildReceiptRPCResponse(t, receipt), []string{userAddr}, perms, &testABIProviderServer{}, nil,
-	nil,
+		nil,
 	)
 	logs := parseReceiptLogs(t, got)
 	if logs == nil {
@@ -1459,7 +1544,7 @@ func TestFilterReceipt_I22_NonParticipant_Null(t *testing.T) {
 
 	got := FilterReceiptLogsWithEventRules(
 		buildReceiptRPCResponse(t, receipt), []string{userAddr}, perms, &testABIProviderServer{}, nil,
-	nil,
+		nil,
 	)
 
 	var resp struct {
@@ -1502,7 +1587,7 @@ func TestFilterReceipt_I23_NilRules_DenyAll(t *testing.T) {
 
 	got := FilterReceiptLogsWithEventRules(
 		buildReceiptRPCResponse(t, receipt), []string{userAddr}, perms, &testABIProviderServer{}, nil,
-	nil,
+		nil,
 	)
 	logs := parseReceiptLogs(t, got)
 	if logs == nil {
@@ -1555,7 +1640,7 @@ func TestFilterReceipt_I24_MixedContracts(t *testing.T) {
 
 	got := FilterReceiptLogsWithEventRules(
 		buildReceiptRPCResponse(t, receipt), []string{userAddr}, perms, &testABIProviderServer{}, nil,
-	nil,
+		nil,
 	)
 	logs := parseReceiptLogs(t, got)
 	if logs == nil {
@@ -1622,7 +1707,7 @@ func TestFilterReceiptLogsWithEventRules_VisibleTo_NonParticipantSeesReceipt(t *
 		perms,
 		&testABIProviderServer{},
 		visCtx,
-	nil,
+		nil,
 	)
 
 	var resp struct {
@@ -1667,7 +1752,7 @@ func TestFilterReceiptLogsWithEventRules_VisibleTo_NonParticipantWithoutVisibleT
 		perms,
 		&testABIProviderServer{},
 		nil,
-	nil,
+		nil,
 	)
 
 	var resp struct {
@@ -1721,7 +1806,7 @@ func TestFilterReceiptLogsWithEventRules_VisibleTo_WrongTxHash_StillNull(t *test
 		perms,
 		&testABIProviderServer{},
 		visCtx,
-	nil,
+		nil,
 	)
 
 	var resp struct {
@@ -1780,7 +1865,7 @@ func TestFilterLogsWithEventRules_NoLinkedAddresses_VisibleToStillWorks(t *testi
 		perms,
 		&testABIProviderServer{},
 		visCtx,
-	nil,
+		nil,
 	)
 
 	var resp struct {
