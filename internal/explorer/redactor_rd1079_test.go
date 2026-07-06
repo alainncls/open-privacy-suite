@@ -89,11 +89,11 @@ func TestRedactTransfers_PseudonymousGrant_CounterpartyNotLeaked_RD1079(t *testi
 	if got[0].From == rd1079Charlie {
 		t.Errorf("RD-1079 leak: counterparty rendered in full real hex %q; expected a pseudonym", rd1079Charlie)
 	}
-	if got[0].From != GeneratePseudonym(rd1079Charlie) {
-		t.Errorf("counterparty should render pseudonymously, got From=%q want %q", got[0].From, GeneratePseudonym(rd1079Charlie))
+	if got[0].From != GeneratePseudonym(rd1079Charlie, nil) {
+		t.Errorf("counterparty should render pseudonymously, got From=%q want %q", got[0].From, GeneratePseudonym(rd1079Charlie, nil))
 	}
-	if got[0].To != GeneratePseudonym(rd1079Eve) {
-		t.Errorf("grant subject should render at its own pseudonym, got To=%q want %q", got[0].To, GeneratePseudonym(rd1079Eve))
+	if got[0].To != GeneratePseudonym(rd1079Eve, nil) {
+		t.Errorf("grant subject should render at its own pseudonym, got To=%q want %q", got[0].To, GeneratePseudonym(rd1079Eve, nil))
 	}
 }
 

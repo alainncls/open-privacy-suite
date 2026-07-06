@@ -501,7 +501,7 @@ func TestRedactTransactions_PseudonymousAddress(t *testing.T) {
 	if len(result) != 1 {
 		t.Fatalf("expected 1 tx, got %d", len(result))
 	}
-	expectedFromPseudonym := GeneratePseudonym(from)
+	expectedFromPseudonym := GeneratePseudonym(from, nil)
 	if result[0].From != expectedFromPseudonym {
 		t.Errorf("From should be pseudonym %q, got %q", expectedFromPseudonym, result[0].From)
 	}
@@ -509,7 +509,7 @@ func TestRedactTransactions_PseudonymousAddress(t *testing.T) {
 	// applies to the whole tx, not just the granted address — otherwise the
 	// counterparty's real address leaks alongside the granted party's
 	// pseudonym, defeating the limited-audit-lens promise.
-	expectedToPseudonym := GeneratePseudonym(to)
+	expectedToPseudonym := GeneratePseudonym(to, nil)
 	if result[0].To == nil || *result[0].To != expectedToPseudonym {
 		t.Errorf("To (counterparty) should be pseudonymised under pseudonymous-grant lens %q, got %v", expectedToPseudonym, result[0].To)
 	}
@@ -549,10 +549,10 @@ func TestRedactTransactions_PseudonymousGrant_DemotesPublicCounterparty(t *testi
 	if len(result) != 1 {
 		t.Fatalf("expected 1 tx, got %d", len(result))
 	}
-	if result[0].From != GeneratePseudonym(bob) {
+	if result[0].From != GeneratePseudonym(bob, nil) {
 		t.Errorf("From: expected Bob's pseudonym, got %q", result[0].From)
 	}
-	if result[0].To == nil || *result[0].To != GeneratePseudonym(publicContract) {
+	if result[0].To == nil || *result[0].To != GeneratePseudonym(publicContract, nil) {
 		t.Errorf("To (public contract): expected pseudonym under grant lens, got %v — this is the leak the test catches", result[0].To)
 	}
 }
@@ -591,7 +591,7 @@ func TestRedactTransactions_PseudonymousGrant_ParticipantOverrideWins(t *testing
 	// in the visibility map, and applyRedaction renders the pseudonym). The
 	// row is rendered with Bob's pseudonym, NOT real address, because the
 	// underlying visibility is Pseudonymous.
-	if result[0].To == nil || *result[0].To != GeneratePseudonym(bob) {
+	if result[0].To == nil || *result[0].To != GeneratePseudonym(bob, nil) {
 		t.Errorf("To (Bob): expected pseudonym (per Bob's own visibility), got %v", result[0].To)
 	}
 }
@@ -1046,7 +1046,7 @@ func TestRedactTransfers_Pseudonymous(t *testing.T) {
 	if len(result) != 1 {
 		t.Fatalf("expected 1 transfer, got %d", len(result))
 	}
-	expectedFromPseudonym := GeneratePseudonym(from)
+	expectedFromPseudonym := GeneratePseudonym(from, nil)
 	if result[0].From != expectedFromPseudonym {
 		t.Errorf("From should be pseudonym %q, got %q", expectedFromPseudonym, result[0].From)
 	}
@@ -1054,7 +1054,7 @@ func TestRedactTransfers_Pseudonymous(t *testing.T) {
 	// rationale in TestRedactTransactions_PseudonymousAddress. mockDB
 	// derives Reason=ReasonDisclosureGrant for VisibilityPseudonymous,
 	// which triggers the demotion.
-	expectedToPseudonym := GeneratePseudonym(to)
+	expectedToPseudonym := GeneratePseudonym(to, nil)
 	if result[0].To != expectedToPseudonym {
 		t.Errorf("To (counterparty) should be pseudonymised under pseudonymous-grant lens %q, got %q", expectedToPseudonym, result[0].To)
 	}
@@ -1226,13 +1226,13 @@ func TestRedactInternalTransactions_Pseudonymous(t *testing.T) {
 		t.Fatalf("expected 1, got %d", len(result))
 	}
 	itx := result[0]
-	expectedFromPseudonym := GeneratePseudonym(from)
+	expectedFromPseudonym := GeneratePseudonym(from, nil)
 	if itx.From != expectedFromPseudonym {
 		t.Errorf("From should be pseudonym %q, got %q", expectedFromPseudonym, itx.From)
 	}
 	// Counterparty pseudonymised under the grant lens (see
 	// TestRedactTransactions_PseudonymousAddress for the rationale).
-	expectedToPseudonym := GeneratePseudonym(to)
+	expectedToPseudonym := GeneratePseudonym(to, nil)
 	if itx.To == nil || *itx.To != expectedToPseudonym {
 		t.Errorf("To (counterparty) should be pseudonymised under grant lens %q, got %v", expectedToPseudonym, itx.To)
 	}
@@ -2464,7 +2464,7 @@ func TestRedactAddress_Pseudonymous(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected := GeneratePseudonym(addr)
+	expected := GeneratePseudonym(addr, nil)
 	if result != expected {
 		t.Errorf("expected %s, got %s", expected, result)
 	}
@@ -2567,7 +2567,7 @@ func TestRedactTokenHolders_PseudonymousPreservesBalance(t *testing.T) {
 	if len(result) != 1 {
 		t.Fatalf("expected 1, got %d", len(result))
 	}
-	expectedPseudonym := GeneratePseudonym(addr)
+	expectedPseudonym := GeneratePseudonym(addr, nil)
 	if result[0].Address != expectedPseudonym {
 		t.Errorf("Address should be pseudonym %q, got %q", expectedPseudonym, result[0].Address)
 	}

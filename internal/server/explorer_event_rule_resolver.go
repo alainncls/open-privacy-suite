@@ -48,10 +48,13 @@ func resolveViewerInternalID(ctx context.Context, store rbac.Store, viewerDID st
 // explorer_redactor_wiring_integration_test.go) loops over the public
 // Set*Resolver methods via reflection to detect any new resolver that
 // wasn't wired here.
-func wireExplorerRedactor(redactor *explorer.RedactionEngine, store rbac.Store, accessCtrl *rbac.AccessController, logParticipants explorer.LogParticipantStore) {
+func wireExplorerRedactor(redactor *explorer.RedactionEngine, store rbac.Store, accessCtrl *rbac.AccessController, logParticipants explorer.LogParticipantStore, pseudonymKey []byte) {
 	if redactor == nil {
 		return
 	}
+	// RD-1164 #8: key the address pseudonyms so they are non-reversible and,
+	// with a configured key, non-enumerable.
+	redactor.SetPseudonymKey(pseudonymKey)
 	if store != nil {
 		redactor.SetABIResolver(newDBABIResolver(store))
 		redactor.SetDynamicPayloadAllowedResolver(newDBDynamicPayloadAllowedResolver(store))
@@ -96,11 +99,11 @@ func wireExplorerRedactor(redactor *explorer.RedactionEngine, store rbac.Store, 
 //  3. Resolve the viewer's effective permissions against the owning
 //     org. Read EventRulesField off ContractAccess[contractAddr].
 //     Map the three database states to the explorer tri-state:
-//       - nil, IsDeny()         ⇒ deny (zero value)
-//       - IsWildcard()          ⇒ Wildcard:true
-//       - allowlist with rules  ⇒ Wildcard:false, Rules:[...] including
-//         ParamRules so the redactor can enforce them via
-//         rbac.MatchesEventParamRules.
+//     - nil, IsDeny()         ⇒ deny (zero value)
+//     - IsWildcard()          ⇒ Wildcard:true
+//     - allowlist with rules  ⇒ Wildcard:false, Rules:[...] including
+//     ParamRules so the redactor can enforce them via
+//     rbac.MatchesEventParamRules.
 //
 // Error handling is strictly fail-closed — any DB error or missing
 // row returns the zero-value resolution (deny-all). The explorer

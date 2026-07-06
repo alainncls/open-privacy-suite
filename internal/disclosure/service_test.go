@@ -644,6 +644,40 @@ func TestApproveRequest(t *testing.T) {
 			reason:        "Test",
 			wantErr:       ErrRequestExpired,
 		},
+		{
+			name: "reject scope widening (methods superset)",
+			setupRequest: &Request{
+				ID:           "req-127",
+				TargetUserID: "target-user",
+				OrgID:        "org-1",
+				Scope:        Scope{Methods: []string{"eth_call"}},
+				Status:       StatusPending,
+				RequestedAt:  time.Now(),
+			},
+			requestID:     "req-127",
+			decidedByUser: "approver-user",
+			narrowedScope: &Scope{Methods: []string{"eth_call", "debug_traceCall"}}, // widens beyond request
+			grantDuration: 24 * time.Hour,
+			reason:        "should be rejected",
+			wantErr:       ErrScopeOutOfBounds,
+		},
+		{
+			name: "reject disclosure-level escalation",
+			setupRequest: &Request{
+				ID:           "req-128",
+				TargetUserID: "target-user",
+				OrgID:        "org-1",
+				Scope:        Scope{DisclosureLevel: DisclosurePseudonymous},
+				Status:       StatusPending,
+				RequestedAt:  time.Now(),
+			},
+			requestID:     "req-128",
+			decidedByUser: "approver-user",
+			narrowedScope: &Scope{DisclosureLevel: DisclosureFull}, // escalates beyond request
+			grantDuration: 24 * time.Hour,
+			reason:        "should be rejected",
+			wantErr:       ErrScopeOutOfBounds,
+		},
 	}
 
 	for _, tt := range tests {
@@ -691,6 +725,42 @@ func TestApproveRequest(t *testing.T) {
 			// Verify request status was updated
 			req := store.requests[tt.requestID]
 			assert.Equal(t, StatusApproved, req.Status)
+		})
+	}
+}
+
+// TestScopeIsSubsetOf covers the RD-1164 #9 approval bound: an approved
+// (narrowed) scope may never grant more than the request. An empty dimension on
+// the child means "unrestricted" and is therefore NOT a subset of a restricted
+// parent; empty disclosure level is treated as full (most revealing) downstream.
+func TestScopeIsSubsetOf(t *testing.T) {
+	jan := &DateRange{Start: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), End: time.Date(2026, 1, 31, 23, 59, 59, 0, time.UTC)}
+	q1 := &DateRange{Start: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), End: time.Date(2026, 3, 31, 23, 59, 59, 0, time.UTC)}
+
+	tests := []struct {
+		name   string
+		child  Scope
+		parent Scope
+		want   bool
+	}{
+		{"method subset", Scope{Methods: []string{"eth_call"}}, Scope{Methods: []string{"eth_call", "eth_getLogs"}}, true},
+		{"method superset rejected", Scope{Methods: []string{"eth_call", "debug_traceCall"}}, Scope{Methods: []string{"eth_call"}}, false},
+		{"empty child under method-restricted parent rejected", Scope{}, Scope{Methods: []string{"eth_call"}}, false},
+		{"any child under unrestricted parent", Scope{Methods: []string{"eth_call"}}, Scope{}, true},
+		{"address subset case-insensitive", Scope{Addresses: []string{"0xABC"}}, Scope{Addresses: []string{"0xabc", "0xdef"}}, true},
+		{"address superset rejected", Scope{Addresses: []string{"0xabc", "0x999"}}, Scope{Addresses: []string{"0xabc"}}, false},
+		{"date range within", Scope{DateRange: jan}, Scope{DateRange: q1}, true},
+		{"date range wider rejected", Scope{DateRange: q1}, Scope{DateRange: jan}, false},
+		{"unbounded child under bounded parent rejected", Scope{}, Scope{DateRange: jan}, false},
+		{"level narrowing full to pseudonymous", Scope{DisclosureLevel: DisclosurePseudonymous}, Scope{DisclosureLevel: DisclosureFull}, true},
+		{"level escalation pseudonymous to full rejected", Scope{DisclosureLevel: DisclosureFull}, Scope{DisclosureLevel: DisclosurePseudonymous}, false},
+		{"empty level (=full) escalates pseudonymous parent", Scope{}, Scope{DisclosureLevel: DisclosurePseudonymous}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.child.isSubsetOf(tt.parent); got != tt.want {
+				t.Errorf("isSubsetOf() = %v, want %v", got, tt.want)
+			}
 		})
 	}
 }

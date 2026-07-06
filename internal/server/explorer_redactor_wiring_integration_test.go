@@ -137,7 +137,7 @@ func TestExplorerRedactorWiring_FullStack(t *testing.T) {
 	// a stub that returns "no participants" for every query — this test
 	// isn't exercising the log path (RedactTransactions tests cover
 	// that), only the wiring.
-	wireExplorerRedactor(engine, database, accessCtrl, noopLogParticipantStore{})
+	wireExplorerRedactor(engine, database, accessCtrl, noopLogParticipantStore{}, nil)
 
 	// ----- (1) Wiring completeness check. ------------------------------
 	// Enumerate every interface-typed Set* method on *RedactionEngine

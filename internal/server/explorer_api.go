@@ -203,10 +203,12 @@ func (s *Server) bindExplorerEndpoints(rg *gin.RouterGroup) {
 	rg.POST("/index/block/:number", s.indexExplorerBlock)
 }
 
-// getViewableAddresses returns all addresses the wallet owner can view
-// GET /api/v1/explorer/viewable-addresses?wallet=0x1234...&did=did:example:123
-// Either wallet or did (or both) can be provided. If did is provided, it is used directly.
-// If only wallet is provided, the DID is looked up from the wallet address.
+// getViewableAddresses returns all addresses the authenticated viewer can view.
+// GET /api/v1/explorer/viewable-addresses
+// SECURITY (RD-1164 #7): the viewer identity comes ONLY from the validated JWT
+// (or the impersonation override) via getViewerDIDFromRequest — never from a
+// ?wallet= lookup, which would be a deanonymization oracle. A ?wallet= value is
+// only echoed back for display; with no JWT the response is the empty set.
 func (s *Server) getViewableAddresses(c *gin.Context) {
 	wallet := c.Query("wallet")
 
@@ -231,22 +233,15 @@ func (s *Server) getViewableAddresses(c *gin.Context) {
 		DisclosedAddresses: []DisclosedAddress{},
 	}
 
-	var err error
-
-	// If no DID from JWT, look up from wallet
-	if viewerDID == "" && wallet != "" {
-		viewerDID, err = s.db.GetDIDByEthAddress(ctx, wallet)
-		if err != nil {
-			respondInternalErrorAndLog(c, "failed to look up DID",
-				"explorer: GetDIDByEthAddress failed",
-				"wallet", wallet, "err", err)
-			return
-		}
-	}
-
+	// RD-1164 #7: identity is resolved ONLY from the validated JWT
+	// (getViewerDIDFromRequest, above). The previous ?wallet= →
+	// GetDIDByEthAddress fallback let an unauthenticated caller resolve any
+	// wallet's DID and enumerate every address linked to that identity — a
+	// deanonymization/clustering oracle. The equivalent wallet-viewer path was
+	// already removed from the other explorer handlers (see the getViewerIdentity
+	// removal note below); this closes it here too. A caller with no valid JWT
+	// gets the anonymous empty response regardless of any ?wallet= value.
 	if viewerDID == "" {
-		// Viewer is anonymous - no DID linked to this wallet
-		// Return empty lists
 		c.JSON(http.StatusOK, response)
 		return
 	}
@@ -345,7 +340,7 @@ func (s *Server) getDisclosedAddressesForViewer(ctx context.Context, viewerDID s
 				disclosed.Address = addr.EthAddress
 				disclosed.ENSName = addr.ENSName
 			case "pseudonymous":
-				disclosed.Address = explorer.GeneratePseudonym(addr.EthAddress)
+				disclosed.Address = s.pseudonym(addr.EthAddress)
 				// Don't include ENS name - it could reveal identity
 			case "redacted":
 				disclosed.Address = "[PRIVATE]"
@@ -384,6 +379,21 @@ func (s *Server) resolveAddressID(c *gin.Context) {
 	}
 
 	grant := grantWithRequest.Grant
+	request := grantWithRequest.Request
+
+	// SECURITY (RD-1164 #10): grantee verification — the viewer's DID must match
+	// the grant's requester_did. Without it, any caller who knows a grant_id +
+	// address_id could resolve the real address of a `full` grant they do not
+	// hold. Mirrors getGrantActivityLogs; uniform 404 avoids grant enumeration.
+	viewerDID := s.getViewerDIDFromRequest(c)
+	if viewerDID == "" {
+		respondUnauthorized(c, "authentication required")
+		return
+	}
+	if request.RequesterDID != viewerDID {
+		respondNotFound(c, "grant not found")
+		return
+	}
 
 	// Check grant is still valid
 	if grant.RevokedAt != nil {
@@ -396,7 +406,6 @@ func (s *Server) resolveAddressID(c *gin.Context) {
 	}
 
 	// Get target DID from the request
-	request := grantWithRequest.Request
 	targetUser, err := s.db.GetUser(c.Request.Context(), request.TargetUserID)
 	if err != nil || targetUser == nil {
 		respondInternalError(c, "failed to get target user")
@@ -447,7 +456,7 @@ func (s *Server) resolveAddressID(c *gin.Context) {
 
 	// Include pseudonym for pseudonymous disclosures
 	if disclosureLevel == "pseudonymous" {
-		response.Pseudonym = explorer.GeneratePseudonym(realAddress)
+		response.Pseudonym = s.pseudonym(realAddress)
 	}
 
 	c.JSON(http.StatusOK, response)
@@ -463,6 +472,69 @@ func generateExternalPseudonym(address, grantID string) string {
 	h.Write([]byte(grantID))
 	sum := h.Sum(nil)
 	return fmt.Sprintf("External-%X", sum[:2])
+}
+
+// pseudonym returns the keyed, non-reversible display pseudonym for an address
+// (RD-1164 #8), keyed by EXPLORER_PSEUDONYM_KEY when configured. All explorer
+// handlers use this rather than calling explorer.GeneratePseudonym directly so
+// the key is applied uniformly.
+func (s *Server) pseudonym(address string) string {
+	var key []byte
+	if s.config != nil {
+		key = s.config.ExplorerPseudonymKey
+	}
+	return explorer.GeneratePseudonym(address, key)
+}
+
+// filterTxsByGrantScope drops disclosed transactions that fall outside the
+// grant's own scope (RD-1164 #9): a grant scoped to a DateRange or a set of
+// contract addresses must not disclose transactions beyond it. An unset scope
+// dimension imposes no restriction. Filtering is applied to the already-fetched
+// page, so has_more reflects the post-filter page — conservative (it may
+// under-report additional in-scope rows on later pages, but never
+// over-discloses). Proper server-side time/keyset bounds are tracked in RD-1149.
+func filterTxsByGrantScope(txs []explorer.Transaction, scope disclosure.Scope) []explorer.Transaction {
+	if scope.DateRange == nil && len(scope.Addresses) == 0 {
+		return txs
+	}
+
+	var scopeAddrs map[string]bool
+	if len(scope.Addresses) > 0 {
+		scopeAddrs = make(map[string]bool, len(scope.Addresses))
+		for _, a := range scope.Addresses {
+			scopeAddrs[strings.ToLower(a)] = true
+		}
+	}
+
+	var start, end int64
+	if scope.DateRange != nil {
+		start = scope.DateRange.Start.Unix()
+		end = scope.DateRange.End.Unix()
+	}
+
+	out := make([]explorer.Transaction, 0, len(txs))
+	for _, tx := range txs {
+		if scope.DateRange != nil {
+			// Fail closed: a tx with a missing (0) or out-of-range block
+			// timestamp is excluded rather than disclosed.
+			ts := int64(tx.BlockTimestamp)
+			if ts == 0 || ts < start || ts > end {
+				continue
+			}
+		}
+		if scopeAddrs != nil {
+			from := strings.ToLower(tx.From)
+			to := ""
+			if tx.To != nil {
+				to = strings.ToLower(*tx.To)
+			}
+			if !scopeAddrs[from] && !scopeAddrs[to] {
+				continue
+			}
+		}
+		out = append(out, tx)
+	}
+	return out
 }
 
 // getGrantTransactions returns transactions for a disclosed address, pseudonymized
@@ -492,6 +564,22 @@ func (s *Server) getGrantTransactions(c *gin.Context) {
 	}
 
 	grant := grantWithRequest.Grant
+	request := grantWithRequest.Request
+
+	// SECURITY (RD-1164 #10): grantee verification FIRST — the viewer's DID must
+	// match the grant's requester_did, else any caller with a grant_id +
+	// address_id could read a `full` grant's real transactions. Checked before
+	// revoked/expired so grant state is never revealed to a non-grantee. Mirrors
+	// getGrantActivityLogs.
+	viewerDID := s.getViewerDIDFromRequest(c)
+	if viewerDID == "" {
+		respondUnauthorized(c, "authentication required")
+		return
+	}
+	if request.RequesterDID != viewerDID {
+		respondNotFound(c, "grant not found")
+		return
+	}
 
 	// Check grant is still valid
 	if grant.RevokedAt != nil {
@@ -510,7 +598,6 @@ func (s *Server) getGrantTransactions(c *gin.Context) {
 	}
 
 	// Get target user and their addresses
-	request := grantWithRequest.Request
 	targetUser, err := s.db.GetUser(c.Request.Context(), request.TargetUserID)
 	if err != nil || targetUser == nil {
 		respondInternalError(c, "failed to get target user")
@@ -561,6 +648,10 @@ func (s *Server) getGrantTransactions(c *gin.Context) {
 		return
 	}
 
+	// RD-1164 #9: enforce the grant's own scope (date range / contract
+	// addresses) on the disclosed transactions before pagination.
+	txs = filterTxsByGrantScope(txs, grant.Scope)
+
 	hasMore := len(txs) > limit
 	if hasMore {
 		txs = txs[:limit]
@@ -569,9 +660,9 @@ func (s *Server) getGrantTransactions(c *gin.Context) {
 	realAddrLower := strings.ToLower(realAddress)
 	labels := make(map[string]string)
 
-	// Resolve viewer's own addresses so we can label them "mine" on the grant page
+	// Resolve viewer's own addresses so we can label them "mine" on the grant page.
+	// viewerDID was resolved and grantee-verified above (RD-1164 #10).
 	viewerAddrs := make(map[string]bool)
-	viewerDID := s.getViewerDIDFromRequest(c)
 	if viewerDID != "" {
 		linked, err := s.db.GetLinkedAddresses(c.Request.Context(), viewerDID)
 		if err == nil {
@@ -618,7 +709,7 @@ func (s *Server) getGrantTransactions(c *gin.Context) {
 			gt.Value = string(tx.Value)
 
 		case "pseudonymous":
-			disclosedPseudonym := explorer.GeneratePseudonym(realAddress)
+			disclosedPseudonym := s.pseudonym(realAddress)
 			labels[disclosedPseudonym] = "disclosed"
 
 			if fromIsDisclosed {
@@ -2282,7 +2373,7 @@ func (s *Server) getExplorerAddressTokenBalances(c *gin.Context) {
 			case explorer.VisibilityFull:
 				filtered = append(filtered, b)
 			case explorer.VisibilityPseudonymous:
-				b.TokenAddress = explorer.GeneratePseudonym(b.TokenAddress)
+				b.TokenAddress = s.pseudonym(b.TokenAddress)
 				filtered = append(filtered, b)
 				// VisibilityHidden, VisibilityRedacted: drop this balance entry
 			}
@@ -2638,7 +2729,7 @@ func (s *Server) getExplorerTokens(c *gin.Context) {
 				t.USDPrice = nil
 				t.IconURL = nil
 			case explorer.VisibilityPseudonymous:
-				pseudonym := explorer.GeneratePseudonym(t.Address)
+				pseudonym := s.pseudonym(t.Address)
 				t.Address = pseudonym
 				t.Name = nil
 				t.Symbol = ""
@@ -2700,7 +2791,7 @@ func (s *Server) getExplorerToken(c *gin.Context) {
 
 	// Redact sensitive fields for non-full visibility.
 	if visibility.Level == VisibilityPseudonymous {
-		pseudonym := explorer.GeneratePseudonym(token.Address)
+		pseudonym := s.pseudonym(token.Address)
 		token.Address = pseudonym
 		token.Name = nil
 		token.Symbol = ""
@@ -2923,7 +3014,7 @@ func (s *Server) getExplorerAccounts(c *gin.Context) {
 			case explorer.VisibilityFull:
 				filtered = append(filtered, a)
 			case explorer.VisibilityPseudonymous:
-				a.Address = explorer.GeneratePseudonym(a.Address)
+				a.Address = s.pseudonym(a.Address)
 				filtered = append(filtered, a)
 				// VisibilityHidden, VisibilityRedacted: drop this account
 			}
@@ -2995,7 +3086,7 @@ func (s *Server) getExplorerSearchSuggestions(c *gin.Context) {
 						continue // drop hidden/restricted address suggestions
 					}
 					if level == explorer.VisibilityPseudonymous {
-						pseudo := explorer.GeneratePseudonym(sug.Value)
+						pseudo := s.pseudonym(sug.Value)
 						sug.Value = pseudo
 						sug.Label = pseudo
 					}

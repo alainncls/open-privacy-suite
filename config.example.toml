@@ -108,6 +108,12 @@ AUTO_KYC_AZURE_SERVICE_PRINCIPAL = false         # Azure AD M2M service principa
 # -----------------------------------------------------------------------------
 RPC_API_KEY_HEADER = "Authorization"
 # RPC_API_KEY and RPC_API_KEY_ENCRYPTION_KEY are secrets — set via env.
+# RPC_API_KEY_ENCRYPTION_KEY must be valid 32-byte hex; the proxy refuses to
+# start on an invalid value instead of silently storing keys in plaintext.
+# Rotate it with: privacy-cli reencrypt-rpc-keys --old-key ... --new-key ...
+
+# EXPLORER_PSEUDONYM_KEY (optional, recommended in production) makes explorer
+# address pseudonyms non-enumerable. It is a secret — set via env, not here.
 
 # -----------------------------------------------------------------------------
 # Audit log integrity

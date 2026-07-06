@@ -283,7 +283,7 @@ func (s *Server) explorerReconnectLoop(dbURL string, rbacDB *db.DB, indexerURL s
 		// explorer redactor mirrors RPC-layer decisions (RD-875 / RD-889 /
 		// RD-890 / RD-939 / event-rule wiring fix). One call site, one
 		// helper — see wireExplorerRedactor for why this is consolidated.
-		wireExplorerRedactor(s.explorerRedactor, rbacDB, s.rbacAccessCtrl, backend)
+		wireExplorerRedactor(s.explorerRedactor, rbacDB, s.rbacAccessCtrl, backend, s.config.ExplorerPseudonymKey)
 		s.explorerMu.Unlock()
 		slog.Info("explorer backend connected — explorer endpoints now available")
 		return
@@ -677,7 +677,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	// Approval, ApprovalForAll, TransferSingle/Batch, Deposit,
 	// Withdrawal). Closes the over-redaction bug where custom-selector
 	// mints to the viewer left them unable to see their own tx.
-	wireExplorerRedactor(s.explorerRedactor, database, s.rbacAccessCtrl, explorerBackend)
+	wireExplorerRedactor(s.explorerRedactor, database, s.rbacAccessCtrl, explorerBackend, cfg.ExplorerPseudonymKey)
 
 	// Start background explorer DB reconnection if initial connection failed
 	if cfg.ExplorerDatabaseURL != "" && explorerSQL == nil {

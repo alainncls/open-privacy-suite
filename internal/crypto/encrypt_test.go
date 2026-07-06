@@ -2,6 +2,7 @@ package crypto
 
 import (
 	"crypto/rand"
+	"strings"
 	"testing"
 )
 
@@ -19,7 +20,7 @@ func TestEncryptDecryptRoundtrip(t *testing.T) {
 		{"empty", ""},
 		{"long", "this-is-a-very-long-api-key-that-contains-many-characters-1234567890"},
 		{"special chars", "key!@#$%^&*()_+-=[]{}|;':\",./<>?"},
-		{"unicode", "key-\u00e9\u00e8\u00ea"},
+		{"unicode", "key-éèê"},
 	}
 
 	for _, tt := range tests {
@@ -66,7 +67,34 @@ func TestEmptyKeyPassthrough(t *testing.T) {
 	}
 }
 
-func TestWrongKeyReturnsEncoded(t *testing.T) {
+// TestVersionedCiphertextFormat verifies Encrypt emits the versioned prefix and
+// IsEncrypted recognises it (RD-1164 #1/#16).
+func TestVersionedCiphertextFormat(t *testing.T) {
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		t.Fatal(err)
+	}
+
+	encrypted, err := Encrypt("sk-live-abc123", key)
+	if err != nil {
+		t.Fatalf("Encrypt() error: %v", err)
+	}
+	if !strings.HasPrefix(encrypted, "encv1:") {
+		t.Errorf("ciphertext should carry the version prefix, got %q", encrypted)
+	}
+	if !IsEncrypted(encrypted) {
+		t.Error("IsEncrypted should be true for a versioned ciphertext")
+	}
+	if IsEncrypted("plain-text-api-key") {
+		t.Error("IsEncrypted should be false for a legacy plaintext value")
+	}
+}
+
+// TestWrongKeyFailsClosed is the RD-1164 #1 regression guard: decrypting a
+// versioned ciphertext with the WRONG key must return an error (fail closed),
+// never the raw ciphertext as "plaintext". Previously Decrypt returned the
+// input verbatim on GCM auth failure, nullifying AEAD integrity.
+func TestWrongKeyFailsClosed(t *testing.T) {
 	key1 := make([]byte, 32)
 	key2 := make([]byte, 32)
 	if _, err := rand.Read(key1); err != nil {
@@ -76,39 +104,62 @@ func TestWrongKeyReturnsEncoded(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	plaintext := "sk-live-abc123"
-
-	encrypted, err := Encrypt(plaintext, key1)
+	encrypted, err := Encrypt("sk-live-abc123", key1)
 	if err != nil {
 		t.Fatalf("Encrypt() error: %v", err)
 	}
 
-	// Decrypting with wrong key should return the encoded string (graceful fallback)
-	decrypted, err := Decrypt(encrypted, key2)
-	if err != nil {
-		t.Fatalf("Decrypt() error: %v", err)
+	got, err := Decrypt(encrypted, key2)
+	if err == nil {
+		t.Fatalf("decrypting a versioned value with the wrong key must fail closed; got %q, nil error", got)
 	}
-
-	// Should return the encoded string, not panic or error
-	if decrypted != encrypted {
-		t.Errorf("wrong key should return encoded string: got %q, want %q", decrypted, encrypted)
+	if got == encrypted {
+		t.Error("Decrypt must not return the ciphertext as plaintext on auth failure")
 	}
 }
 
+// TestTamperedCiphertextFailsClosed guards AEAD integrity: mutating a versioned
+// ciphertext must cause Decrypt to error under the correct key (RD-1164 #1).
+func TestTamperedCiphertextFailsClosed(t *testing.T) {
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		t.Fatal(err)
+	}
+
+	encrypted, err := Encrypt("sk-live-secret", key)
+	if err != nil {
+		t.Fatalf("Encrypt() error: %v", err)
+	}
+
+	// Flip the final character of the base64 payload (part of the GCM tag).
+	b := []byte(encrypted)
+	last := len(b) - 1
+	if b[last] == 'A' {
+		b[last] = 'B'
+	} else {
+		b[last] = 'A'
+	}
+
+	if got, err := Decrypt(string(b), key); err == nil {
+		t.Fatalf("tampered versioned ciphertext must fail closed; got %q, nil error", got)
+	}
+}
+
+// TestLegacyPlaintextDecryption confirms backward compatibility: an unversioned
+// value that is not decryptable is returned verbatim (pre-versioning plaintext).
 func TestLegacyPlaintextDecryption(t *testing.T) {
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
 		t.Fatal(err)
 	}
 
-	// A plaintext value that is not valid base64 should be returned as-is
+	// A plaintext value that is not valid base64 should be returned as-is.
 	legacyPlaintext := "sk-live-abc123!@#"
 
 	decrypted, err := Decrypt(legacyPlaintext, key)
 	if err != nil {
 		t.Fatalf("Decrypt() error: %v", err)
 	}
-
 	if decrypted != legacyPlaintext {
 		t.Errorf("legacy plaintext should passthrough: got %q, want %q", decrypted, legacyPlaintext)
 	}

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -233,6 +234,10 @@ func TestExplorerAPI_GetViewableAddresses_MissingWalletAndDID(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "either wallet or JWT authentication is required")
 }
 
+// TestExplorerAPI_GetViewableAddresses_UnknownWallet verifies that a ?wallet=
+// with NO JWT yields the anonymous empty response (RD-1164 #7): the wallet is
+// echoed back for display, but it is NOT resolved to an identity, so ViewerDID
+// is empty and no own/disclosed addresses are returned.
 func TestExplorerAPI_GetViewableAddresses_UnknownWallet(t *testing.T) {
 	srv, _ := setupTestServerForExplorer(t)
 	router := setupExplorerRouter(srv)
@@ -252,6 +257,44 @@ func TestExplorerAPI_GetViewableAddresses_UnknownWallet(t *testing.T) {
 	assert.Empty(t, resp.DisclosedAddresses)
 }
 
+// TestGetViewableAddresses_WalletParamIsNotAnIdentityOracle is the regression
+// guard for RD-1164 #7. Before the fix, an unauthenticated caller could pass
+// ?wallet=<any linked wallet> and the handler would resolve that wallet to its
+// owner's DID and enumerate every address linked to that identity — a
+// deanonymization / clustering oracle. Now identity comes ONLY from a validated
+// JWT: a caller with no JWT gets the anonymous empty response regardless of the
+// ?wallet= value, even when that wallet is genuinely linked to an identity with
+// its own addresses. This test would fail (leaking testTargetDID + its address)
+// if the wallet→identity fallback were ever reintroduced.
+func TestGetViewableAddresses_WalletParamIsNotAnIdentityOracle(t *testing.T) {
+	srv, database := setupTestServerForExplorer(t)
+	router := setupExplorerRouter(srv)
+
+	// A real, fully-linked victim identity: DID + wallet address on record.
+	createTestUserForExplorer(t, database, testTargetDID)
+	linkEthAddressToUser(t, database, testTargetDID, testTargetAddress)
+
+	// Attacker knows the victim's wallet and probes with it, but has NO JWT.
+	req := httptest.NewRequest("GET", "/api/v1/explorer/viewable-addresses?wallet="+testTargetAddress, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp ViewableAddressesResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+
+	// Oracle is closed: the wallet resolves to NOTHING without a JWT.
+	assert.Empty(t, resp.ViewerDID, "wallet must NOT resolve to an identity without a JWT")
+	assert.Empty(t, resp.OwnAddresses, "must not enumerate the wallet owner's addresses")
+	assert.Empty(t, resp.DisclosedAddresses, "must not enumerate the wallet owner's grants")
+
+	// And nothing about the victim identity leaks into the body.
+	body := w.Body.String()
+	assert.NotContains(t, body, testTargetDID, "victim DID leaked via ?wallet= oracle")
+}
+
 func TestExplorerAPI_GetViewableAddresses_ReturnsOwnAddresses(t *testing.T) {
 	srv, database := setupTestServerForExplorer(t)
 	router := setupExplorerRouter(srv)
@@ -261,7 +304,10 @@ func TestExplorerAPI_GetViewableAddresses_ReturnsOwnAddresses(t *testing.T) {
 	linkEthAddressToUser(t, database, testViewerDID, testViewerWallet)
 	linkEthAddressToUser(t, database, testViewerDID, testViewerAddress2)
 
+	// RD-1164 #7: identity comes from the validated JWT, not ?wallet=. The wallet
+	// param is kept only to assert it is echoed back as ViewerWallet for display.
 	req := httptest.NewRequest("GET", "/api/v1/explorer/viewable-addresses?wallet="+testViewerWallet, nil)
+	addBearerToken(t, req, srv, testViewerDID)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -298,7 +344,9 @@ func TestExplorerAPI_GetViewableAddresses_ReturnsDisclosedAddresses(t *testing.T
 	// Create disclosure grant from viewer to target
 	createDisclosureGrant(t, database, testViewerDID, targetUserID, time.Now().Add(24*time.Hour))
 
+	// RD-1164 #7: identity resolves from the JWT; ?wallet= is only the display echo.
 	req := httptest.NewRequest("GET", "/api/v1/explorer/viewable-addresses?wallet="+testViewerWallet, nil)
+	addBearerToken(t, req, srv, testViewerDID)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -314,7 +362,13 @@ func TestExplorerAPI_GetViewableAddresses_ReturnsDisclosedAddresses(t *testing.T
 	assert.Equal(t, testTargetDID, resp.DisclosedAddresses[0].OwnerDID)
 }
 
-func TestExplorerAPI_GetViewableAddresses_CaseInsensitive(t *testing.T) {
+// TestExplorerAPI_GetViewableAddresses_WalletEchoIsLowercased verifies that the
+// ?wallet= param is echoed back lowercased in ViewerWallet, while identity is
+// resolved from the validated JWT (RD-1164 #7). Wallet-based identity lookup was
+// removed as a deanonymization oracle, so the original "wallet case-insensitive
+// identity" intent is moot; the remaining meaningful assertion is that the
+// display echo is normalized and own addresses still resolve from the JWT.
+func TestExplorerAPI_GetViewableAddresses_WalletEchoIsLowercased(t *testing.T) {
 	srv, database := setupTestServerForExplorer(t)
 	router := setupExplorerRouter(srv)
 
@@ -322,11 +376,12 @@ func TestExplorerAPI_GetViewableAddresses_CaseInsensitive(t *testing.T) {
 	createTestUserForExplorer(t, database, testViewerDID)
 	linkEthAddressToUser(t, database, testViewerDID, testViewerWallet)
 
-	// Query with uppercase wallet
+	// Query with an UPPERCASE wallet; identity comes from the JWT.
 	upperWallet := "0x1111111111111111111111111111111111111111"
-	mixedWallet := "0x1111111111111111111111111111111111111111"
+	expectedLower := strings.ToLower(upperWallet)
 
 	req := httptest.NewRequest("GET", "/api/v1/explorer/viewable-addresses?wallet="+upperWallet, nil)
+	addBearerToken(t, req, srv, testViewerDID)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -335,10 +390,10 @@ func TestExplorerAPI_GetViewableAddresses_CaseInsensitive(t *testing.T) {
 	var resp ViewableAddressesResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
-	assert.Equal(t, mixedWallet, resp.ViewerWallet) // Normalized to lowercase
+	assert.Equal(t, expectedLower, resp.ViewerWallet) // Echo normalized to lowercase
+	assert.Equal(t, testViewerDID, resp.ViewerDID)    // Identity resolved from JWT
 	assert.Len(t, resp.OwnAddresses, 1)
 }
-
 
 // ============================================================================
 // Test: calculateAddressVisibility (internal logic)
@@ -567,7 +622,6 @@ func TestExplorerAPI_GetViewableAddresses_JWTTakesPrecedence(t *testing.T) {
 	assert.Equal(t, testTargetAddress, resp.OwnAddresses[0].Address) // Target's addresses
 }
 
-
 // ============================================================================
 // Test: explorer.GenerateAddressID() - Address ID Generation
 // ============================================================================
@@ -668,51 +722,38 @@ func TestGenerateAddressID_Format(t *testing.T) {
 func TestGeneratePseudonym_Consistency(t *testing.T) {
 	address := "0x1234567890abcdef1234567890abcdef12345678"
 
-	p1 := explorer.GeneratePseudonym(address)
-	p2 := explorer.GeneratePseudonym(address)
+	p1 := explorer.GeneratePseudonym(address, nil)
+	p2 := explorer.GeneratePseudonym(address, nil)
 
 	assert.Equal(t, p1, p2, "generatePseudonym should produce consistent results")
 }
 
 func TestGeneratePseudonym_Format(t *testing.T) {
+	// RD-1164 #8: the 4-letter suffix is HMAC-derived, not a reversible
+	// mapping of the leading nibbles, so we assert the SHAPE (Address- + four
+	// letters in A..P) rather than a hardcoded value.
+	pattern := regexp.MustCompile(`^Address-[A-P]{4}$`)
 	tests := []struct {
-		name     string
-		address  string
-		expected string
+		name    string
+		address string
 	}{
-		{
-			name:     "address starting with 0x1234",
-			address:  "0x1234567890abcdef1234567890abcdef12345678",
-			expected: "Address-BCDE", // 1->B, 2->C, 3->D, 4->E
-		},
-		{
-			name:     "address starting with 0xABCD",
-			address:  "0xABCD567890abcdef1234567890abcdef12345678",
-			expected: "Address-KLMN", // A->K, B->L, C->M, D->N
-		},
-		{
-			name:     "address starting with 0x0000",
-			address:  "0x0000567890abcdef1234567890abcdef12345678",
-			expected: "Address-AAAA", // 0->A, 0->A, 0->A, 0->A
-		},
-		{
-			name:     "address starting with 0xFFFF",
-			address:  "0xFFFF567890abcdef1234567890abcdef12345678",
-			expected: "Address-PPPP", // F->P, F->P, F->P, F->P
-		},
+		{name: "address starting with 0x1234", address: "0x1234567890abcdef1234567890abcdef12345678"},
+		{name: "address starting with 0xABCD", address: "0xABCD567890abcdef1234567890abcdef12345678"},
+		{name: "address starting with 0x0000", address: "0x0000567890abcdef1234567890abcdef12345678"},
+		{name: "address starting with 0xFFFF", address: "0xFFFF567890abcdef1234567890abcdef12345678"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := explorer.GeneratePseudonym(tt.address)
-			assert.Equal(t, tt.expected, result)
+			result := explorer.GeneratePseudonym(tt.address, nil)
+			assert.Regexp(t, pattern, result)
 		})
 	}
 }
 
 func TestGeneratePseudonym_NoAddressLeakage(t *testing.T) {
 	address := "0xdeadbeef12345678deadbeef12345678deadbeef"
-	pseudonym := explorer.GeneratePseudonym(address)
+	pseudonym := explorer.GeneratePseudonym(address, nil)
 
 	// Pseudonym should not contain address parts
 	assert.NotContains(t, pseudonym, "dead")
@@ -729,9 +770,9 @@ func TestGeneratePseudonym_DifferentAddresses(t *testing.T) {
 	addr2 := "0x2222222222222222222222222222222222222222"
 	addr3 := "0xAAAA111111111111111111111111111111111111"
 
-	p1 := explorer.GeneratePseudonym(addr1)
-	p2 := explorer.GeneratePseudonym(addr2)
-	p3 := explorer.GeneratePseudonym(addr3)
+	p1 := explorer.GeneratePseudonym(addr1, nil)
+	p2 := explorer.GeneratePseudonym(addr2, nil)
+	p3 := explorer.GeneratePseudonym(addr3, nil)
 
 	assert.NotEqual(t, p1, p2)
 	assert.NotEqual(t, p1, p3)
@@ -739,14 +780,14 @@ func TestGeneratePseudonym_DifferentAddresses(t *testing.T) {
 }
 
 func TestGeneratePseudonym_ShortAddress(t *testing.T) {
-	// Edge case: address too short
+	// Edge case: address too short (< 4 hex chars after 0x)
 	shortAddr := "0x12"
-	result := explorer.GeneratePseudonym(shortAddr)
+	result := explorer.GeneratePseudonym(shortAddr, nil)
 	assert.Equal(t, "Address-Unknown", result)
 
 	// Very short
 	veryShort := "0x"
-	result2 := explorer.GeneratePseudonym(veryShort)
+	result2 := explorer.GeneratePseudonym(veryShort, nil)
 	assert.Equal(t, "Address-Unknown", result2)
 }
 
@@ -754,8 +795,8 @@ func TestGeneratePseudonym_CaseInsensitive(t *testing.T) {
 	lower := "0xabcd567890abcdef1234567890abcdef12345678"
 	upper := "0xABCD567890ABCDEF1234567890ABCDEF12345678"
 
-	pLower := explorer.GeneratePseudonym(lower)
-	pUpper := explorer.GeneratePseudonym(upper)
+	pLower := explorer.GeneratePseudonym(lower, nil)
+	pUpper := explorer.GeneratePseudonym(upper, nil)
 
 	assert.Equal(t, pLower, pUpper, "Pseudonyms should be case-insensitive")
 }
@@ -807,7 +848,9 @@ func TestGetDisclosedAddressesForViewer_FullDisclosure(t *testing.T) {
 	// Create full disclosure grant
 	createDisclosureGrantWithLevel(t, database, testViewerDID, targetUserID, disclosure.DisclosureFull, time.Now().Add(24*time.Hour))
 
+	// RD-1164 #7: authenticate as the viewer via JWT so identity resolves.
 	req := httptest.NewRequest("GET", "/api/v1/explorer/viewable-addresses?wallet="+testViewerWallet, nil)
+	addBearerToken(t, req, srv, testViewerDID)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -842,7 +885,9 @@ func TestGetDisclosedAddressesForViewer_PseudonymousDisclosure(t *testing.T) {
 	// Create pseudonymous disclosure grant
 	createDisclosureGrantWithLevel(t, database, testViewerDID, targetUserID, disclosure.DisclosurePseudonymous, time.Now().Add(24*time.Hour))
 
+	// RD-1164 #7: authenticate as the viewer via JWT so identity resolves.
 	req := httptest.NewRequest("GET", "/api/v1/explorer/viewable-addresses?wallet="+testViewerWallet, nil)
+	addBearerToken(t, req, srv, testViewerDID)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -879,7 +924,9 @@ func TestGetDisclosedAddressesForViewer_RedactedDisclosure(t *testing.T) {
 	// Create redacted disclosure grant
 	createDisclosureGrantWithLevel(t, database, testViewerDID, targetUserID, disclosure.DisclosureRedacted, time.Now().Add(24*time.Hour))
 
+	// RD-1164 #7: authenticate as the viewer via JWT so identity resolves.
 	req := httptest.NewRequest("GET", "/api/v1/explorer/viewable-addresses?wallet="+testViewerWallet, nil)
+	addBearerToken(t, req, srv, testViewerDID)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -910,8 +957,11 @@ func setupExplorerRouterWithResolve(srv *Server) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 
-	// Explorer routes without localhost middleware for unit tests
+	// Explorer routes without localhost middleware for unit tests, but WITH the
+	// optional JWT middleware so bearer tokens set by addBearerToken are parsed
+	// (RD-1164 #10: resolveAddressID now requires the grantee's viewer DID).
 	explorer := router.Group("/api/v1/explorer")
+	explorer.Use(auth.OptionalJWTAuthMiddleware(srv.jwtService, srv.db))
 	explorer.GET("/viewable-addresses", srv.getViewableAddresses)
 	explorer.GET("/grant/:grant_id/resolve/:address_id", srv.resolveAddressID)
 
@@ -937,6 +987,7 @@ func TestResolveAddressID_Success(t *testing.T) {
 	addressID := explorer.GenerateAddressID(testTargetAddress, grantID)
 
 	req := httptest.NewRequest("GET", "/api/v1/explorer/grant/"+grantID+"/resolve/"+addressID, nil)
+	addBearerToken(t, req, srv, testViewerDID) // RD-1164 #10: authenticate as the grant's requester
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -970,6 +1021,7 @@ func TestResolveAddressID_PseudonymousIncludesPseudonym(t *testing.T) {
 	addressID := explorer.GenerateAddressID(testTargetAddress, grantID)
 
 	req := httptest.NewRequest("GET", "/api/v1/explorer/grant/"+grantID+"/resolve/"+addressID, nil)
+	addBearerToken(t, req, srv, testViewerDID) // RD-1164 #10: authenticate as the grant's requester
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -1014,6 +1066,7 @@ func TestResolveAddressID_InvalidAddressID(t *testing.T) {
 
 	// Use wrong address ID
 	req := httptest.NewRequest("GET", "/api/v1/explorer/grant/"+grantID+"/resolve/invalid-address-id", nil)
+	addBearerToken(t, req, srv, testViewerDID) // RD-1164 #10: authenticate as the grant's requester
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -1039,6 +1092,7 @@ func TestResolveAddressID_ExpiredGrant(t *testing.T) {
 	addressID := explorer.GenerateAddressID(testTargetAddress, grantID)
 
 	req := httptest.NewRequest("GET", "/api/v1/explorer/grant/"+grantID+"/resolve/"+addressID, nil)
+	addBearerToken(t, req, srv, testViewerDID) // RD-1164 #10: authenticate as the grant's requester
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -1071,6 +1125,7 @@ func TestResolveAddressID_RevokedGrant(t *testing.T) {
 	addressID := explorer.GenerateAddressID(testTargetAddress, grantID)
 
 	req := httptest.NewRequest("GET", "/api/v1/explorer/grant/"+grantID+"/resolve/"+addressID, nil)
+	addBearerToken(t, req, srv, testViewerDID) // RD-1164 #10: authenticate as the grant's requester
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -1111,7 +1166,9 @@ func TestSecurity_PseudonymousDoesNotLeakRealAddress(t *testing.T) {
 	// Create pseudonymous grant
 	createDisclosureGrantWithLevel(t, database, testViewerDID, targetUserID, disclosure.DisclosurePseudonymous, time.Now().Add(24*time.Hour))
 
+	// RD-1164 #7: authenticate as the viewer so the pseudonymization path runs.
 	req := httptest.NewRequest("GET", "/api/v1/explorer/viewable-addresses?wallet="+testViewerWallet, nil)
+	addBearerToken(t, req, srv, testViewerDID)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -1139,7 +1196,9 @@ func TestSecurity_RedactedDoesNotLeakRealAddress(t *testing.T) {
 	// Create redacted grant
 	createDisclosureGrantWithLevel(t, database, testViewerDID, targetUserID, disclosure.DisclosureRedacted, time.Now().Add(24*time.Hour))
 
+	// RD-1164 #7: authenticate as the viewer so the redaction path runs.
 	req := httptest.NewRequest("GET", "/api/v1/explorer/viewable-addresses?wallet="+testViewerWallet, nil)
+	addBearerToken(t, req, srv, testViewerDID)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -1195,7 +1254,9 @@ func TestEdgeCase_NullAddressInGrant(t *testing.T) {
 	// Create grant
 	createDisclosureGrantWithLevel(t, database, testViewerDID, targetUserID, disclosure.DisclosureFull, time.Now().Add(24*time.Hour))
 
+	// RD-1164 #7: authenticate as the viewer via JWT so identity resolves.
 	req := httptest.NewRequest("GET", "/api/v1/explorer/viewable-addresses?wallet="+testViewerWallet, nil)
+	addBearerToken(t, req, srv, testViewerDID)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -1231,7 +1292,9 @@ func TestEdgeCase_MultipleAddressesSameGrant(t *testing.T) {
 	// Create single grant (should cover all addresses)
 	createDisclosureGrantWithLevel(t, database, testViewerDID, targetUserID, disclosure.DisclosurePseudonymous, time.Now().Add(24*time.Hour))
 
+	// RD-1164 #7: authenticate as the viewer via JWT so identity resolves.
 	req := httptest.NewRequest("GET", "/api/v1/explorer/viewable-addresses?wallet="+testViewerWallet, nil)
+	addBearerToken(t, req, srv, testViewerDID)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -1269,11 +1332,17 @@ func TestEdgeCase_ConcurrentAccess(t *testing.T) {
 
 	createDisclosureGrantWithLevel(t, database, testViewerDID, targetUserID, disclosure.DisclosureFull, time.Now().Add(24*time.Hour))
 
+	// RD-1164 #7: identity resolves from the JWT. Issue the token once on the
+	// test goroutine (issueTestJWT uses t/require, which are not safe to call
+	// from the spawned goroutines) and set it on each concurrent request.
+	token := issueTestJWT(t, srv, testViewerDID)
+
 	// Make concurrent requests
 	done := make(chan bool, 10)
 	for i := 0; i < 10; i++ {
 		go func() {
 			req := httptest.NewRequest("GET", "/api/v1/explorer/viewable-addresses?wallet="+testViewerWallet, nil)
+			req.Header.Set("Authorization", "Bearer "+token)
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
 			assert.Equal(t, http.StatusOK, w.Code)
