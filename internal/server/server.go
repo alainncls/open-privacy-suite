@@ -1020,16 +1020,13 @@ func (s *Server) setupRouter() *gin.Engine {
 	router.Use(s.corsMiddleware())
 
 	// Health check endpoint (no auth required)
-	// Support both GET and HEAD for healthchecks (wget --spider uses HEAD)
-	healthHandler := func(c *gin.Context) {
-		if c.Request.Method == http.MethodHead {
-			c.Status(http.StatusOK)
-		} else {
-			c.JSON(http.StatusOK, gin.H{"status": "ok"})
-		}
-	}
-	router.GET("/health", healthHandler)
-	router.HEAD("/health", healthHandler)
+	router.GET("/health", s.handleHealth)
+	router.HEAD("/health", s.handleHealth)
+
+	// Generated OpenAPI document (RD-1166). Public by design: it is the
+	// published API reference (open-source project) and serves static
+	// embedded bytes — no DB or upstream work.
+	router.GET("/openapi.json", s.handleOpenAPISpec)
 
 	// Prometheus metrics endpoint — restricted to private network
 	metricsHandler := promhttp.HandlerFor(s.metrics.Registry, promhttp.HandlerOpts{})
@@ -1232,6 +1229,24 @@ func (s *Server) setupRouter() *gin.Engine {
 	}
 
 	return router
+}
+
+// handleHealth reports liveness. Registered for GET and HEAD (wget --spider
+// style healthchecks use HEAD).
+//
+// @Summary      Health check
+// @Description  Liveness probe. GET returns {"status":"ok"}; HEAD returns an empty 200.
+// @Tags         System
+// @Produce      json
+// @Success      200 {object} healthResponse
+// @Router       /health [get]
+// @Router       /health [head]
+func (s *Server) handleHealth(c *gin.Context) {
+	if c.Request.Method == http.MethodHead {
+		c.Status(http.StatusOK)
+		return
+	}
+	c.JSON(http.StatusOK, healthResponse{Status: "ok"})
 }
 
 // MaxRequestBodySize is the maximum allowed request body size (1MB).

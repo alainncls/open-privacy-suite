@@ -1,0 +1,457 @@
+components:
+  schemas:
+    server.APIError:
+      properties:
+        error:
+          example: invalid request
+          type: string
+      type: object
+    server.APIMessage:
+      properties:
+        message:
+          example: address unlinked successfully
+          type: string
+      type: object
+    server.ChallengeResponse:
+      properties:
+        message:
+          type: string
+        nonce:
+          type: string
+      type: object
+    server.EthAddressListResponse:
+      properties:
+        addresses:
+          items:
+            $ref: '#/components/schemas/server.EthAddressResponse'
+          type: array
+          uniqueItems: false
+      type: object
+    server.EthAddressResponse:
+      properties:
+        address:
+          type: string
+        ens_name:
+          type: string
+        ens_resolved_at:
+          type: string
+        verified_at:
+          type: string
+      type: object
+    server.EthLinkENSResponse:
+      properties:
+        address:
+          example: 0x70997970c51812dc3a010c7d01b50e0d17dc79c8
+          type: string
+        ens_name:
+          example: alice.eth
+          type: string
+      type: object
+    server.EthLinkVerifyResponse:
+      properties:
+        address:
+          example: 0x70997970c51812dc3a010c7d01b50e0d17dc79c8
+          type: string
+        message:
+          example: address linked successfully
+          type: string
+      type: object
+    server.VerifyLinkRequest:
+      properties:
+        address:
+          type: string
+        nonce:
+          type: string
+        signature:
+          type: string
+      required:
+      - address
+      - nonce
+      - signature
+      type: object
+    server.healthResponse:
+      properties:
+        status:
+          example: ok
+          type: string
+      type: object
+    server.systemVersionResponse:
+      properties:
+        build_time:
+          type: string
+        commit:
+          type: string
+        version:
+          type: string
+      type: object
+  securitySchemes:
+    AdminToken:
+      description: Admin API token (full admin, or the restricted operator token).
+        Admin endpoints additionally require a private-network source address.
+      in: header
+      name: X-Admin-Token
+      type: apiKey
+    BearerAuth:
+      bearerFormat: JWT
+      description: 'JWT issued by the auth endpoints, sent as `Authorization: Bearer
+        <token>`.'
+      scheme: bearer
+      type: http
+externalDocs:
+  description: ""
+  url: ""
+info:
+  contact:
+    name: Gateway.fm
+    url: https://gateway.fm
+  description: |-
+    REST control-plane and data API of the Gateway Privacy Proxy: authentication (Privado ID wallet flow, Azure AD), ETH address linking, user profile and disclosure, RBAC / compliance / system administration, the block-explorer data API, and the proxied Ethereum JSON-RPC endpoint.
+
+    **Authentication.** User endpoints take a Bearer JWT issued by the auth endpoints (`Authorization: Bearer <token>`). `/api/v1/admin/*` requires the `X-Admin-Token` header and is additionally reachable only from private-network addresses. `/api/v1/explorer/*` serves the explorer backend and is private-network only.
+
+    **Aliases.** Every `/api/v1/eth/*` endpoint is also mounted at `/eth/*`; the auth endpoints are also mounted at the root (`/auth/...`, `/refresh`, `/revoke`, `/introspect`). Legacy unversioned `/api/*` mounts are deprecated and respond with an `X-Deprecated` header. Aliases are intentionally not listed as separate operations. `POST /` is the same operation as `POST /rpc`.
+
+    **Dev-only.** A small number of operations exist only in non-production builds and say so in their descriptions.
+  title: Privacy Proxy REST API
+  version: "1.0"
+openapi: 3.1.0
+paths:
+  /api/v1/admin/system/version:
+    get:
+      description: Build identity (version, commit, build time) of the running binary.
+        Read-only; any admin token. Deliberately not exposed on /health or web3_clientVersion.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/server.systemVersionResponse'
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/server.APIError'
+          description: missing or invalid admin token
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/server.APIError'
+          description: source address not on the private network
+      security:
+      - AdminToken: []
+      summary: Build version of the running proxy
+      tags:
+      - 'Admin: system'
+  /api/v1/eth/addresses:
+    get:
+      description: Lists the Ethereum addresses linked to the caller's DID, with verification
+        time and any resolved ENS name.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/server.EthAddressListResponse'
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/server.APIError'
+          description: missing or invalid token
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/server.APIError'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List linked ETH addresses
+      tags:
+      - ETH linking
+  /api/v1/eth/addresses/{address}:
+    delete:
+      description: Revokes the link between the address and the caller's DID. A revoked
+        link cannot be re-created without administrator intervention.
+      parameters:
+      - description: ETH address (0x-prefixed hex)
+        in: path
+        name: address
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/server.APIMessage'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/server.APIError'
+          description: address parameter required
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/server.APIError'
+          description: missing or invalid token
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/server.APIError'
+          description: address not linked to your account
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/server.APIError'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Unlink an ETH address
+      tags:
+      - ETH linking
+  /api/v1/eth/addresses/{address}/refresh-ens:
+    post:
+      description: Re-resolves the ENS name for one of the caller's linked addresses
+        and stores the result (which may be empty).
+      parameters:
+      - description: ETH address (0x-prefixed hex)
+        in: path
+        name: address
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/server.EthLinkENSResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/server.APIError'
+          description: address parameter required
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/server.APIError'
+          description: missing or invalid token
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/server.APIError'
+          description: address not linked to your account
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/server.APIError'
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/server.APIError'
+          description: ENS resolver not configured
+      security:
+      - BearerAuth: []
+      summary: Refresh the ENS name of a linked address
+      tags:
+      - ETH linking
+  /api/v1/eth/link/challenge:
+    post:
+      description: Issues a one-time challenge message for the caller to sign with
+        their Ethereum key, proving key ownership before the address is linked to
+        the authenticated DID. The nonce is single-use and expires after a short TTL.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/server.ChallengeResponse'
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/server.APIError'
+          description: missing or invalid token
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/server.APIError'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Create an ETH address link challenge
+      tags:
+      - ETH linking
+  /api/v1/eth/link/verify:
+    post:
+      description: 'Verifies the signature over the challenge message and links the
+        address to the caller''s DID. Fail-closed: an invalid or expired nonce, a
+        challenge issued to a different DID, a malformed address, or a bad signature
+        all reject the link.'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/server.VerifyLinkRequest'
+                description: signed challenge
+                summary: request
+        description: signed challenge
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/server.EthLinkVerifyResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/server.APIError'
+          description: invalid body, nonce, address format, or signature
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/server.APIError'
+          description: missing or invalid token
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/server.APIError'
+          description: challenge belongs to another user, or the link was revoked
+            by an administrator
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/server.APIError'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Verify a signed challenge and link the address
+      tags:
+      - ETH linking
+  /health:
+    get:
+      description: Liveness probe. GET returns {"status":"ok"}; HEAD returns an empty
+        200.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/server.healthResponse'
+          description: OK
+      summary: Health check
+      tags:
+      - System
+    head:
+      description: Liveness probe. GET returns {"status":"ok"}; HEAD returns an empty
+        200.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/server.healthResponse'
+          description: OK
+      summary: Health check
+      tags:
+      - System
+  /metrics:
+    get:
+      description: Prometheus text exposition of the proxy's metrics. Private-network
+        only.
+      responses:
+        "200":
+          content:
+            text/plain:
+              schema:
+                type: string
+          description: Prometheus text exposition format
+        "403":
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/server.APIError'
+          description: source address not on the private network
+      summary: Prometheus metrics
+      tags:
+      - System
+  /openapi.json:
+    get:
+      description: The full generated OpenAPI document for this API — the same file
+        the docs site renders. Regenerated from handler annotations on every merge.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: OpenAPI 3.1 document
+      summary: OpenAPI specification
+      tags:
+      - System
+tags:
+- description: 'Session authentication: Privado ID wallet flow, Azure AD (interactive
+    and service principal), token refresh/revoke/introspection.'
+  name: Auth
+- description: OAuth 2.0 endpoints the proxy exposes as an identity provider (used
+    by the block explorer for SSO).
+  name: OAuth SSO
+- description: 'The proxied Ethereum JSON-RPC endpoint: method allowlist, RBAC, response
+    redaction. Also mounted at POST /.'
+  name: JSON-RPC
+- description: Linking Ethereum addresses to the authenticated DID by signature challenge.
+  name: ETH linking
+- description: The authenticated user's own profile.
+  name: Profile
+- description: Disclosure requests and grants, from the data owner's side.
+  name: Disclosure (user)
+- description: Privacy-filtered chain data for the block explorer backend (private
+    network only).
+  name: Explorer
+- description: Organizations, groups, users, memberships, contracts, and grants.
+  name: 'Admin: RBAC'
+- description: Administering disclosure requests.
+  name: 'Admin: disclosure'
+- description: Travel-rule compliance configuration, sanctions lists, and token prices.
+  name: 'Admin: compliance'
+- description: 'Read-only "view as user" mirror: the explorer and JSON-RPC surfaces
+    re-mounted under /api/v1/admin/impersonate/{target_did}/in/{org_id}/..., GET-only,
+    tier-2 admin gated, per-request audited. The mirrored operations are documented
+    once, under their canonical /api/v1/explorer and /rpc paths.'
+  name: 'Admin: impersonation'
+- description: Fleet-level shared contract infrastructure and Azure tenant administration.
+  name: 'Admin: shared infrastructure'
+- description: Fleet-level system toggles and build identity.
+  name: 'Admin: system'
+- description: 'Operational admin endpoints: access logs, status, and test requests.'
+  name: 'Admin: ops'
+- description: Health, metrics, and this specification.
+  name: System

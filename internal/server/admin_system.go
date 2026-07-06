@@ -30,6 +30,16 @@ type systemVersionResponse struct {
 // build identity is operational data for ops/support, so it lives behind the
 // admin surface (plus the startup log line and the Prometheus build_info
 // label).
+//
+// @Summary      Build version of the running proxy
+// @Description  Build identity (version, commit, build time) of the running binary. Read-only; any admin token. Deliberately not exposed on /health or web3_clientVersion.
+// @Tags         Admin: system
+// @Produce      json
+// @Success      200 {object} systemVersionResponse
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network"
+// @Security     AdminToken
+// @Router       /api/v1/admin/system/version [get]
 func (s *Server) handleGetVersion(c *gin.Context) {
 	c.JSON(http.StatusOK, systemVersionResponse{
 		Version:   version.Version,

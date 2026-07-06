@@ -148,6 +148,16 @@ type EthAddressResponse struct {
 }
 
 // handleEthLinkChallenge handles POST /eth/link/challenge - create a challenge to sign
+//
+// @Summary      Create an ETH address link challenge
+// @Description  Issues a one-time challenge message for the caller to sign with their Ethereum key, proving key ownership before the address is linked to the authenticated DID. The nonce is single-use and expires after a short TTL.
+// @Tags         ETH linking
+// @Produce      json
+// @Success      200 {object} ChallengeResponse
+// @Failure      401 {object} APIError "missing or invalid token"
+// @Failure      500 {object} APIError
+// @Security     BearerAuth
+// @Router       /api/v1/eth/link/challenge [post]
 func (s *Server) handleEthLinkChallenge(c *gin.Context) {
 	// Get user DID from JWT context
 	subject, exists := c.Get("subject")
@@ -176,6 +186,20 @@ func (s *Server) handleEthLinkChallenge(c *gin.Context) {
 }
 
 // handleEthLinkVerify handles POST /eth/link/verify - verify signature and link address
+//
+// @Summary      Verify a signed challenge and link the address
+// @Description  Verifies the signature over the challenge message and links the address to the caller's DID. Fail-closed: an invalid or expired nonce, a challenge issued to a different DID, a malformed address, or a bad signature all reject the link.
+// @Tags         ETH linking
+// @Accept       json
+// @Produce      json
+// @Param        request body VerifyLinkRequest true "signed challenge"
+// @Success      200 {object} EthLinkVerifyResponse
+// @Failure      400 {object} APIError "invalid body, nonce, address format, or signature"
+// @Failure      401 {object} APIError "missing or invalid token"
+// @Failure      403 {object} APIError "challenge belongs to another user, or the link was revoked by an administrator"
+// @Failure      500 {object} APIError
+// @Security     BearerAuth
+// @Router       /api/v1/eth/link/verify [post]
 func (s *Server) handleEthLinkVerify(c *gin.Context) {
 	// Get user DID from JWT context
 	subject, exists := c.Get("subject")
@@ -296,6 +320,16 @@ func (s *Server) handleEthLinkVerify(c *gin.Context) {
 }
 
 // handleGetEthAddresses handles GET /eth/addresses - list linked addresses for current user
+//
+// @Summary      List linked ETH addresses
+// @Description  Lists the Ethereum addresses linked to the caller's DID, with verification time and any resolved ENS name.
+// @Tags         ETH linking
+// @Produce      json
+// @Success      200 {object} EthAddressListResponse
+// @Failure      401 {object} APIError "missing or invalid token"
+// @Failure      500 {object} APIError
+// @Security     BearerAuth
+// @Router       /api/v1/eth/addresses [get]
 func (s *Server) handleGetEthAddresses(c *gin.Context) {
 	// Get user DID from JWT context
 	subject, exists := c.Get("subject")
@@ -333,6 +367,19 @@ func (s *Server) handleGetEthAddresses(c *gin.Context) {
 }
 
 // handleDeleteEthAddress handles DELETE /eth/addresses/:address - unlink an address
+//
+// @Summary      Unlink an ETH address
+// @Description  Revokes the link between the address and the caller's DID. A revoked link cannot be re-created without administrator intervention.
+// @Tags         ETH linking
+// @Produce      json
+// @Param        address path string true "ETH address (0x-prefixed hex)"
+// @Success      200 {object} APIMessage
+// @Failure      400 {object} APIError "address parameter required"
+// @Failure      401 {object} APIError "missing or invalid token"
+// @Failure      404 {object} APIError "address not linked to your account"
+// @Failure      500 {object} APIError
+// @Security     BearerAuth
+// @Router       /api/v1/eth/addresses/{address} [delete]
 func (s *Server) handleDeleteEthAddress(c *gin.Context) {
 	// Get user DID from JWT context
 	subject, exists := c.Get("subject")
@@ -374,6 +421,20 @@ func (s *Server) handleDeleteEthAddress(c *gin.Context) {
 }
 
 // handleRefreshENS handles POST /eth/addresses/:address/refresh-ens - refresh ENS name for an address
+//
+// @Summary      Refresh the ENS name of a linked address
+// @Description  Re-resolves the ENS name for one of the caller's linked addresses and stores the result (which may be empty).
+// @Tags         ETH linking
+// @Produce      json
+// @Param        address path string true "ETH address (0x-prefixed hex)"
+// @Success      200 {object} EthLinkENSResponse
+// @Failure      400 {object} APIError "address parameter required"
+// @Failure      401 {object} APIError "missing or invalid token"
+// @Failure      404 {object} APIError "address not linked to your account"
+// @Failure      500 {object} APIError
+// @Failure      503 {object} APIError "ENS resolver not configured"
+// @Security     BearerAuth
+// @Router       /api/v1/eth/addresses/{address}/refresh-ens [post]
 func (s *Server) handleRefreshENS(c *gin.Context) {
 	// Get user DID from JWT context
 	subject, exists := c.Get("subject")

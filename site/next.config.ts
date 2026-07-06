@@ -4,10 +4,24 @@ import path from "node:path";
 
 const isDev = process.env.NODE_ENV === "development";
 
+const basePath =
+  process.env.DOCS_BASE_PATH !== undefined
+    ? process.env.DOCS_BASE_PATH
+    : isDev
+      ? ""
+      : "/privacy-proxy";
+
 const nextConfig: NextConfig = {
   pageExtensions: ["ts", "tsx", "md", "mdx"],
   ...(isDev ? {} : { output: "export" }),
-  basePath: process.env.DOCS_BASE_PATH !== undefined ? process.env.DOCS_BASE_PATH : (isDev ? "" : "/privacy-proxy"),
+  basePath,
+  env: {
+    // Expose the base path to client/server components so non-route assets
+    // in public/ (e.g. /openapi.json) can be referenced with the correct
+    // GitHub Pages prefix. next/link handles this automatically for routes;
+    // plain fetches and <a href> do not.
+    NEXT_PUBLIC_BASE_PATH: basePath,
+  },
   trailingSlash: true,
   images: {
     unoptimized: true,
