@@ -31,26 +31,9 @@ type RouteEntry struct {
 // the production table: it adds the dev-gated routes (/auth/verify mounts,
 // /api/v1/dev/test-identities).
 func RoutesForSpec(includeDev bool) []RouteEntry {
-	prevMode := gin.Mode()
-	gin.SetMode(gin.TestMode)
-	defer gin.SetMode(prevMode)
+	router, stop := specRouter(includeDev)
+	defer stop()
 
-	env := "production"
-	if includeDev {
-		env = "development"
-	}
-	s := &Server{
-		config: &config.Config{
-			Environment:        env,
-			AllowMockLogin:     includeDev,
-			CORSAllowedOrigins: "*",
-		},
-		metrics:         metrics.NewNoop(),
-		authRateLimiter: NewAuthRateLimiter(DevAuthRateLimiterConfig()),
-	}
-	defer s.authRateLimiter.Stop()
-
-	router := s.setupRouter()
 	routes := router.Routes()
 	entries := make([]RouteEntry, 0, len(routes))
 	for _, r := range routes {
@@ -67,6 +50,34 @@ func RoutesForSpec(includeDev bool) []RouteEntry {
 		return entries[i].Method < entries[j].Method
 	})
 	return entries
+}
+
+// specRouter builds the full route table on a minimal, never-run Server (see
+// RoutesForSpec). The returned engine carries the real middleware chains —
+// with the admin token gate ARMED (a non-empty AdminAPIToken) — so spec
+// tooling can also probe pre-handler behavior (the anonymous-denial authz
+// gate in openapi_authz_test.go). Handlers must not be reached with a real
+// principal: everything behind the middleware is nil.
+func specRouter(includeDev bool) (router *gin.Engine, stop func()) {
+	prevMode := gin.Mode()
+	gin.SetMode(gin.TestMode)
+	defer gin.SetMode(prevMode)
+
+	env := "production"
+	if includeDev {
+		env = "development"
+	}
+	s := &Server{
+		config: &config.Config{
+			Environment:        env,
+			AllowMockLogin:     includeDev,
+			CORSAllowedOrigins: "*",
+			AdminAPIToken:      "spec-router-armed-admin-gate",
+		},
+		metrics:         metrics.NewNoop(),
+		authRateLimiter: NewAuthRateLimiter(DevAuthRateLimiterConfig()),
+	}
+	return s.setupRouter(), s.authRateLimiter.Stop
 }
 
 // ginPathToOpenAPI converts gin path parameters (:id, *rest) to OpenAPI
