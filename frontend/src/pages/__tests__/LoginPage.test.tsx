@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { BrowserRouter, MemoryRouter } from 'react-router-dom';
@@ -433,6 +433,73 @@ describe('LoginPage', () => {
         configurable: true,
       });
       getAzureAuthURLSpy.mockRestore();
+    });
+  });
+
+  describe('OAuth mode — silent SSO', () => {
+    const SID = 'oauth-sess-1';
+    const ROUTE = `/login?oauth_session=${SID}`;
+    const info = { auth_request: { id: 'x', typ: 't', type: 't', thid: 'x', body: {} }, allow_mock: true };
+
+    // window.location is a global; restore it in afterEach so a test that fails
+    // or throws before cleanup can't leak the mock into later tests.
+    let restoreLocation: (() => void) | null = null;
+    afterEach(() => {
+      restoreLocation?.();
+      restoreLocation = null;
+    });
+
+    function mockLocation() {
+      const original = window.location;
+      const mock = { ...original, href: original.href, origin: original.origin, assign: () => {} };
+      Object.defineProperty(window, 'location', { value: mock, writable: true, configurable: true });
+      restoreLocation = () => Object.defineProperty(window, 'location', { value: original, writable: true, configurable: true });
+      return { mock };
+    }
+
+    it('attempts cookie-based silent SSO even with no in-tab session', async () => {
+      let silentCalled = 0;
+      server.use(
+        http.post(`/oauth/session/${SID}/silent-complete`, () => { silentCalled++; return HttpResponse.json({ completed: false }); }),
+        http.get(`/oauth/session/${SID}/info`, () => HttpResponse.json(info)),
+      );
+      renderLoginPage(ROUTE); // sessionStorage cleared in beforeEach => not authenticated
+      await waitFor(() => expect(silentCalled).toBeGreaterThan(0));
+    });
+
+    it('falls through to the interactive picker when silent SSO is refused', async () => {
+      let infoCalled = 0;
+      server.use(
+        http.post(`/oauth/session/${SID}/silent-complete`, () => new HttpResponse(null, { status: 403 })),
+        http.get(`/oauth/session/${SID}/info`, () => { infoCalled++; return HttpResponse.json(info); }),
+      );
+      renderLoginPage(ROUTE);
+      await waitFor(() => expect(infoCalled).toBeGreaterThan(0));
+    });
+
+    it('redirects to the app when silent SSO succeeds', async () => {
+      const redirectUrl = 'https://explorer.example/api/auth/callback?code=abc&state=xyz';
+      server.use(
+        http.post(`/oauth/session/${SID}/silent-complete`, () => HttpResponse.json({ completed: true, redirect_url: redirectUrl })),
+      );
+      const loc = mockLocation();
+      renderLoginPage(ROUTE);
+      await waitFor(() => expect(loc.mock.href).toBe(redirectUrl));
+    });
+
+    it('reuses the current DID via mock-complete when authenticated and silent SSO is refused', async () => {
+      const payload = { sub: 'did:test:alice', exp: Math.floor(Date.now() / 1000) + 3600 };
+      const token = `header.${btoa(JSON.stringify(payload))}.sig`;
+      sessionStorage.setItem('privacy_proxy_auth', JSON.stringify({ accessToken: token, refreshToken: 'r', expiresAt: Date.now() + 3600000 }));
+      let mockBody = null;
+      server.use(
+        http.post(`/oauth/session/${SID}/silent-complete`, () => new HttpResponse(null, { status: 403 })),
+        http.post(`/oauth/session/${SID}/mock-complete`, async ({ request }) => { mockBody = await request.json().catch(() => null); return HttpResponse.json({ ok: true, did: 'did:test:alice' }); }),
+        http.get(`/oauth/session/${SID}/status`, () => HttpResponse.json({ completed: true, redirect_url: 'https://explorer.example/api/auth/callback?code=1' })),
+      );
+      mockLocation(); // installed so the redirect on completion can't navigate the test runner
+      renderLoginPage(ROUTE);
+      await waitFor(() => expect(mockBody).toEqual({ did: 'did:test:alice' }));
     });
   });
 });
