@@ -136,6 +136,18 @@ func runReencryptRPCKeys(args []string) {
 	for _, r := range toProcess {
 		scanned++
 
+		// Guard against double-encryption (Copilot review). With an empty --old-key,
+		// crypto.Decrypt returns the stored value verbatim (empty-key passthrough) —
+		// even for a versioned encv1: ciphertext — which would then be re-encrypted
+		// under --new-key, irreversibly corrupting the key. An empty old key is only
+		// valid when values are genuinely plaintext, so refuse to touch any value that
+		// is already in the versioned ciphertext form when no old key was supplied.
+		if len(oldKey) == 0 && crypto.IsEncrypted(r.stored) {
+			fmt.Fprintf(os.Stderr, "WARNING: group %s: value is already encrypted (encv1:) but no --old-key was supplied; skipping to avoid double-encryption — pass the current key via --old-key or RPC_API_KEY_ENCRYPTION_KEY\n", r.id)
+			skippedErrors++
+			continue
+		}
+
 		plain, err := crypto.Decrypt(r.stored, oldKey)
 		if err != nil {
 			// A versioned value that fails to authenticate under the old key:
