@@ -897,33 +897,6 @@ func (s *Server) getGrantActivityLogs(c *gin.Context) {
 // override. The ?wallet= viewer path it carried was also a viewer-impersonation
 // oracle and is gone with it.
 
-// resolveViewerDID resolves the viewer's DID from an explicit DID or wallet address.
-// Returns empty string if neither is provided or the wallet has no linked DID.
-func (s *Server) resolveViewerDID(ctx context.Context, wallet, did string) string {
-	if did != "" {
-		return did
-	}
-	if wallet != "" {
-		viewerDID, err := s.db.GetDIDByEthAddress(ctx, wallet)
-		if err != nil {
-			return ""
-		}
-		return viewerDID
-	}
-	return ""
-}
-
-// calculateAddressVisibility determines the visibility of a target address for a wallet-based viewer.
-// Delegates to GetBatchVisibilityDetailed so the visibility decision is made by the same
-// code path that the RedactionEngine uses (via GetBatchVisibility).
-func (s *Server) calculateAddressVisibility(ctx context.Context, viewerWallet, targetAddress string) AddressVisibility {
-	return s.calculateAddressVisibilityWithDID(ctx, viewerWallet, "", targetAddress)
-}
-
-// calculateAddressVisibilityWithDID determines the visibility of a single address.
-// It delegates to GetBatchVisibilityDetailed (single-element batch) so that the
-// visibility level decision matches the RedactionEngine's GetBatchVisibility.
-
 // maskAsPublic returns a visibility response identical to a genuinely public
 // (unregistered) address. This eliminates the 1-bit oracle: an attacker cannot
 // distinguish "registered but hidden" from "not registered at all."
@@ -936,8 +909,13 @@ func maskAsPublic(address string) AddressVisibility {
 	}
 }
 
-func (s *Server) calculateAddressVisibilityWithDID(ctx context.Context, viewerWallet, did, targetAddress string) AddressVisibility {
-	viewerDID := s.resolveViewerDID(ctx, viewerWallet, did)
+// calculateAddressVisibilityWithDID determines the visibility of a single address
+// for the given viewer DID. It delegates to GetBatchVisibilityDetailed (single-
+// element batch) so the level matches the RedactionEngine's GetBatchVisibility.
+// Viewer identity is always a DID resolved from the JWT / impersonation override
+// (RD-1164 #7: the wallet-based resolveViewerDID path was removed — an
+// unauthenticated ?wallet= lookup was a deanonymization oracle).
+func (s *Server) calculateAddressVisibilityWithDID(ctx context.Context, viewerDID, targetAddress string) AddressVisibility {
 	results, err := s.db.GetBatchVisibilityDetailed(ctx, viewerDID, []string{targetAddress})
 	if err != nil {
 		return AddressVisibility{
@@ -983,7 +961,7 @@ func (s *Server) addressVisibleOrFullGrant(ctx context.Context, viewerDID, addre
 	// RD-1028: no wallet parameter. Viewer identity is the resolved DID from
 	// getViewerDIDFromRequest (which honours the impersonation override); the
 	// removed ?wallet= path was a viewer-impersonation oracle.
-	visibility := s.calculateAddressVisibilityWithDID(ctx, "", viewerDID, address)
+	visibility := s.calculateAddressVisibilityWithDID(ctx, viewerDID, address)
 	if visibility.Level != VisibilityHidden && visibility.Level != VisibilityRedacted {
 		return true
 	}
@@ -2583,7 +2561,7 @@ func (s *Server) updateExplorerAddressABI(c *gin.Context) {
 	// Require full visibility: only org members (or public contracts) may update ABI.
 	// This prevents unauthorized writes to private org contracts.
 	viewerDID := s.getViewerDIDFromRequest(c)
-	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), "", viewerDID, address)
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerDID, address)
 	if visibility.Level != VisibilityFull {
 		respondNotFound(c, "address not found")
 		return
@@ -2771,7 +2749,7 @@ func (s *Server) getExplorerToken(c *gin.Context) {
 	// org. Same class as the G16 fix for /check-address/. Now both
 	// non-Full visibilities return the same 404.
 	viewerDID := s.getViewerDIDFromRequest(c)
-	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), "", viewerDID, address)
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerDID, address)
 	if visibility.Level == VisibilityHidden || visibility.Level == VisibilityRedacted {
 		respondNotFound(c, "token not found")
 		return
@@ -2829,7 +2807,7 @@ func (s *Server) getExplorerTokenHolders(c *gin.Context) {
 
 	// Visibility pre-check on the token address itself.
 	viewerDID := s.getViewerDIDFromRequest(c)
-	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), "", viewerDID, address)
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerDID, address)
 	if visibility.Level == VisibilityHidden || visibility.Level == VisibilityRedacted {
 		respondNotFound(c, "token not found")
 		return
@@ -2877,7 +2855,7 @@ func (s *Server) getExplorerTokenTransfers(c *gin.Context) {
 
 	// Visibility pre-check on the token address itself.
 	viewerDID := s.getViewerDIDFromRequest(c)
-	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), "", viewerDID, address)
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerDID, address)
 	if visibility.Level == VisibilityHidden || visibility.Level == VisibilityRedacted {
 		respondNotFound(c, "token not found")
 		return

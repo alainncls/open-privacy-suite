@@ -412,16 +412,19 @@ func TestCalculateAddressVisibility_AllScenarios(t *testing.T) {
 
 	ctx := context.Background()
 
+	// RD-1164 #7: viewer identity is a DID (resolved from the JWT / impersonation
+	// override in the HTTP layer), never a ?wallet= lookup. The anonymous cases
+	// use an empty DID.
 	tests := []struct {
 		name           string
-		viewerWallet   string
+		viewerDID      string
 		targetAddress  string
 		setupGrant     bool
 		expectedResult AddressVisibility
 	}{
 		{
 			name:          "own address",
-			viewerWallet:  testViewerWallet,
+			viewerDID:     testViewerDID,
 			targetAddress: testViewerWallet,
 			expectedResult: AddressVisibility{
 				Address: testViewerWallet,
@@ -432,7 +435,7 @@ func TestCalculateAddressVisibility_AllScenarios(t *testing.T) {
 		},
 		{
 			name:          "unregistered address (no longer public)",
-			viewerWallet:  testViewerWallet,
+			viewerDID:     testViewerDID,
 			targetAddress: testPublicAddress,
 			expectedResult: AddressVisibility{
 				Address: testPublicAddress,
@@ -444,7 +447,7 @@ func TestCalculateAddressVisibility_AllScenarios(t *testing.T) {
 		{
 			// Internal function returns hidden (G16 oracle masking is in the HTTP handler, not here)
 			name:          "no access without grant",
-			viewerWallet:  testViewerWallet,
+			viewerDID:     testViewerDID,
 			targetAddress: testTargetAddress,
 			setupGrant:    false,
 			expectedResult: AddressVisibility{
@@ -456,7 +459,7 @@ func TestCalculateAddressVisibility_AllScenarios(t *testing.T) {
 		},
 		{
 			name:          "anonymous viewer sees unregistered as hidden",
-			viewerWallet:  testUnknownWallet,
+			viewerDID:     "",
 			targetAddress: testPublicAddress,
 			expectedResult: AddressVisibility{
 				Address: testPublicAddress,
@@ -468,7 +471,7 @@ func TestCalculateAddressVisibility_AllScenarios(t *testing.T) {
 		{
 			// Internal function returns hidden (G16 oracle masking is in the HTTP handler, not here)
 			name:          "anonymous viewer no access",
-			viewerWallet:  testUnknownWallet,
+			viewerDID:     "",
 			targetAddress: testTargetAddress,
 			expectedResult: AddressVisibility{
 				Address: testTargetAddress,
@@ -481,7 +484,7 @@ func TestCalculateAddressVisibility_AllScenarios(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := srv.calculateAddressVisibility(ctx, tt.viewerWallet, tt.targetAddress)
+			result := srv.calculateAddressVisibilityWithDID(ctx, tt.viewerDID, tt.targetAddress)
 			assert.Equal(t, tt.expectedResult.Visible, result.Visible)
 			assert.Equal(t, tt.expectedResult.Level, result.Level)
 			assert.Equal(t, tt.expectedResult.Reason, result.Reason)
@@ -492,7 +495,7 @@ func TestCalculateAddressVisibility_AllScenarios(t *testing.T) {
 	t.Run("disclosed address with grant", func(t *testing.T) {
 		_ = createDisclosureGrant(t, database, testViewerDID, targetUserID, time.Now().Add(24*time.Hour))
 		// G17 reverted: disclosure grants now upgrade visibility in all views.
-		result := srv.calculateAddressVisibility(ctx, testViewerWallet, testTargetAddress)
+		result := srv.calculateAddressVisibilityWithDID(ctx, testViewerDID, testTargetAddress)
 		assert.True(t, result.Visible)
 		assert.Equal(t, VisibilityFull, result.Level)
 		assert.Equal(t, ReasonDisclosureGrant, result.Reason)
