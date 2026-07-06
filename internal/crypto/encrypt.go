@@ -97,6 +97,27 @@ func IsEncrypted(value string) bool {
 	return strings.HasPrefix(value, ciphertextV1Prefix)
 }
 
+// DecryptStrict decrypts a value and, unlike Decrypt, is fail-CLOSED for ALL
+// inputs — versioned OR legacy unversioned: any decode/length/authentication
+// failure returns an error, and it NEVER falls back to returning the input as
+// "legacy plaintext". Migration tooling (privacy-cli reencrypt-rpc-keys) MUST
+// use this rather than Decrypt: under Decrypt, a legacy unversioned ciphertext
+// decrypted with the WRONG key fails the AES-GCM check and is returned verbatim
+// with a nil error, which the tool would then treat as plaintext and
+// re-encrypt — irreversibly double-encrypting existing ciphertext. With
+// DecryptStrict a wrong key (or a genuinely non-ciphertext value) errors, so
+// the caller can skip it instead of corrupting it. Handles both versioned
+// (encv1:) and legacy unversioned base64(nonce||ciphertext) values.
+func DecryptStrict(encoded string, key []byte) (string, error) {
+	if len(key) != 32 {
+		return "", errors.New("encryption key must be 32 bytes (AES-256)")
+	}
+	// Strip the version marker if present; a legacy value has none. Either way
+	// the underlying blob must decode + authenticate, with no fail-open.
+	blob, _ := strings.CutPrefix(encoded, ciphertextV1Prefix)
+	return decryptAESGCM(blob, key)
+}
+
 // decryptAESGCM decodes and AEAD-opens a base64(nonce||ciphertext) blob,
 // returning an error on any failure (invalid base64, short blob, auth failure).
 func decryptAESGCM(blob string, key []byte) (string, error) {

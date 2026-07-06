@@ -136,26 +136,35 @@ func runReencryptRPCKeys(args []string) {
 	for _, r := range toProcess {
 		scanned++
 
-		// Guard against double-encryption (Copilot review). With an empty --old-key,
-		// crypto.Decrypt returns the stored value verbatim (empty-key passthrough) —
-		// even for a versioned encv1: ciphertext — which would then be re-encrypted
-		// under --new-key, irreversibly corrupting the key. An empty old key is only
-		// valid when values are genuinely plaintext, so refuse to touch any value that
-		// is already in the versioned ciphertext form when no old key was supplied.
-		if len(oldKey) == 0 && crypto.IsEncrypted(r.stored) {
-			fmt.Fprintf(os.Stderr, "WARNING: group %s: value is already encrypted (encv1:) but no --old-key was supplied; skipping to avoid double-encryption — pass the current key via --old-key or RPC_API_KEY_ENCRYPTION_KEY\n", r.id)
-			skippedErrors++
-			continue
-		}
-
-		plain, err := crypto.Decrypt(r.stored, oldKey)
-		if err != nil {
-			// A versioned value that fails to authenticate under the old key:
-			// it may already be migrated to the new key, or it is corrupt.
-			// Either way we must NOT write it — skip with a warning.
-			fmt.Fprintf(os.Stderr, "WARNING: group %s: decrypt with old key failed (%v); skipping — value left untouched\n", r.id, err)
-			skippedErrors++
-			continue
+		// Determine the plaintext to re-encrypt, fail-CLOSED (Copilot + mandrigin
+		// review). Two modes, by whether an old key was supplied:
+		//   - Empty --old-key: the operator asserts values are plaintext
+		//     (encryption was off). Refuse to touch anything already in the
+		//     versioned ciphertext form (crypto.IsEncrypted) — re-encrypting it
+		//     would double-encrypt. Otherwise treat the value as plaintext.
+		//   - Non-empty --old-key: the value MUST authenticate under it. Use a
+		//     STRICT decrypt (never fail-open): a wrong key — or a legacy
+		//     unversioned ciphertext that does not authenticate — errors and is
+		//     SKIPPED, rather than being returned verbatim (as fail-open Decrypt
+		//     would) and re-encrypted, which would irreversibly double-encrypt
+		//     legacy ciphertext. Works for both versioned (encv1:) and legacy
+		//     unversioned base64(nonce||ciphertext) values.
+		var plain string
+		if len(oldKey) == 0 {
+			if crypto.IsEncrypted(r.stored) {
+				fmt.Fprintf(os.Stderr, "WARNING: group %s: value is already encrypted (encv1:) but no --old-key was supplied; skipping to avoid double-encryption — pass the current key via --old-key or RPC_API_KEY_ENCRYPTION_KEY\n", r.id)
+				skippedErrors++
+				continue
+			}
+			plain = r.stored // asserted plaintext (encryption was disabled)
+		} else {
+			p, err := crypto.DecryptStrict(r.stored, oldKey)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "WARNING: group %s: value does not authenticate under --old-key (%v); skipping — a wrong old key or a non-ciphertext value is left untouched to avoid corruption\n", r.id, err)
+				skippedErrors++
+				continue
+			}
+			plain = p
 		}
 
 		reenc, err := crypto.Encrypt(plain, newKey)

@@ -202,3 +202,56 @@ func TestEncryptProducesDifferentCiphertexts(t *testing.T) {
 		t.Error("both ciphertexts should decrypt to the original plaintext")
 	}
 }
+
+// TestDecryptStrict guards the migration tool's fail-closed decrypt (mandrigin
+// review): DecryptStrict must ERROR (never pass the input through) on a wrong
+// key or a non-ciphertext value, for BOTH versioned and legacy unversioned
+// formats. This is what stops privacy-cli reencrypt-rpc-keys from
+// double-encrypting a legacy ciphertext when handed a wrong --old-key.
+func TestDecryptStrict(t *testing.T) {
+	key := make([]byte, 32)
+	wrong := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rand.Read(wrong); err != nil {
+		t.Fatal(err)
+	}
+
+	enc, err := Encrypt("sk-live-secret", key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Versioned value, correct key -> plaintext.
+	if got, err := DecryptStrict(enc, key); err != nil || got != "sk-live-secret" {
+		t.Fatalf("versioned + correct key: got %q err %v", got, err)
+	}
+	// Versioned value, wrong key -> error (must not pass through).
+	if got, err := DecryptStrict(enc, wrong); err == nil {
+		t.Fatalf("versioned + wrong key must error, got %q", got)
+	}
+
+	// A legacy unversioned ciphertext is the base64 blob WITHOUT the version
+	// prefix (the pre-versioning Encrypt output shape).
+	legacy := strings.TrimPrefix(enc, "encv1:")
+	if legacy == enc {
+		t.Fatal("expected a version prefix to strip")
+	}
+	// Legacy + correct key -> plaintext (strict decrypt still migrates it fine).
+	if got, err := DecryptStrict(legacy, key); err != nil || got != "sk-live-secret" {
+		t.Fatalf("legacy + correct key: got %q err %v", got, err)
+	}
+	// Legacy + WRONG key -> error. mandrigin's scenario: under the fail-open
+	// Decrypt this returned the ciphertext verbatim (which the migration tool
+	// would then re-encrypt = irreversible double-encryption); DecryptStrict
+	// must reject it so the tool skips instead.
+	if got, err := DecryptStrict(legacy, wrong); err == nil {
+		t.Fatalf("legacy unversioned + wrong key must error (else double-encryption), got %q", got)
+	}
+
+	// A genuinely non-ciphertext (plaintext) value -> error under strict decrypt.
+	if got, err := DecryptStrict("not-a-ciphertext-value!@#", key); err == nil {
+		t.Fatalf("plaintext must error under strict decrypt, got %q", got)
+	}
+}
