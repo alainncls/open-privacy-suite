@@ -74,6 +74,7 @@ jobs:
           name="${name#dev-}"                             # avoid a doubled dev- prefix
           name="$(printf '%s' "$name" | tr -cd 'a-zA-Z0-9._-')"  # sanitize
           [ -z "$name" ] && name="$short_sha"
+          name="${name:0:124}"                            # Docker tag max length is 128 incl. "dev-"
           {
             echo "tag=dev-${name}"
             echo "short_sha=${short_sha}"
