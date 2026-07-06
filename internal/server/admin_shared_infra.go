@@ -126,6 +126,18 @@ func isValidHash32(h string) bool {
 	return true
 }
 
+// listSharedInfrastructure lists the fleet-wide shared-infrastructure allowlist.
+//
+// @Summary      List shared infrastructure
+// @Description  Lists the global shared-infrastructure contracts the cross-org trace validator skips (public routers, factories, resolvers). Super-admin token only — the list reveals the operator's trust topology, so org admins cannot read it.
+// @Tags         Admin: shared infrastructure
+// @Produce      json
+// @Success      200 {object} sharedInfraListResponse
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "super-admin token required"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/shared-infrastructure [get]
 func (s *Server) listSharedInfrastructure(c *gin.Context) {
 	// Read is super-admin only too — the list itself reveals the
 	// operator's trust topology (which DEXes, factories, etc. are
@@ -143,6 +155,21 @@ func (s *Server) listSharedInfrastructure(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": rows})
 }
 
+// getSharedInfrastructure returns one shared-infrastructure entry by address.
+//
+// @Summary      Get a shared-infrastructure entry
+// @Description  Returns one global shared-infrastructure entry by address. Super-admin token only.
+// @Tags         Admin: shared infrastructure
+// @Produce      json
+// @Param        address path string true "Contract address (0x-prefixed hex)"
+// @Success      200 {object} rbac.SharedInfrastructure
+// @Failure      400 {object} APIError "invalid address"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "super-admin token required"
+// @Failure      404 {object} APIError "not found"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/shared-infrastructure/{address} [get]
 func (s *Server) getSharedInfrastructure(c *gin.Context) {
 	if !requireSuperAdmin(c) {
 		return
@@ -165,6 +192,22 @@ func (s *Server) getSharedInfrastructure(c *gin.Context) {
 	c.JSON(http.StatusOK, row)
 }
 
+// createSharedInfrastructure adds a contract to the shared-infrastructure allowlist.
+//
+// @Summary      Add a shared-infrastructure entry
+// @Description  Registers a global shared-infrastructure contract (address from the body). The optional codehash pin, if supplied, must be a 0x-prefixed 32-byte hex string; omit it and use refresh-codehash to compute it server-side. Super-admin token only; the mutation is audit-logged.
+// @Tags         Admin: shared infrastructure
+// @Accept       json
+// @Produce      json
+// @Param        request body sharedInfraInput true "shared-infrastructure entry to create"
+// @Success      201 {object} rbac.SharedInfrastructure
+// @Failure      400 {object} APIError "invalid body, invalid address, invalid codehash, or missing name"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "super-admin token required"
+// @Failure      409 {object} APIError "address already registered; use PUT to update"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/shared-infrastructure [post]
 func (s *Server) createSharedInfrastructure(c *gin.Context) {
 	if !requireSuperAdmin(c) {
 		return
@@ -239,6 +282,23 @@ func (s *Server) createSharedInfrastructure(c *gin.Context) {
 	c.JSON(http.StatusCreated, row)
 }
 
+// updateSharedInfrastructure updates the name, description, and codehash pin of an entry.
+//
+// @Summary      Update a shared-infrastructure entry
+// @Description  Updates the name, description, and codehash pin of a shared-infrastructure entry. The address comes from the path (the body address field is ignored); an empty codehash clears the pin. Super-admin token only; the change is audit-logged.
+// @Tags         Admin: shared infrastructure
+// @Accept       json
+// @Produce      json
+// @Param        address path string true "Contract address (0x-prefixed hex)"
+// @Param        request body sharedInfraInput true "updated fields (address field ignored)"
+// @Success      200 {object} rbac.SharedInfrastructure
+// @Failure      400 {object} APIError "invalid address, invalid body, invalid codehash, or missing name"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "super-admin token required"
+// @Failure      404 {object} APIError "not found"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/shared-infrastructure/{address} [put]
 func (s *Server) updateSharedInfrastructure(c *gin.Context) {
 	if !requireSuperAdmin(c) {
 		return
@@ -313,6 +373,21 @@ func (s *Server) updateSharedInfrastructure(c *gin.Context) {
 	c.JSON(http.StatusOK, row)
 }
 
+// deleteSharedInfrastructure removes an entry from the shared-infrastructure allowlist.
+//
+// @Summary      Delete a shared-infrastructure entry
+// @Description  Removes a contract from the global shared-infrastructure allowlist; the trace validator will resume enforcing cross-org checks on it. Super-admin token only; the deletion is audit-logged.
+// @Tags         Admin: shared infrastructure
+// @Produce      json
+// @Param        address path string true "Contract address (0x-prefixed hex)"
+// @Success      200 {object} APIMessage "shared_infrastructure entry deleted"
+// @Failure      400 {object} APIError "invalid address"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "super-admin token required"
+// @Failure      404 {object} APIError "not found"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/shared-infrastructure/{address} [delete]
 func (s *Server) deleteSharedInfrastructure(c *gin.Context) {
 	if !requireSuperAdmin(c) {
 		return
@@ -370,6 +445,22 @@ func (s *Server) deleteSharedInfrastructure(c *gin.Context) {
 // For high-assurance attestation flows the operator should compute
 // the hash locally and PUT it explicitly rather than trust this
 // endpoint.
+//
+// @Summary      Refresh a shared-infrastructure codehash
+// @Description  Fetches the current bytecode at the entry's address via eth_getCode, computes its keccak256, and stores it as the codehash pin — used after a tracked upstream contract is legitimately upgraded. Verify the new bytecode out of band first. Super-admin token only; the change is audit-logged.
+// @Tags         Admin: shared infrastructure
+// @Produce      json
+// @Param        address path string true "Contract address (0x-prefixed hex)"
+// @Success      200 {object} rbac.SharedInfrastructure
+// @Failure      400 {object} APIError "invalid address"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "super-admin token required"
+// @Failure      404 {object} APIError "not found"
+// @Failure      502 {object} APIError "upstream node failed or returned an invalid bytecode hash"
+// @Failure      503 {object} APIError "runtime tracer not configured"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/shared-infrastructure/{address}/refresh-codehash [post]
 func (s *Server) refreshSharedInfraCodehash(c *gin.Context) {
 	if !requireSuperAdmin(c) {
 		return

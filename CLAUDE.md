@@ -46,6 +46,29 @@ make test-unit   # Go unit tests
 make e2e         # End-to-end tests
 ```
 
+## REST API Spec (OpenAPI)
+
+The OpenAPI document is **generated from swaggo annotations** on the handlers
+(single source of truth; served at `GET /openapi.json`, rendered in the docs
+site at `/api-reference`).
+
+- **Any new or changed HTTP endpoint must update the handler's swaggo
+  annotation block in the same PR**, then run `make api-spec` and commit the
+  regenerated `internal/server/apispec/`, `site/public/openapi.json`, and
+  `API_ENDPOINTS.md`. CI fails on drift.
+- The route↔spec coverage gate (`internal/server/openapi_coverage_test.go`)
+  fails on any registered route without a spec entry. The remaining
+  un-annotated legacy operations live in
+  `internal/server/openapi_todo_allowlist.txt` — that file may only shrink.
+- Document the **canonical path only** (`/api/v1/...`); legacy `/api/*`,
+  `/eth`, root auth mounts and impersonation mirrors collapse onto it
+  (see `CanonicalizeRoute`).
+- Follow the annotation style of `internal/server/eth_link.go`: real request/
+  response types where they exist, `APIError`/`APIMessage` for the shared
+  envelopes, `@Security BearerAuth` / `@Security AdminToken` per mount, and
+  operator-focused descriptions (access + fail-closed semantics; no internal
+  implementation detail).
+
 ## Code Style
 
 - Go: idiomatic, explicit error handling, table-driven tests

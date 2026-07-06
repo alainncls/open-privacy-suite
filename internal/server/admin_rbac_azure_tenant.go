@@ -22,6 +22,18 @@ import (
 // super-admin (X-Admin-Token) for every mutation; reads also
 // restricted because the entries reveal the cluster's SSO topology.
 
+// listAzureTenants lists the Azure AD tenant allowlist.
+//
+// @Summary      List Azure AD tenants
+// @Description  Lists the Azure AD tenants permitted to authenticate, with their default org/group and auto-provision settings. Super-admin token only — the entries reveal the cluster's SSO topology, so org admins cannot read them.
+// @Tags         Admin: shared infrastructure
+// @Produce      json
+// @Success      200 {object} azureTenantListResponse
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "super-admin token required"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/azure-tenants [get]
 func (s *Server) listAzureTenants(c *gin.Context) {
 	if !requireSuperAdmin(c) {
 		return
@@ -35,6 +47,22 @@ func (s *Server) listAzureTenants(c *gin.Context) {
 	respondOK(c, gin.H{"data": tenants})
 }
 
+// createAzureTenant adds a tenant to the Azure AD allowlist.
+//
+// @Summary      Add an Azure AD tenant
+// @Description  Allowlists an Azure AD tenant so its users may authenticate, with an optional default org/group and auto-provisioning. tenant_id must be a UUID; a default_group_id must belong to default_org_id and must not be an org-admin or readonly-admin group (so SSO cannot auto-mint org admins). Super-admin token only — this is a cluster-wide primitive; the change is audit-logged.
+// @Tags         Admin: shared infrastructure
+// @Accept       json
+// @Produce      json
+// @Param        request body azureTenantCreateRequest true "tenant to allowlist"
+// @Success      201 {object} db.AllowedAzureTenant
+// @Failure      400 {object} APIError "invalid body, tenant_id not a UUID, or default group invalid / admin-tier"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "super-admin token required"
+// @Failure      409 {object} APIError "a tenant with this tenant_id already exists"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/azure-tenants [post]
 func (s *Server) createAzureTenant(c *gin.Context) {
 	if !requireSuperAdmin(c) {
 		return
@@ -120,6 +148,20 @@ func (s *Server) createAzureTenant(c *gin.Context) {
 	respondCreated(c, result)
 }
 
+// getAzureTenant returns one Azure AD tenant allowlist entry by ID.
+//
+// @Summary      Get an Azure AD tenant
+// @Description  Returns one Azure AD tenant allowlist entry by its ID. Super-admin token only.
+// @Tags         Admin: shared infrastructure
+// @Produce      json
+// @Param        id path string true "Azure tenant allowlist entry ID"
+// @Success      200 {object} db.AllowedAzureTenant
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "super-admin token required"
+// @Failure      404 {object} APIError "azure tenant not found"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/azure-tenants/{id} [get]
 func (s *Server) getAzureTenant(c *gin.Context) {
 	if !requireSuperAdmin(c) {
 		return
@@ -138,6 +180,24 @@ func (s *Server) getAzureTenant(c *gin.Context) {
 	respondOK(c, tenant)
 }
 
+// updateAzureTenant updates an Azure AD tenant allowlist entry.
+//
+// @Summary      Update an Azure AD tenant
+// @Description  Updates an Azure AD tenant allowlist entry; omitted fields are left unchanged and an empty default_org_id/default_group_id clears it. Same validation as create: tenant_id must be a UUID, and a default group must belong to the default org and not be an admin-tier group. Super-admin token only; the change is audit-logged.
+// @Tags         Admin: shared infrastructure
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Azure tenant allowlist entry ID"
+// @Param        request body azureTenantUpdateRequest true "fields to update"
+// @Success      200 {object} db.AllowedAzureTenant
+// @Failure      400 {object} APIError "invalid body, tenant_id not a UUID, or default group invalid / admin-tier"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "super-admin token required"
+// @Failure      404 {object} APIError "azure tenant not found"
+// @Failure      409 {object} APIError "a tenant with this tenant_id already exists"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/azure-tenants/{id} [put]
 func (s *Server) updateAzureTenant(c *gin.Context) {
 	if !requireSuperAdmin(c) {
 		return
@@ -253,6 +313,20 @@ func (s *Server) updateAzureTenant(c *gin.Context) {
 	respondOK(c, result)
 }
 
+// deleteAzureTenant removes an Azure AD tenant and bans its users.
+//
+// @Summary      Delete an Azure AD tenant
+// @Description  Removes an Azure AD tenant from the allowlist and, as a security side effect, bans every user authenticated through that tenant and revokes their refresh tokens. Super-admin token only; the deletion (with banned/revoked counts) is audit-logged.
+// @Tags         Admin: shared infrastructure
+// @Produce      json
+// @Param        id path string true "Azure tenant allowlist entry ID"
+// @Success      200 {object} APIMessage "azure tenant deleted"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "super-admin token required"
+// @Failure      404 {object} APIError "azure tenant not found"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/azure-tenants/{id} [delete]
 func (s *Server) deleteAzureTenant(c *gin.Context) {
 	if !requireSuperAdmin(c) {
 		return

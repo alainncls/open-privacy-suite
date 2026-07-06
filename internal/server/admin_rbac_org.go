@@ -57,6 +57,20 @@ func parsePaginationParams(c *gin.Context, defaultLimit int) (limit, offset int)
 // — i.e. their tenant boundary matches what `orgScopingMiddleware` already
 // enforces on per-:org_id routes. Without this scope a JWT admin of org A
 // could enumerate every other tenant's slug/name/UUID via this endpoint.
+//
+// @Summary      List organizations
+// @Description  Returns a paginated list of organizations. Visibility is scoped to the caller: a super-admin (full X-Admin-Token) sees every org, while a tier-2 org-admin JWT sees only the orgs it administers. System orgs are hidden unless include_system=true. The operator token may list orgs (org metadata is not tenant-confidential).
+// @Tags         Admin: RBAC
+// @Produce      json
+// @Param        limit query int false "Max rows to return (default 50)"
+// @Param        offset query int false "Rows to skip for pagination (default 0)"
+// @Param        include_system query bool false "Include seeded is_system orgs (default false)"
+// @Success      200 {object} orgListResponse
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs [get]
 func (s *Server) listOrganizations(c *gin.Context) {
 	limit, offset := parsePaginationParams(c, 50)
 
@@ -119,6 +133,22 @@ func (s *Server) listOrganizations(c *gin.Context) {
 	respondOK(c, gin.H{"data": orgs, "total": total, "limit": limit, "offset": offset})
 }
 
+// createOrganization handles POST /api/v1/admin/orgs — tenant creation.
+//
+// @Summary      Create an organization
+// @Description  Creates a new organization (tenant). This is a platform-level lifecycle operation reserved for the super-admin (full X-Admin-Token) and the operator token; a tier-2 org-admin JWT is rejected with 403. The slug must be URL-safe and unique: ^[A-Za-z0-9][A-Za-z0-9_-]*$, <=100 chars.
+// @Tags         Admin: RBAC
+// @Accept       json
+// @Produce      json
+// @Param        request body orgCreateRequest true "organization to create"
+// @Success      201 {object} rbac.Organization
+// @Failure      400 {object} APIError "invalid body or slug format"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, or caller is a tier-2 org-admin JWT (only super-admin/operator may create orgs)"
+// @Failure      409 {object} APIError "an organization with this slug already exists"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs [post]
 func (s *Server) createOrganization(c *gin.Context) {
 	// Tenant lifecycle (creating a new org / tenant) is platform-level and
 	// reserved for super-admin (X-Admin-Token). JWT-admin tier-2 cannot
@@ -182,6 +212,20 @@ func (s *Server) createOrganization(c *gin.Context) {
 	respondCreated(c, org)
 }
 
+// getOrganization returns a single organization by ID.
+//
+// @Summary      Get an organization
+// @Description  Returns a single organization by its ID. Org-scoping middleware restricts a tier-2 org-admin JWT to orgs it administers; a super-admin (X-Admin-Token) or operator token may read any org.
+// @Tags         Admin: RBAC
+// @Produce      json
+// @Param        org_id path string true "Organization ID (UUID)"
+// @Success      200 {object} rbac.Organization
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, or org outside the caller's scope"
+// @Failure      404 {object} APIError "organization not found"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id} [get]
 func (s *Server) getOrganization(c *gin.Context) {
 	orgID := c.Param("org_id")
 	org, err := s.db.GetOrganization(c.Request.Context(), orgID)
@@ -197,6 +241,24 @@ func (s *Server) getOrganization(c *gin.Context) {
 	respondOK(c, org)
 }
 
+// updateOrganization edits an organization's slug, name, and/or settings.
+//
+// @Summary      Update an organization
+// @Description  Updates the slug, name, and/or settings of an organization. All body fields are optional; only supplied fields change. is_system organizations are identity-immutable and rejected with 403. Org-scoping middleware limits a tier-2 org-admin JWT to orgs it administers.
+// @Tags         Admin: RBAC
+// @Accept       json
+// @Produce      json
+// @Param        org_id path string true "Organization ID (UUID)"
+// @Param        request body orgUpdateRequest true "fields to update (all optional)"
+// @Success      200 {object} rbac.Organization
+// @Failure      400 {object} APIError "invalid body or slug format"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, org outside the caller's scope, or the org is a system org"
+// @Failure      404 {object} APIError "organization not found"
+// @Failure      409 {object} APIError "an organization with this slug already exists"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id} [put]
 func (s *Server) updateOrganization(c *gin.Context) {
 	orgID := c.Param("org_id")
 
@@ -263,6 +325,21 @@ func (s *Server) updateOrganization(c *gin.Context) {
 	respondOK(c, org)
 }
 
+// deleteOrganization deletes a tenant org.
+//
+// @Summary      Delete an organization
+// @Description  Deletes an organization and cascades to its groups, contracts, and grants. Platform-level lifecycle reserved for the super-admin (full X-Admin-Token) and the operator token; a tier-2 org-admin JWT is rejected with 403. The default organization and system orgs cannot be deleted.
+// @Tags         Admin: RBAC
+// @Produce      json
+// @Param        org_id path string true "Organization ID (UUID)"
+// @Success      200 {object} APIMessage "organization deleted"
+// @Failure      400 {object} APIError "cannot delete the default organization"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, caller is a tier-2 org-admin JWT, or the org is a system org"
+// @Failure      404 {object} APIError "organization not found"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id} [delete]
 func (s *Server) deleteOrganization(c *gin.Context) {
 	// Tenant deletion is platform-level and reserved for super-admin
 	// (X-Admin-Token). Tier-2 admins retain read + edit-metadata on their

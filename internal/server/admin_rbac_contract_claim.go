@@ -18,6 +18,21 @@ import (
 // claimUnregisteredContract allows an org admin to claim a contract that exists
 // on-chain but is not registered to any org. Requires proof of deployment.
 // POST /orgs/:org_id/contracts/claim
+//
+// @Summary      Claim an unregistered contract (proof of deployment)
+// @Description  Registers an on-chain contract to the organization when the caller proves deployment: the deployment transaction's receipt must name the claimed address, and the deployer address must be linked to a member of the claiming org. Fail-closed: every verification failure (already registered, unknown tx, receipt mismatch, deployer not in org, no bytecode) returns the same opaque 400 "contract registration failed" so the endpoint cannot be used as an existence or ownership oracle.
+// @Tags         Admin: RBAC
+// @Accept       json
+// @Produce      json
+// @Param        org_id path string true "organization ID"
+// @Param        request body contractClaimRequest true "claimed address and deployment tx hash"
+// @Success      201 {object} contractClaimResponse
+// @Failure      400 {object} APIError "invalid input, or opaque verification failure"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/contracts/claim [post]
 func (s *Server) claimUnregisteredContract(c *gin.Context) {
 	orgID := c.Param("org_id")
 

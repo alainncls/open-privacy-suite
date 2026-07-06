@@ -194,6 +194,20 @@ func (s *Server) disclosureUserMiddleware() gin.HandlerFunc {
 // single-org JWT admins get their only org picked, multi-org JWT
 // admins must specify org_id (400 otherwise), super-admin / dev keeps
 // the system-default fall-back for admin scripts.
+//
+// @Summary      Create a disclosure request
+// @Description  Creates a disclosure request on behalf of an authorized viewer (e.g. a regulator) targeting one user's activity. Scoped to the caller's admin authority: org_id must be an org the caller fully administers and target_user_id must share an org with the caller — a request cannot be manufactured for another org's user. org_id may be omitted only when it is unambiguous (single-org JWT admin, or super-admin/dev which defaults to the system org); a multi-org JWT admin must supply it. The created request is pending until the target user approves or rejects it.
+// @Tags         Admin: disclosure
+// @Accept       json
+// @Produce      json
+// @Param        request body CreateDisclosureRequestBody true "disclosure request (target_user_id and reason required)"
+// @Success      201 {object} disclosure.Request
+// @Failure      400 {object} APIError "invalid body, or org_id required (ambiguous multi-org caller)"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, or org_id / target_user_id outside the caller's scope"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/disclosure/requests [post]
 func (s *Server) createDisclosureRequest(c *gin.Context) {
 	var input struct {
 		RequesterUserID string           `json:"requester_user_id"` // Optional - who's requesting (internal user ID)
@@ -280,6 +294,27 @@ func (s *Server) createDisclosureRequest(c *gin.Context) {
 // `org_id` explicitly so it never hits the multi-org reject branch.
 // Super-admin / dev mode keeps the system-default fallback for
 // backward compatibility with admin scripts.
+//
+// @Summary      List disclosure requests
+// @Description  Lists disclosure requests, filtered and clamped to the caller's org scope: the org_id filter must be within the caller's admin scope, so a caller only ever sees requests for orgs they administer. When org_id is omitted it falls back to the caller's single admin org (super-admin/dev defaults to the system org); a multi-org JWT admin must supply org_id. Additional filters narrow the result set.
+// @Tags         Admin: disclosure
+// @Produce      json
+// @Param        org_id query string false "Organization to list requests for; required for multi-org JWT admins"
+// @Param        status query string false "Filter by request status" Enums(pending, approved, rejected, expired, revoked)
+// @Param        target_user_id query string false "Filter by the user whose data is targeted"
+// @Param        requester_did query string false "Filter by the requester DID"
+// @Param        disclosure_level query string false "Filter by disclosure level" Enums(full, pseudonymous, redacted)
+// @Param        date_from query string false "Only requests created on or after this RFC3339 timestamp"
+// @Param        date_to query string false "Only requests created on or before this RFC3339 timestamp"
+// @Param        limit query int false "Maximum number of results"
+// @Param        offset query int false "Number of results to skip"
+// @Success      200 {object} disclosure.DisclosureListResult
+// @Failure      400 {object} APIError "org_id required (ambiguous multi-org caller)"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, or org_id outside the caller's scope"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/disclosure/requests [get]
 func (s *Server) listDisclosureRequests(c *gin.Context) {
 	filter := &disclosure.DisclosureFilter{}
 
@@ -365,6 +400,27 @@ func (s *Server) listDisclosureRequests(c *gin.Context) {
 // Multi-org admins must pass `org_id` explicitly; silently picking
 // `admin_org_ids[0]` was the pre-fix behaviour and violated the
 // explicit-over-implicit principle on the API surface.
+//
+// @Summary      List disclosure grants
+// @Description  Lists disclosure grants (approved requests with an access token), filtered and clamped to the caller's org scope so a caller only sees grants for orgs they administer. When org_id is omitted it falls back to the caller's single admin org (super-admin/dev defaults to the system org); a multi-org JWT admin must supply org_id. Grant token hashes are never included in the response.
+// @Tags         Admin: disclosure
+// @Produce      json
+// @Param        org_id query string false "Organization to list grants for; required for multi-org JWT admins"
+// @Param        status query string false "Filter by grant status" Enums(approved, revoked, expired)
+// @Param        target_user_id query string false "Filter by the user whose data is targeted"
+// @Param        requester_did query string false "Filter by the requester DID"
+// @Param        disclosure_level query string false "Filter by disclosure level" Enums(full, pseudonymous, redacted)
+// @Param        date_from query string false "Only grants created on or after this RFC3339 timestamp"
+// @Param        date_to query string false "Only grants created on or before this RFC3339 timestamp"
+// @Param        limit query int false "Maximum number of results"
+// @Param        offset query int false "Number of results to skip"
+// @Success      200 {object} disclosure.GrantListResult
+// @Failure      400 {object} APIError "org_id required (ambiguous multi-org caller)"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, or org_id outside the caller's scope"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/disclosure/grants [get]
 func (s *Server) listDisclosureGrants(c *gin.Context) {
 	filter := &disclosure.DisclosureFilter{}
 
@@ -443,6 +499,19 @@ func (s *Server) listDisclosureGrants(c *gin.Context) {
 
 // deleteDisclosureRequest deletes a pending disclosure request (admin endpoint).
 // Audit C3: re-verify the loaded request's org is in caller's scope.
+//
+// @Summary      Delete a pending disclosure request
+// @Description  Deletes a disclosure request that is still pending. Only requests in an org the caller fully administers can be deleted; a request outside the caller's scope, or one that does not exist, returns a generic 403 (no existence oracle). Only pending requests are deletable — an already-decided request returns 400.
+// @Tags         Admin: disclosure
+// @Produce      json
+// @Param        request_id path string true "Disclosure request ID"
+// @Success      200 {object} DisclosureStatusResponse "status: deleted"
+// @Failure      400 {object} APIError "request is not pending"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, or request not found / outside the caller's scope"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/disclosure/requests/{request_id} [delete]
 func (s *Server) deleteDisclosureRequest(c *gin.Context) {
 	requestID := c.Param("request_id")
 
@@ -486,6 +555,20 @@ func (s *Server) deleteDisclosureRequest(c *gin.Context) {
 
 // adminRevokeDisclosureGrant revokes a disclosure grant (admin endpoint).
 // Audit C3: verify the loaded grant belongs to an org in caller's scope.
+//
+// @Summary      Revoke a disclosure grant (admin)
+// @Description  Revokes an active disclosure grant, immediately ending the authorized viewer's access. Only grants whose owning org the caller fully administers can be revoked; a grant outside the caller's scope, or one that does not exist, returns a generic 403 (no existence oracle). The request body is optional and carries only a free-text revocation reason.
+// @Tags         Admin: disclosure
+// @Accept       json
+// @Produce      json
+// @Param        grant_id path string true "Disclosure grant ID"
+// @Param        request body DisclosureReasonBody false "optional revocation reason"
+// @Success      200 {object} DisclosureStatusResponse "status: revoked"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, or grant not found / outside the caller's scope"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/disclosure/grants/{grant_id}/revoke [post]
 func (s *Server) adminRevokeDisclosureGrant(c *gin.Context) {
 	grantID := c.Param("grant_id")
 
@@ -530,6 +613,18 @@ func (s *Server) adminRevokeDisclosureGrant(c *gin.Context) {
 
 // getDisclosureRequest gets a disclosure request by ID.
 // Audit C3: verify request's org is in caller's scope.
+//
+// @Summary      Get a disclosure request
+// @Description  Returns a single disclosure request with related details (requester/target DIDs, any active grant ID). Readable only when the request's org is within the caller's admin scope; a request outside the caller's scope, or one that does not exist, returns a generic 403 (no existence oracle).
+// @Tags         Admin: disclosure
+// @Produce      json
+// @Param        request_id path string true "Disclosure request ID"
+// @Success      200 {object} disclosure.RequestWithDetails
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, or request not found / outside the caller's scope"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/disclosure/requests/{request_id} [get]
 func (s *Server) getDisclosureRequest(c *gin.Context) {
 	requestID := c.Param("request_id")
 
@@ -553,6 +648,20 @@ func (s *Server) getDisclosureRequest(c *gin.Context) {
 // checkDisclosureAccess checks if a requester DID has access to a target user's data.
 // This is used by the block explorer to verify auditor permissions.
 // GET /api/disclosure/check-access?requester_did=did:...&target_user_did=did:...
+//
+// @Summary      Check disclosure access for a DID pair
+// @Description  Reports whether the requester DID currently holds an active, non-expired disclosure grant over the target user's data. Used by the block explorer to authorize a viewer. Fail-closed: when no active grant exists the response is 200 with has_access=false (not an error), and when a grant exists the response includes the grant ID, scope, disclosure level, and expiry so the caller can enforce it.
+// @Tags         Admin: disclosure
+// @Produce      json
+// @Param        requester_did query string true "DID of the viewer whose access is being checked"
+// @Param        target_user_did query string true "DID of the user whose data would be viewed"
+// @Success      200 {object} DisclosureCheckAccessResponse
+// @Failure      400 {object} APIError "requester_did and target_user_did are required"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/disclosure/check-access [get]
 func (s *Server) checkDisclosureAccess(c *gin.Context) {
 	requesterDID := c.Query("requester_did")
 	targetUserDID := c.Query("target_user_did")
@@ -588,6 +697,16 @@ func (s *Server) checkDisclosureAccess(c *gin.Context) {
 }
 
 // getMyDisclosureRequests gets pending disclosure requests for the authenticated user
+//
+// @Summary      List my pending disclosure requests
+// @Description  Lists disclosure requests that are pending the authenticated user's decision — i.e. requests targeting the caller's own data. Scoped to the caller: a user only ever sees requests for their own data.
+// @Tags         Disclosure (user)
+// @Produce      json
+// @Success      200 {array} disclosure.RequestWithDetails
+// @Failure      401 {object} APIError "missing or invalid token, or no matching user"
+// @Failure      500 {object} APIError
+// @Security     BearerAuth
+// @Router       /api/v1/me/disclosure/requests [get]
 func (s *Server) getMyDisclosureRequests(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 
@@ -602,6 +721,16 @@ func (s *Server) getMyDisclosureRequests(c *gin.Context) {
 }
 
 // getAllMyDisclosureRequests gets all disclosure requests for the authenticated user (not just pending)
+//
+// @Summary      List all my disclosure requests
+// @Description  Lists every disclosure request targeting the authenticated user's data, in any status (pending, approved, rejected, expired, revoked). Scoped to the caller: a user only ever sees requests for their own data.
+// @Tags         Disclosure (user)
+// @Produce      json
+// @Success      200 {array} disclosure.RequestWithDetails
+// @Failure      401 {object} APIError "missing or invalid token, or no matching user"
+// @Failure      500 {object} APIError
+// @Security     BearerAuth
+// @Router       /api/v1/me/disclosure/requests/all [get]
 func (s *Server) getAllMyDisclosureRequests(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 
@@ -616,6 +745,22 @@ func (s *Server) getAllMyDisclosureRequests(c *gin.Context) {
 }
 
 // approveDisclosureRequest approves a disclosure request
+//
+// @Summary      Approve a disclosure request
+// @Description  Approves a pending disclosure request that targets the caller's own data, minting an access grant for the requester. A user can only approve requests targeting their own data (otherwise 403). The optional body may narrow (never widen) the granted scope and set the grant duration (defaults to 24 hours). The response returns the new grant without its token hash.
+// @Tags         Disclosure (user)
+// @Accept       json
+// @Produce      json
+// @Param        request_id path string true "Disclosure request ID"
+// @Param        request body ApproveDisclosureRequestBody false "optional scope narrowing, grant duration, and reason"
+// @Success      200 {object} DisclosureApproveResponse
+// @Failure      400 {object} APIError "request cannot be approved (e.g. not pending or expired)"
+// @Failure      401 {object} APIError "missing or invalid token, or no matching user"
+// @Failure      403 {object} APIError "request does not target the caller's data"
+// @Failure      404 {object} APIError "request not found"
+// @Failure      500 {object} APIError
+// @Security     BearerAuth
+// @Router       /api/v1/me/disclosure/requests/{request_id}/approve [post]
 func (s *Server) approveDisclosureRequest(c *gin.Context) {
 	requestID := c.Param("request_id")
 	userID, _ := c.Get("user_id")
@@ -672,6 +817,22 @@ func (s *Server) approveDisclosureRequest(c *gin.Context) {
 }
 
 // rejectDisclosureRequest rejects a disclosure request
+//
+// @Summary      Reject a disclosure request
+// @Description  Rejects a pending disclosure request that targets the caller's own data; no grant is created. A user can only reject requests targeting their own data (otherwise 403). The request body is optional and carries only a free-text reason.
+// @Tags         Disclosure (user)
+// @Accept       json
+// @Produce      json
+// @Param        request_id path string true "Disclosure request ID"
+// @Param        request body DisclosureReasonBody false "optional rejection reason"
+// @Success      200 {object} DisclosureStatusResponse "status: rejected"
+// @Failure      400 {object} APIError "request cannot be rejected (e.g. not pending)"
+// @Failure      401 {object} APIError "missing or invalid token, or no matching user"
+// @Failure      403 {object} APIError "request does not target the caller's data"
+// @Failure      404 {object} APIError "request not found"
+// @Failure      500 {object} APIError
+// @Security     BearerAuth
+// @Router       /api/v1/me/disclosure/requests/{request_id}/reject [post]
 func (s *Server) rejectDisclosureRequest(c *gin.Context) {
 	requestID := c.Param("request_id")
 	userID, _ := c.Get("user_id")
@@ -709,6 +870,22 @@ func (s *Server) rejectDisclosureRequest(c *gin.Context) {
 }
 
 // revokeDisclosureRequest revokes a previously approved disclosure request
+//
+// @Summary      Revoke a disclosure request (user)
+// @Description  Revokes a disclosure request the caller previously approved, ending the requester's access to the caller's data. A user can only revoke requests targeting their own data (otherwise 403). The request body is optional and carries only a free-text reason.
+// @Tags         Disclosure (user)
+// @Accept       json
+// @Produce      json
+// @Param        request_id path string true "Disclosure request ID"
+// @Param        request body DisclosureReasonBody false "optional revocation reason"
+// @Success      200 {object} DisclosureStatusResponse "status: revoked"
+// @Failure      400 {object} APIError "request cannot be revoked (e.g. not currently approved)"
+// @Failure      401 {object} APIError "missing or invalid token, or no matching user"
+// @Failure      403 {object} APIError "request does not target the caller's data"
+// @Failure      404 {object} APIError "request not found"
+// @Failure      500 {object} APIError
+// @Security     BearerAuth
+// @Router       /api/v1/me/disclosure/requests/{request_id}/revoke [post]
 func (s *Server) revokeDisclosureRequest(c *gin.Context) {
 	requestID := c.Param("request_id")
 	userID, _ := c.Get("user_id")
@@ -746,6 +923,16 @@ func (s *Server) revokeDisclosureRequest(c *gin.Context) {
 }
 
 // getMyActiveGrants gets active disclosure grants for the authenticated user's data
+//
+// @Summary      List my active disclosure grants
+// @Description  Lists disclosure grants over the authenticated user's data that are currently active (approved, not expired, not revoked) — i.e. who can see the caller's data right now. Scoped to the caller: a user only ever sees grants over their own data. Grant token hashes are never included.
+// @Tags         Disclosure (user)
+// @Produce      json
+// @Success      200 {array} disclosure.GrantWithRequest
+// @Failure      401 {object} APIError "missing or invalid token, or no matching user"
+// @Failure      500 {object} APIError
+// @Security     BearerAuth
+// @Router       /api/v1/me/disclosure/grants [get]
 func (s *Server) getMyActiveGrants(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 
@@ -760,6 +947,16 @@ func (s *Server) getMyActiveGrants(c *gin.Context) {
 }
 
 // getAllMyGrants gets all disclosure grants for the authenticated user's data (not just active)
+//
+// @Summary      List all my disclosure grants
+// @Description  Lists every disclosure grant over the authenticated user's data, in any state (active, expired, or revoked) — the full access history. Scoped to the caller: a user only ever sees grants over their own data. Grant token hashes are never included.
+// @Tags         Disclosure (user)
+// @Produce      json
+// @Success      200 {array} disclosure.GrantWithRequest
+// @Failure      401 {object} APIError "missing or invalid token, or no matching user"
+// @Failure      500 {object} APIError
+// @Security     BearerAuth
+// @Router       /api/v1/me/disclosure/grants/all [get]
 func (s *Server) getAllMyGrants(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 
@@ -790,6 +987,22 @@ func (s *Server) validateDisclosureToken(c *gin.Context) (*disclosure.GrantWithR
 }
 
 // getDisclosureLogs gets activity logs via disclosure grant
+//
+// @Summary      Get activity logs for a grant
+// @Description  Returns the target user's RPC activity log entries authorized by a disclosure grant. Requires a valid grant token (X-Disclosure-Token header or token query parameter) that must belong to the grant named in the path — a token for a different grant is rejected (403). Results are bounded to the grant's scope and time window; each access is itself recorded as a disclosure event.
+// @Tags         Admin: disclosure
+// @Produce      json
+// @Param        grant_id path string true "Disclosure grant ID"
+// @Param        X-Disclosure-Token header string false "Grant access token (or pass as the token query parameter)"
+// @Param        token query string false "Grant access token (alternative to the X-Disclosure-Token header)"
+// @Param        limit query int false "Max rows to return (1-1000)" default(100)
+// @Param        offset query int false "Rows to skip (pagination)" default(0)
+// @Success      200 {array} disclosure.ActivityLogEntry
+// @Failure      401 {object} APIError "missing or invalid admin token, or invalid/absent disclosure token"
+// @Failure      403 {object} APIError "source address not on the private network, or token does not match the grant"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/disclosure/grants/{grant_id}/logs [get]
 func (s *Server) getDisclosureLogs(c *gin.Context) {
 	grantID := c.Param("grant_id")
 
@@ -835,6 +1048,20 @@ func (s *Server) getDisclosureLogs(c *gin.Context) {
 }
 
 // getDisclosureSummary gets activity summary via disclosure grant
+//
+// @Summary      Get activity summary for a grant
+// @Description  Returns aggregated activity statistics (request counts, per-method breakdown, date range) for the target user's activity authorized by a disclosure grant. Requires a valid grant token (X-Disclosure-Token header or token query parameter) that must belong to the grant named in the path — a token for a different grant is rejected (403). The access is recorded as a disclosure event.
+// @Tags         Admin: disclosure
+// @Produce      json
+// @Param        grant_id path string true "Disclosure grant ID"
+// @Param        X-Disclosure-Token header string false "Grant access token (or pass as the token query parameter)"
+// @Param        token query string false "Grant access token (alternative to the X-Disclosure-Token header)"
+// @Success      200 {object} disclosure.ActivitySummary
+// @Failure      401 {object} APIError "missing or invalid admin token, or invalid/absent disclosure token"
+// @Failure      403 {object} APIError "source address not on the private network, or token does not match the grant"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/disclosure/grants/{grant_id}/summary [get]
 func (s *Server) getDisclosureSummary(c *gin.Context) {
 	grantID := c.Param("grant_id")
 
@@ -867,6 +1094,22 @@ func (s *Server) getDisclosureSummary(c *gin.Context) {
 }
 
 // getDisclosureReport gets or generates a compliance report via disclosure grant
+//
+// @Summary      Generate a compliance report for a grant
+// @Description  Generates (or returns) a compliance report of the given type over the target user's activity authorized by a disclosure grant. Requires a valid grant token (X-Disclosure-Token header or token query parameter) that must belong to the grant named in the path — a token for a different grant is rejected (403). The report_type must be one of the supported values; the access is recorded as a disclosure event.
+// @Tags         Admin: disclosure
+// @Produce      json
+// @Param        grant_id path string true "Disclosure grant ID"
+// @Param        report_type path string true "Report type to generate" Enums(activity_summary, sanctions_check, compliance_report)
+// @Param        X-Disclosure-Token header string false "Grant access token (or pass as the token query parameter)"
+// @Param        token query string false "Grant access token (alternative to the X-Disclosure-Token header)"
+// @Success      200 {object} disclosure.Report
+// @Failure      400 {object} APIError "invalid report type"
+// @Failure      401 {object} APIError "missing or invalid admin token, or invalid/absent disclosure token"
+// @Failure      403 {object} APIError "source address not on the private network, or token does not match the grant"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/disclosure/grants/{grant_id}/report/{report_type} [get]
 func (s *Server) getDisclosureReport(c *gin.Context) {
 	grantID := c.Param("grant_id")
 	reportTypeStr := c.Param("report_type")
@@ -909,6 +1152,22 @@ func (s *Server) getDisclosureReport(c *gin.Context) {
 }
 
 // getDisclosureEvents gets disclosure access events for a grant
+//
+// @Summary      Get access events for a grant
+// @Description  Returns the disclosure access audit trail for a grant — each event records when the grant's data was viewed, by whom, and what resource was accessed. Requires a valid grant token (X-Disclosure-Token header or token query parameter) that must belong to the grant named in the path — a token for a different grant is rejected (403).
+// @Tags         Admin: disclosure
+// @Produce      json
+// @Param        grant_id path string true "Disclosure grant ID"
+// @Param        X-Disclosure-Token header string false "Grant access token (or pass as the token query parameter)"
+// @Param        token query string false "Grant access token (alternative to the X-Disclosure-Token header)"
+// @Param        limit query int false "Max rows to return (1-1000)" default(100)
+// @Param        offset query int false "Rows to skip (pagination)" default(0)
+// @Success      200 {array} disclosure.Event
+// @Failure      401 {object} APIError "missing or invalid admin token, or invalid/absent disclosure token"
+// @Failure      403 {object} APIError "source address not on the private network, or token does not match the grant"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/disclosure/grants/{grant_id}/events [get]
 func (s *Server) getDisclosureEvents(c *gin.Context) {
 	grantID := c.Param("grant_id")
 

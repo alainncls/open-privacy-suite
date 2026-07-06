@@ -1252,6 +1252,35 @@ func (s *Server) handleHealth(c *gin.Context) {
 // MaxRequestBodySize is the maximum allowed request body size (1MB).
 const MaxRequestBodySize = 1 << 20 // 1MB
 
+// handleJSONRPC serves the proxied Ethereum JSON-RPC endpoint. The same
+// handler backs POST / (alias), POST /rpc, and POST /rpc/{org_id}; the
+// optional {org_id} path segment selects the organization the access decision
+// resolves against.
+//
+// @Summary      Proxied Ethereum JSON-RPC
+// @Description  Single Ethereum JSON-RPC 2.0 request, method-allowlisted and RBAC-checked, with per-method response redaction. Batch (array) requests are rejected.
+// @Description
+// @Description  `Authorization: Bearer <token>` is OPTIONAL: anonymous callers are restricted to the anonymous method allowlist; authenticated callers get per-method RBAC and response redaction based on their identity.
+// @Description
+// @Description  The transaction-sending methods (eth_sendTransaction / eth_sendRawTransaction) additionally accept a top-level `visibleTo` array (alias `privateFor`) of DIDs and/or linked ETH addresses, granting those viewers per-transaction visibility of the emitted event logs (RD-1163). It is accepted only for log-emitting contract calls.
+// @Description
+// @Description  A JSON-RPC-level error (bad params, node error, or a masked authorization denial) is returned with HTTP 200 in the JSON-RPC error member. The non-200 statuses below are transport / access / rate-limit failures that never reach the node. `POST /` and `POST /rpc` are the same operation.
+// @Tags         JSON-RPC
+// @Accept       json
+// @Produce      json
+// @Param        org_id path string false "Organization the access decision resolves against (only on /rpc/{org_id})"
+// @Param        request body JSONRPCRequestEnvelope true "JSON-RPC 2.0 request"
+// @Success      200 {object} JSONRPCResponseEnvelope "JSON-RPC response; may carry a JSON-RPC-level error member"
+// @Failure      400 {object} APIError "unreadable body, malformed/batch JSON-RPC, or invalid visibleTo"
+// @Failure      403 {object} APIError "runtime-trace or compliance denial"
+// @Failure      404 {object} APIError "method not allowed for the caller (denials are masked as method not found)"
+// @Failure      413 {object} APIError "request body too large"
+// @Failure      429 {object} APIError "concurrency limit or upstream rate limit"
+// @Failure      500 {object} APIError "trace-validation or compliance-check error"
+// @Failure      502 {object} APIError "failed to forward to the upstream node"
+// @Security     BearerAuth
+// @Router       /rpc [post]
+// @Router       /rpc/{org_id} [post]
 func (s *Server) handleJSONRPC(c *gin.Context) {
 	// Extract identity. Under the RD-928 impersonation surface this is the
 	// target user's DID set by impersonationGateMiddleware; otherwise it's
@@ -1344,6 +1373,28 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 	c.Data(result.StatusCode, "application/json", result.ResponseBody)
 }
 
+// getLogs returns a filtered, paginated page of RBAC access-log rows.
+//
+// @Summary      List access logs
+// @Description  Filtered, paginated access-log rows. Results are scoped to the caller's organization(s) for a tier-2 admin JWT; the super-admin token sees fleet-wide rows. status_code and outcome are mutually exclusive. total is -1 when the count query fails.
+// @Tags         Admin: ops
+// @Produce      json
+// @Param        external_id query string false "Filter by caller external ID (DID)"
+// @Param        method query string false "Filter by JSON-RPC method"
+// @Param        correlation_id query string false "Filter by correlation ID"
+// @Param        status_code query int false "Exact HTTP status code (mutually exclusive with outcome)"
+// @Param        outcome query string false "Status class filter" Enums(success, denied, error, all)
+// @Param        from query string false "Start of time range (RFC3339)"
+// @Param        to query string false "End of time range (RFC3339)"
+// @Param        limit query int false "Max rows (default 100, capped server-side)"
+// @Param        offset query int false "Row offset for pagination (default 0)"
+// @Success      200 {object} AdminLogsResponse
+// @Failure      400 {object} APIError "invalid filter (e.g. status_code+outcome together, bad timestamp)"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/logs [get]
 func (s *Server) getLogs(c *gin.Context) {
 	filter := db.AccessLogFilter{
 		ExternalID:    strings.TrimSpace(c.Query("external_id")),
@@ -1874,6 +1925,18 @@ type NodeStatus struct {
 	Error     string `json:"error,omitempty"`
 }
 
+// getStatus reports proxy, upstream-node, security, and available-method
+// status for the admin dashboard.
+//
+// @Summary      Proxy status
+// @Description  Operational status: proxy liveness and port, upstream node health/latency, compliance/travel-rule configuration, and the extra RPC namespaces/wildcards available to the frontend.
+// @Tags         Admin: ops
+// @Produce      json
+// @Success      200 {object} StatusResponse
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network"
+// @Security     AdminToken
+// @Router       /api/v1/admin/status [get]
 func (s *Server) getStatus(c *gin.Context) {
 	// Check node health
 	nodeHealth := s.proxy.CheckHealth()
@@ -1929,6 +1992,25 @@ type TestRequestResponse struct {
 	Identity  string      `json:"identity,omitempty"` // The identity used for access control
 }
 
+// handleTestRequest runs a single JSON-RPC method through the full access /
+// compliance / forwarding pipeline from the admin dashboard, using either a
+// synthetic identity or one extracted from a supplied JWT, and reports the
+// result plus latency.
+//
+// @Summary      Test a JSON-RPC request
+// @Description  Dashboard diagnostic: runs one method through RBAC, travel-rule compliance, and upstream forwarding, using a synthetic identity ("test:dashboard") or the subject of a supplied jwt_token. On an upstream JSON-RPC-level error the call still returns HTTP 200 with the error in the response body. Requires the private-network source gate (403 otherwise).
+// @Tags         Admin: ops
+// @Accept       json
+// @Produce      json
+// @Param        request body TestRequestInput true "method, params, and optional jwt_token / org_id"
+// @Success      200 {object} TestRequestResponse "forwarded result (or an upstream JSON-RPC error message) plus latency"
+// @Failure      400 {object} APIError "invalid request body or invalid JWT"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} TestRequestResponse "RBAC or compliance denied (network-gate rejections return the generic error envelope)"
+// @Failure      500 {object} TestRequestResponse "access-check error"
+// @Failure      502 {object} TestRequestResponse "failed to reach the upstream node"
+// @Security     AdminToken
+// @Router       /api/v1/admin/test-request [post]
 func (s *Server) handleTestRequest(c *gin.Context) {
 	// RD-1147: diagnostic access-log writes go to the audit DB (== main when not
 	// split). accessLogDB() also guards lightweight test Server literals.
@@ -2127,6 +2209,16 @@ func (s *Server) registerUserProfileRoutes(router *gin.Engine) {
 // Only users in groups with is_org_admin = true (tier 2) are considered admins
 // for dashboard access purposes. Contract admins (tier 3, admin claim only) get
 // is_admin: false because they have no admin dashboard access.
+//
+// @Summary      My admin status
+// @Description  Whether the authenticated user is a tier-2 org admin or a read-only admin, and in which organizations. A user with no DB record (or only a tier-3 "admin" claim) gets is_admin=false.
+// @Tags         Profile
+// @Produce      json
+// @Success      200 {object} MyAdminStatusResponse
+// @Failure      401 {object} APIError "missing or invalid token"
+// @Failure      500 {object} APIError
+// @Security     BearerAuth
+// @Router       /api/v1/me/admin-status [get]
 func (s *Server) getMyAdminStatus(c *gin.Context) {
 	subject, exists := c.Get("subject")
 	if !exists {
@@ -2176,6 +2268,16 @@ type UserOrgResponse struct {
 }
 
 // getMyOrganizations returns the organizations the authenticated user belongs to.
+//
+// @Summary      My organizations
+// @Description  The organizations the authenticated user belongs to, de-duplicated across group memberships.
+// @Tags         Profile
+// @Produce      json
+// @Success      200 {object} MyOrganizationsResponse
+// @Failure      401 {object} APIError "missing or invalid token, or user not found"
+// @Failure      500 {object} APIError
+// @Security     BearerAuth
+// @Router       /api/v1/me/orgs [get]
 func (s *Server) getMyOrganizations(c *gin.Context) {
 	subject, exists := c.Get("subject")
 	if !exists {

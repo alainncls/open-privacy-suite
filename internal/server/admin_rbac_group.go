@@ -97,6 +97,22 @@ const (
 
 // Group handlers
 
+// listGroups returns the groups of an organization with their access settings.
+//
+// @Summary      List groups
+// @Description  Returns a paginated list of the organization's groups, each with its access settings (RPC method allowlist, claims, rate limits); rpc_api_key values are masked. Optional case-insensitive search filter. Tenant-confidential: rejected for the operator token (403); use a tier-2 org-admin JWT. Org-scoping middleware limits a tier-2 JWT to orgs it administers.
+// @Tags         Admin: RBAC
+// @Produce      json
+// @Param        org_id path string true "Organization ID (UUID)"
+// @Param        search query string false "Case-insensitive filter on group name/slug"
+// @Param        limit query int false "Max rows to return (default 50)"
+// @Param        offset query int false "Rows to skip for pagination (default 0)"
+// @Success      200 {object} groupListResponse
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, org outside the caller's scope, or operator token (tenant data not readable)"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/groups [get]
 func (s *Server) listGroups(c *gin.Context) {
 	// RD-1132: tenant-confidential read — not readable with the operator token.
 	if denyOperatorTenantRead(c) {
@@ -131,6 +147,23 @@ func (s *Server) listGroups(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": groups, "total": total, "limit": limit, "offset": offset})
 }
 
+// createGroup creates a group within an organization.
+//
+// @Summary      Create a group
+// @Description  Creates a group within the organization. Body: slug (required, URL-safe, unique per org), name (required), description, is_org_admin, is_org_readonly_admin. Admin-tier flags carry escalation gates: a tier-2 org-admin JWT cannot create an is_org_admin group (super-admin only); the operator token cannot create a regular group (org admin's job). is_org_admin and is_org_readonly_admin are mutually exclusive.
+// @Tags         Admin: RBAC
+// @Accept       json
+// @Produce      json
+// @Param        org_id path string true "Organization ID (UUID)"
+// @Param        request body groupCreateRequest true "group to create"
+// @Success      201 {object} rbac.Group
+// @Failure      400 {object} APIError "invalid body, slug format, or mutually-exclusive admin roles"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, org outside the caller's scope, tier-2 JWT minting an org-admin group, or operator token creating a regular group"
+// @Failure      409 {object} APIError "a group with this slug or name already exists in the organization"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/groups [post]
 func (s *Server) createGroup(c *gin.Context) {
 	orgID := c.Param("org_id")
 
@@ -279,6 +312,20 @@ func verifyGroupBelongsToPathOrg(c *gin.Context, group *rbac.Group) bool {
 	return true
 }
 
+// getGroup returns a single group by ID.
+//
+// @Summary      Get a group
+// @Description  Returns a single group. The group must belong to the org in the path (verified server-side); a mismatch returns an opaque 403 identical to the not-found case so foreign-org group IDs cannot be probed. Tenant-confidential: rejected for the operator token (403).
+// @Tags         Admin: RBAC
+// @Produce      json
+// @Param        org_id path string true "Organization ID (UUID)"
+// @Param        group_id path string true "Group ID (UUID)"
+// @Success      200 {object} rbac.Group
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, group not in the path org (opaque), or operator token (tenant data not readable)"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/groups/{group_id} [get]
 func (s *Server) getGroup(c *gin.Context) {
 	// RD-1132: tenant-confidential read — not readable with the operator token.
 	if denyOperatorTenantRead(c) {
@@ -297,6 +344,24 @@ func (s *Server) getGroup(c *gin.Context) {
 	c.JSON(http.StatusOK, group)
 }
 
+// updateGroup edits a group's name, description, and/or admin-tier flags.
+//
+// @Summary      Update a group
+// @Description  Updates a group's name, description, is_org_admin, and/or is_org_readonly_admin. All body fields are optional. is_system groups are identity-immutable (403). Escalation gates apply: a tier-2 org-admin JWT cannot change is_org_admin in either direction (super-admin only); the operator token cannot edit a regular group unless the update promotes it to an admin-tier group. The resulting state cannot be both full and read-only org admin.
+// @Tags         Admin: RBAC
+// @Accept       json
+// @Produce      json
+// @Param        org_id path string true "Organization ID (UUID)"
+// @Param        group_id path string true "Group ID (UUID)"
+// @Param        request body groupUpdateRequest true "fields to update (all optional)"
+// @Success      200 {object} rbac.Group
+// @Failure      400 {object} APIError "invalid body or mutually-exclusive admin roles"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, group not in the path org, system group, tier-2 JWT changing is_org_admin, or operator token editing a regular group"
+// @Failure      409 {object} APIError "a group with this slug or name already exists in the organization"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/groups/{group_id} [put]
 func (s *Server) updateGroup(c *gin.Context) {
 	groupID := c.Param("group_id")
 
@@ -412,6 +477,20 @@ func (s *Server) updateGroup(c *gin.Context) {
 	c.JSON(http.StatusOK, group)
 }
 
+// deleteGroup deletes a group by ID.
+//
+// @Summary      Delete a group
+// @Description  Deletes a group. The group must belong to the path org (opaque 403 otherwise). is_system groups cannot be deleted. A tier-2 org-admin JWT cannot delete an is_org_admin group (super-admin only); the operator token cannot delete a regular group.
+// @Tags         Admin: RBAC
+// @Produce      json
+// @Param        org_id path string true "Organization ID (UUID)"
+// @Param        group_id path string true "Group ID (UUID)"
+// @Success      200 {object} APIMessage "group deleted"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, group not in the path org, system group, tier-2 JWT deleting an org-admin group, or operator token deleting a regular group"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/groups/{group_id} [delete]
 func (s *Server) deleteGroup(c *gin.Context) {
 	groupID := c.Param("group_id")
 
@@ -463,6 +542,20 @@ func (s *Server) deleteGroup(c *gin.Context) {
 
 // Group Access handlers
 
+// getGroupAccess returns a group's RPC access settings.
+//
+// @Summary      Get group access
+// @Description  Returns the group's access settings: the RPC method allowlist, operational claims, and rate limits. For child groups, effective (parent-narrowed) claims are computed. Any rpc_api_key is masked. Returns an empty access object if none is configured. The group must belong to the path org (opaque 403 otherwise). Tenant-confidential: rejected for the operator token (403).
+// @Tags         Admin: RBAC
+// @Produce      json
+// @Param        org_id path string true "Organization ID (UUID)"
+// @Param        group_id path string true "Group ID (UUID)"
+// @Success      200 {object} rbac.GroupAccess
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, group not in the path org, or operator token (tenant data not readable)"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/groups/{group_id}/access [get]
 func (s *Server) getGroupAccess(c *gin.Context) {
 	// RD-1132: tenant-confidential read — not readable with the operator token.
 	if denyOperatorTenantRead(c) {
@@ -508,6 +601,23 @@ func (s *Server) getGroupAccess(c *gin.Context) {
 	c.JSON(http.StatusOK, access)
 }
 
+// setGroupAccess replaces a group's RPC access settings.
+//
+// @Summary      Set group access
+// @Description  Creates or replaces the group's access settings. Body: allowed_methods ([]string; "*" expands to the full method list), claims ([]string of operational claims: deploy/upgrade/admin), rate_limit_rps, rate_limit_daily, rpc_api_key (encrypted at rest, never returned in clear), verbose_errors. is_system group access is super-admin-only (X-Admin-Token). Reshaping an is_org_admin group's access is super-admin-only; reshaping a regular group's access is rejected for the operator token. On is_org_admin groups claims must be empty and at least one method is required. The returned rpc_api_key is masked.
+// @Tags         Admin: RBAC
+// @Accept       json
+// @Produce      json
+// @Param        org_id path string true "Organization ID (UUID)"
+// @Param        group_id path string true "Group ID (UUID)"
+// @Param        request body groupAccessRequest true "access settings"
+// @Success      200 {object} rbac.GroupAccess
+// @Failure      400 {object} APIError "invalid body, method/claim mismatch, or org-admin claim/method invariant violated"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, group not in the path org, system-group access changed by non-super-admin, tier-2 JWT reshaping an org-admin group, or operator token reshaping a regular group"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/groups/{group_id}/access [put]
 func (s *Server) setGroupAccess(c *gin.Context) {
 	groupID := c.Param("group_id")
 
@@ -727,6 +837,21 @@ func (s *Server) populateEffectiveClaims(ctx context.Context, group *rbac.Group,
 
 // batchDeletePreview returns information about groups to be deleted.
 // POST /orgs/:org_id/groups/batch-delete-preview
+//
+// @Summary      Preview a batch group deletion
+// @Description  Returns, for each requested group, its member count and the contract addresses a deletion would cascade — a dry run for the batch-delete endpoint. Body: group_ids ([]string, required, max 200). Every group must belong to the path org; a foreign or unknown ID returns an opaque 403.
+// @Tags         Admin: RBAC
+// @Accept       json
+// @Produce      json
+// @Param        org_id path string true "Organization ID (UUID)"
+// @Param        request body groupBatchDeleteRequest true "group IDs to preview"
+// @Success      200 {object} groupBatchDeletePreviewResponse
+// @Failure      400 {object} APIError "invalid body, empty group_ids, or more than 200 IDs"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, org outside the caller's scope, or a group not in the path org (opaque)"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/groups/batch-delete-preview [post]
 func (s *Server) batchDeletePreview(c *gin.Context) {
 	orgID := c.Param("org_id")
 
@@ -825,6 +950,21 @@ func (s *Server) batchDeletePreview(c *gin.Context) {
 
 // batchDeleteGroups deletes multiple groups atomically.
 // POST /orgs/:org_id/groups/batch-delete
+//
+// @Summary      Batch-delete groups
+// @Description  Deletes multiple groups (and their dependencies) in a single atomic transaction; if any group fails a check the whole batch rolls back. Body: group_ids ([]string, required, max 200). Every group must belong to the path org. A tier-2 org-admin JWT batch that includes any is_org_admin group is rejected (super-admin only); the operator token is rejected if the batch includes any regular group.
+// @Tags         Admin: RBAC
+// @Accept       json
+// @Produce      json
+// @Param        org_id path string true "Organization ID (UUID)"
+// @Param        request body groupBatchDeleteRequest true "group IDs to delete"
+// @Success      200 {object} groupBatchDeleteResponse
+// @Failure      400 {object} APIError "invalid body, empty group_ids, more than 200 IDs, or one or more groups not in the organization"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, org outside the caller's scope, tier-2 JWT batch including an org-admin group, or operator token batch including a regular group"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/groups/batch-delete [post]
 func (s *Server) batchDeleteGroups(c *gin.Context) {
 	orgID := c.Param("org_id")
 

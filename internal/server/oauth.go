@@ -241,6 +241,20 @@ func generateSecureCode() string {
 
 // handleOAuthMockComplete handles POST /oauth/session/:id/mock-complete
 // Dev-only: instantly completes an OAuth session with a mock DID, bypassing Privado verification.
+//
+// @Summary      Complete an OAuth session with a mock DID (dev only)
+// @Description  Available only in non-production builds with mock login enabled. Instantly completes a pending OAuth session with a mock DID (optionally supplied in the body), bypassing Privado verification, and mints the authorization code. Rate-limited.
+// @Tags         OAuth SSO
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "OAuth session ID"
+// @Param        request body object false "optional {\"did\":\"did:...\"} to complete as a specific mock identity"
+// @Success      200 {object} oauthMockCompleteResponse
+// @Failure      403 {object} APIError "mock login not available"
+// @Failure      404 {object} APIError "session not found or expired"
+// @Failure      409 {object} APIError "session already completed"
+// @Failure      500 {object} APIError "failed to complete session"
+// @Router       /oauth/session/{id}/mock-complete [post]
 func (s *Server) handleOAuthMockComplete(c *gin.Context) {
 	if s.config.IsProduction() || !s.config.AllowMockLogin {
 		c.JSON(http.StatusForbidden, gin.H{"error": "mock login not available"})
@@ -313,6 +327,20 @@ func (s *Server) handleOAuthMockComplete(c *gin.Context) {
 // On any precondition failure: returns 403/404/409 with a generic body so
 // the FE can fall through to the interactive Privado flow without leaking
 // which condition tripped.
+//
+// @Summary      Silently complete an OAuth session (first-party SSO)
+// @Description  Production-safe silent SSO. Requires a valid Bearer JWT. Completes a pending OAuth session without the interactive wallet step only when it is fail-closed safe to do so: the caller's DID must equal the session's initiator DID and the session's client must be on the first-party allowlist (an anonymous initiator or a non-first-party client is never eligible and falls through to the interactive flow). On success it mints an authorization code and returns the same shape as the status endpoint. Rate-limited.
+// @Tags         OAuth SSO
+// @Produce      json
+// @Param        id path string true "OAuth session ID"
+// @Success      200 {object} OAuthSessionStatusResponse "completed, with redirect_url"
+// @Failure      401 {object} APIError "authentication required"
+// @Failure      403 {object} APIError "silent SSO not available for this session or client"
+// @Failure      404 {object} APIError "session not found or expired"
+// @Failure      409 {object} APIError "session already completed"
+// @Failure      500 {object} APIError "failed to complete session"
+// @Security     BearerAuth
+// @Router       /oauth/session/{id}/silent-complete [post]
 func (s *Server) handleOAuthSilentComplete(c *gin.Context) {
 	oauthSessionID := c.Param("id")
 	oauthSession := s.oauthSessionStore.GetSession(oauthSessionID)
@@ -418,6 +446,15 @@ func (s *Server) recordOAuthSilentSSO(ctx context.Context, actorDID, clientID, r
 // handleOAuthSessionInfo handles GET /oauth/session/:id/info
 // Returns the auth request data for a pending OAuth session, allowing the frontend
 // login page to render the QR code for an OAuth flow initiated by a third-party app.
+//
+// @Summary      Get pending OAuth session info
+// @Description  Returns the underlying Privado authorization request for a pending OAuth session so the login page can render its QR code, plus whether the dev mock-complete path is offered. Rate-limited.
+// @Tags         OAuth SSO
+// @Produce      json
+// @Param        id path string true "OAuth session ID"
+// @Success      200 {object} oauthSessionInfoResponse
+// @Failure      404 {object} APIError "OAuth session or its auth session not found"
+// @Router       /oauth/session/{id}/info [get]
 func (s *Server) handleOAuthSessionInfo(c *gin.Context) {
 	oauthSessionID := c.Param("id")
 	oauthSession := s.oauthSessionStore.GetSession(oauthSessionID)
@@ -472,6 +509,21 @@ type OAuthErrorResponse struct {
 
 // handleOAuthAuthorize handles GET /oauth/authorize - OAuth authorization endpoint
 // This initiates the OAuth flow by creating a pending session and returning the auth page
+//
+// @Summary      OAuth 2.0 authorization endpoint
+// @Description  Starts the OAuth authorization-code flow: validates the parameters and redirect_uri, creates a pending session, and generates the underlying Privado authorization request. Browser clients (Accept: text/html) receive a 302 redirect to the login page; other clients receive JSON with the session IDs and the authorization request to render as a QR code. An optional Bearer JWT may be supplied — when present, the caller's DID is bound to the session as its initiator, enabling later first-party silent SSO; anonymous callers simply complete via the interactive flow. Only response_type=code is supported. Rate-limited.
+// @Tags         OAuth SSO
+// @Produce      json
+// @Param        client_id query string true "OAuth client ID"
+// @Param        redirect_uri query string true "client redirect URI (must be allowlisted)"
+// @Param        state query string true "opaque CSRF state echoed back to the client"
+// @Param        response_type query string true "must be \"code\""
+// @Success      200 {object} oauthAuthorizeJSONResponse "non-browser clients: session IDs and auth request"
+// @Success      302 {string} string "browser clients: redirect to the login page"
+// @Failure      400 {object} OAuthErrorResponse "invalid_request or unsupported_response_type"
+// @Failure      500 {object} OAuthErrorResponse "server misconfiguration or failure creating the session"
+// @Failure      503 {object} OAuthErrorResponse "authentication or OAuth service at capacity"
+// @Router       /oauth/authorize [get]
 func (s *Server) handleOAuthAuthorize(c *gin.Context) {
 	var req OAuthAuthorizeRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -635,6 +687,21 @@ func (s *Server) handleOAuthAuthorize(c *gin.Context) {
 
 // handleOAuthCallback handles POST /oauth/callback - wallet callback with proof
 // This is similar to handleAuthCallback but handles the OAuth redirect
+//
+// @Summary      Submit a Privado ID proof for an OAuth session (wallet callback)
+// @Description  The wallet posts the JWZ proof for an OAuth flow, naming both the auth session and the OAuth session via query parameters (the OAuth session must be linked to the given auth session). On success an authorization code is minted and a redirect URL (client redirect_uri with code and state) is returned. The body is the JWZ token, accepted as JSON (`{"token":"<jwz>"}` or `{"jwz_token":"<jwz>"}`) or the raw token string; it is size-capped. Rate-limited.
+// @Tags         OAuth SSO
+// @Accept       json
+// @Produce      json
+// @Param        session query string true "auth session ID"
+// @Param        oauth_session query string true "OAuth session ID (must be linked to the auth session)"
+// @Param        request body object true "JWZ token, as {\"token\":\"<jwz>\"} or the raw token string"
+// @Success      200 {object} oauthCallbackResponse
+// @Failure      400 {object} APIError "missing session parameters, unreadable body, or missing/invalid JWZ token"
+// @Failure      401 {object} APIError "session not found/expired, session mismatch, or verification failed"
+// @Failure      403 {object} HumanityVerificationError "ProofOfHumanity verification required, or account banned"
+// @Failure      500 {object} APIError "failed to generate authorization code or build redirect"
+// @Router       /oauth/callback [post]
 func (s *Server) handleOAuthCallback(c *gin.Context) {
 	// Get session IDs from query parameters
 	authSessionID := c.Query("session")
@@ -765,6 +832,19 @@ func (s *Server) handleOAuthCallback(c *gin.Context) {
 
 // handleOAuthToken handles POST /oauth/token - Token endpoint
 // Exchanges authorization code for JWT access token
+//
+// @Summary      OAuth 2.0 token endpoint
+// @Description  Exchanges an authorization code for access and refresh tokens. Only grant_type=authorization_code is supported; the code, client_id, and redirect_uri must match the session, the code must be unexpired and unused (single-use). First-party clients must additionally authenticate with their client secret, via HTTP Basic (client_secret_basic) or the client_secret body parameter (client_secret_post). Accepts JSON or form-encoded bodies. Rate-limited.
+// @Tags         OAuth SSO
+// @Accept       json
+// @Accept       x-www-form-urlencoded
+// @Produce      json
+// @Param        request body OAuthTokenRequest true "authorization-code grant parameters"
+// @Success      200 {object} OAuthTokenResponse
+// @Failure      400 {object} OAuthErrorResponse "invalid_request, unsupported_grant_type, or invalid_grant"
+// @Failure      401 {object} OAuthErrorResponse "invalid_client — client authentication failed"
+// @Failure      500 {object} OAuthErrorResponse "server_error — failed to issue or persist tokens"
+// @Router       /oauth/token [post]
 func (s *Server) handleOAuthToken(c *gin.Context) {
 	var req OAuthTokenRequest
 
@@ -916,6 +996,17 @@ type OAuthSessionStatusResponse struct {
 
 // handleOAuthSessionStatus handles GET /oauth/session/:id/status - poll for OAuth session completion
 // Frontend polls this to check if the user has completed Privado auth
+//
+// @Summary      Poll an OAuth session for completion
+// @Description  The frontend polls this during the QR scan to learn whether the user has completed authentication. While pending it returns `completed:false`; once complete it returns the client redirect URL with the authorization code and state. Deliberately not rate-limited: it is read-only polling during the login flow.
+// @Tags         OAuth SSO
+// @Produce      json
+// @Param        id path string true "OAuth session ID"
+// @Success      200 {object} OAuthSessionStatusResponse
+// @Failure      400 {object} APIError "session ID required"
+// @Failure      404 {object} APIError "session not found or expired"
+// @Failure      500 {object} APIError "invalid redirect URI"
+// @Router       /oauth/session/{id}/status [get]
 func (s *Server) handleOAuthSessionStatus(c *gin.Context) {
 	oauthSessionID := c.Param("id")
 	if oauthSessionID == "" {
