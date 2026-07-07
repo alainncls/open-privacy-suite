@@ -553,7 +553,7 @@ SWAPROUTER_BYTECODE=$(forge inspect SwapRouter bytecode)
 
 # Create proxy contract
 cat > "$BUILD_DIR/src/DeployProxy.sol" << 'EOF'
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
