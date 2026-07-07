@@ -388,6 +388,13 @@ func extractUniqueAddresses(txs []Transaction) []string {
 		if tx.HasRecipient() {
 			addrMap[strings.ToLower(*tx.To)] = true
 		}
+		// RD-1143: include the deployed-contract address on CREATE receipts so
+		// its visibility is resolved in the same batch and it can be field-level
+		// redacted below. Nil for non-CREATE txs and factory/CREATE2 deploys
+		// (the receipt only carries contractAddress for a top-level CREATE).
+		if tx.ContractAddress != nil && *tx.ContractAddress != "" {
+			addrMap[strings.ToLower(*tx.ContractAddress)] = true
+		}
 	}
 
 	var addrs []string
@@ -988,6 +995,35 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 				redactedTx.AddressMetadata[aLower] = ReasonVisibleToGrant
 			} else if meta, ok := visibilityMapDetailed[aLower]; ok {
 				redactedTx.AddressMetadata[aLower] = meta.Reason
+			}
+		}
+
+		// RD-1143: redact the deployed-contract address on a CREATE receipt. It
+		// is a first-class address field and must follow the same field-level
+		// redaction as from/to — keyed on the CONTRACT's own resolved visibility
+		// (it is registered to the deployer's org via the deploy auto-grant, so it
+		// resolves to Redacted/Hidden for outsiders and Full for the deployer /
+		// org members). The participant/visibleTo override reveals it to the
+		// deployer (who is the `from` participant of their own CREATE). The
+		// elevated admin audit view deliberately does NOT reveal it: per
+		// /docs/security/privacy-requirements the flag reveals existence + value
+		// (row survival) but never counterparty/contract addresses. Fail-closed:
+		// only the two identifiable levels reveal; Hidden/Redacted AND any
+		// unknown level render [PRIVATE]. Runs before the branch split so it
+		// applies on every surviving row regardless of from/to outcome.
+		if tx.ContractAddress != nil && *tx.ContractAddress != "" {
+			caBase := visibilityMap[strings.ToLower(*tx.ContractAddress)]
+			caLevel := caBase
+			if (viewerIsParticipant || txVisibleToViewer) && isNonIdentifiable(caLevel) {
+				caLevel = VisibilityFull
+			}
+			if caLevel == VisibilityFull || caLevel == VisibilityPseudonymous {
+				red := r.applyRedaction(*tx.ContractAddress, caLevel)
+				redactedTx.ContractAddress = &red
+				setMeta(*tx.ContractAddress, caBase)
+			} else {
+				p := "[PRIVATE]"
+				redactedTx.ContractAddress = &p
 			}
 		}
 
