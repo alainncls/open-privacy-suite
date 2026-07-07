@@ -1,0 +1,587 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+2 0 obj
+<< /Length 2764 >>
+stream
+BT
+/F1 9 Tf
+1 0 0 1 54 738 Tm
+(Privacy Proxy OSS Readiness) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(Current checklist for publishing the Gateway.fm Privacy Proxy source repository under) Tj
+0 -12 Td
+(Apache-2.0. Source release is tracked separately from official binary and container image) Tj
+0 -12 Td
+(releases.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(Snapshot: July 7, 2026 Branch: oss/source-only-apache2-readiness Scope: source-only) Tj
+0 -12 Td
+(Apache-2.0) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(Download PDF Download standalone HTML) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(CloseSource-only Apache-2.0 publication is within reach after final coordination items.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(5Critical source-public items remain before making the repository public.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(HoldDo not publish official binaries or Docker images yet.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(4Gateway repositories belong in the coordinated Apache plan.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(Verdict) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(Source-only Apache-2.0 publication is close, but the coordinated Gateway repositories and) Tj
+0 -12 Td
+(public workflow posture still need final handling. Official binaries/images should wait for) Tj
+0 -12 Td
+(SBOMs, provenance, notices, and LGPL binary-distribution review.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(Done On The OSS Readiness Branch) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| Status | Item) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| Done | Added root Apache-2.0 LICENSE.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| Done | Changed README license section from MIT to Apache-2.0.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| Done | Added license: Apache-2.0 to npm manifests and lockfile root metadata.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| Done | Added starter NOTICE and THIRD_PARTY_NOTICES.md.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| Done | Added SECURITY.md, CONTRIBUTING.md, CODE_OF_CONDUCT.md, and GOVERNANCE.md.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| Done | Ignored internal audit report filenames so they are not accidentally committed.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| Done | Switched tools/wallet-emulator-js submodule URL from SSH to public HTTPS.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| Done | Aligned project-owned Solidity SPDX identifiers with Apache-2.0.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| Done | Removed the accidental .agents gitlink on the base hygiene branch.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(Must Finish Before Making The Source Repo Public) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| Priority | Item | Why it matters) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| Critical | Confirm legal copyright holder text for NOTICE. | The public notice needs the) Tj
+0 -12 Td
+(correct legal owner.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| Critical | Confirm the private vulnerability contact in SECURITY.md. | The public repo) Tj
+0 -12 Td
+(needs a working private disclosure path.) Tj
+0 -24 Td
+(Page 1 of 5) Tj
+ET
+endstream
+endobj
+3 0 obj
+<< /Type /Page /Parent 12 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 1 0 R >> >> /Contents 2 0 R >>
+endobj
+4 0 obj
+<< /Length 3492 >>
+stream
+BT
+/F1 9 Tf
+1 0 0 1 54 738 Tm
+() Tj
+0 -12 Td
+(| Critical | Publish or coordinate gateway-fm/chain-indexer under Apache-2.0. | Privacy) Tj
+0 -12 Td
+(Proxy references chain-indexer proto/generated code and privacy-mode deployment depends on) Tj
+0 -12 Td
+(it.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| Critical | Publish or coordinate gateway-fm/block-explorer under Apache-2.0. |) Tj
+0 -12 Td
+(Privacy-mode docs and compose workflows depend on this sibling repo.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| Critical | Decide whether gateway-fm/wallet-emulator-js is public Apache-2.0; otherwise) Tj
+0 -12 Td
+(remove or replace it. | A public source repo should not point at a private or unclearly) Tj
+0 -12 Td
+(licensed submodule.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| High | Make .github/workflows/privacy-bypass.yml safe for public forks without) Tj
+0 -12 Td
+(CROSS_REPO_READ_TOKEN, or disable it for public PRs until sibling repos are public. | Public) Tj
+0 -12 Td
+(contributors should not hit broken/private cross-repo checkout behavior.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| High | Scrub public docs for private Linear URLs and internal roadmap wording. | Public) Tj
+0 -12 Td
+(docs should not expose internal planning systems or confusing private context.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| Medium | Decide whether to keep RD-XXXX references outside migrations or strip them. |) Tj
+0 -12 Td
+(They are not secrets, but they are noisy internal tracking artifacts.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| Medium | Decide whether to keep .mcp.json tracked publicly or move it to an example file.) Tj
+0 -12 Td
+(| The file is not secret, but it auto-configures a local MCP command.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| Medium | Decide git-history email posture. | Accept as normal OSS attribution or rewrite) Tj
+0 -12 Td
+(before public launch.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| Medium | Confirm inbound contribution policy enforcement. | DCO is documented; CI) Tj
+0 -12 Td
+(enforcement is a maintainer decision.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(Prompts To Run Next) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(Use these prompts as task briefs. Each prompt should produce either a focused PR or a) Tj
+0 -12 Td
+(written decision record.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(Legal notice, security contact, and inbound policy) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(Take the current OSS readiness branch for gateway-fm/privacy-proxy. Verify the public) Tj
+0 -12 Td
+(source-only Apache-2.0 legal artifacts: LICENSE, NOTICE, SECURITY.md, CONTRIBUTING.md,) Tj
+0 -12 Td
+(CODE_OF_CONDUCT.md, GOVERNANCE.md, README license text, and package metadata. Confirm the) Tj
+0 -12 Td
+(correct copyright holder, security contact, and inbound contribution posture. Make only) Tj
+0 -12 Td
+(minimal public-source-readiness edits and list any remaining legal decisions that require) Tj
+0 -12 Td
+(counsel.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(Gateway sibling repositories) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(Audit gateway-fm/chain-indexer and gateway-fm/block-explorer for source-only Apache-2.0) Tj
+0 -12 Td
+(publication readiness. Check LICENSE, NOTICE, README license text, package metadata,) Tj
+0 -12 Td
+(third-party notices, generated code provenance, secrets, private links, CI behavior for) Tj
+0 -12 Td
+(public forks, and image/binary release blockers. Produce a short blocker list and minimal) Tj
+0 -12 Td
+(PR-ready fixes.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(Wallet emulator submodule decision) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(Determine whether gateway-fm/wallet-emulator-js can be made public under an) Tj
+0 -24 Td
+(Page 2 of 5) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 12 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 1 0 R >> >> /Contents 4 0 R >>
+endobj
+6 0 obj
+<< /Length 3981 >>
+stream
+BT
+/F1 9 Tf
+1 0 0 1 54 738 Tm
+(Apache-compatible license before privacy-proxy is public. If yes, prepare the minimum) Tj
+0 -12 Td
+(license/notice/metadata changes in that repo. If no, prepare a privacy-proxy PR that removes) Tj
+0 -12 Td
+(or replaces the submodule and updates docs/tests that refer to it.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(Public-fork CI hardening) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(Review .github/workflows/privacy-bypass.yml and any cross-repo CI assumptions for) Tj
+0 -12 Td
+(public-fork safety. Make the workflow skip or clearly gate private sibling-repo checkouts) Tj
+0 -12 Td
+(when CROSS_REPO_READ_TOKEN is unavailable, while preserving manual/internal coverage. Keep) Tj
+0 -12 Td
+(changes minimal and document how maintainers should run the full privacy-mode test.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(Public docs and internal-reference scrub) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(Scan README.md, docs/, site/, .github/, scripts/, and tracked config for private Linear) Tj
+0 -12 Td
+(URLs, internal roadmap language, and unnecessary RD-XXXX references. Do not remove useful) Tj
+0 -12 Td
+(technical context. Propose or make low-risk wording changes that make the repo) Tj
+0 -12 Td
+(public-friendly, and leave a separate list of references that should stay because they are) Tj
+0 -12 Td
+(migrations, tests, or useful historical identifiers.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(Binary and container release licensing) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(Prepare the pre-release compliance plan for official binaries and Docker images. Generate or) Tj
+0 -12 Td
+(specify SBOMs for Go, npm, Solidity, submodules, and container base images. Identify) Tj
+0 -12 Td
+(LGPL/GPL/MPL/CC obligations, especially go-ethereum and native rapidsnark, and update) Tj
+0 -12 Td
+(THIRD_PARTY_NOTICES.md with scanner-backed data. Do not publish images or binaries as part) Tj
+0 -12 Td
+(of this task.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(Prompts To Run In Each Repository) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(gateway-fm/privacy-proxy) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(You are in gateway-fm/privacy-proxy. Work from the latest main plus the OSS readiness branch) Tj
+0 -12 Td
+(context. Finish the minimal source-only Apache-2.0 readiness path without broad source) Tj
+0 -12 Td
+(refactors. Verify LICENSE, NOTICE, SECURITY.md, CONTRIBUTING.md, CODE_OF_CONDUCT.md,) Tj
+0 -12 Td
+(GOVERNANCE.md, THIRD_PARTY_NOTICES.md, README license text, npm metadata, Solidity SPDX) Tj
+0 -12 Td
+(identifiers, .gitignore audit-report hygiene, .gitmodules URLs, public-fork CI behavior,) Tj
+0 -12 Td
+(.mcp.json posture, RD/internal-reference posture, and sibling-repo assumptions. Produce a) Tj
+0 -12 Td
+(small PR-ready commit stack and a final blocker list limited to items that still require) Tj
+0 -12 Td
+(legal or maintainer decisions.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(gateway-fm/chain-indexer) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(You are in gateway-fm/chain-indexer on latest main. Audit and prepare the repository for) Tj
+0 -12 Td
+(source-only Apache-2.0 publication coordinated with gateway-fm/privacy-proxy. Check for) Tj
+0 -12 Td
+(missing or conflicting LICENSE, NOTICE, SECURITY.md, CONTRIBUTING.md, CODE_OF_CONDUCT.md,) Tj
+0 -12 Td
+(GOVERNANCE.md, THIRD_PARTY_NOTICES.md, README license text, package/module metadata,) Tj
+0 -12 Td
+(generated protobuf provenance, checked-in secrets, private URLs, internal audit files,) Tj
+0 -12 Td
+(submodules, CI behavior for public forks, and binary/container release blockers. Make only) Tj
+0 -12 Td
+(minimal public-source-readiness edits and produce a concise remaining blocker list. Do not) Tj
+0 -12 Td
+(publish binaries or images.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(gateway-fm/block-explorer) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(You are in gateway-fm/block-explorer on latest main. Audit and prepare the repository for) Tj
+0 -12 Td
+(source-only Apache-2.0 publication coordinated with gateway-fm/privacy-proxy. Check LICENSE,) Tj
+0 -12 Td
+(NOTICE, SECURITY.md, CONTRIBUTING.md, CODE_OF_CONDUCT.md, GOVERNANCE.md,) Tj
+0 -24 Td
+(Page 3 of 5) Tj
+ET
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 12 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 1 0 R >> >> /Contents 6 0 R >>
+endobj
+8 0 obj
+<< /Length 3305 >>
+stream
+BT
+/F1 9 Tf
+1 0 0 1 54 738 Tm
+(THIRD_PARTY_NOTICES.md, README/package metadata, frontend/backend dependency licenses,) Tj
+0 -12 Td
+(generated artifacts, environment examples, private service URLs, secrets, internal roadmap) Tj
+0 -12 Td
+(references, public-fork CI behavior, and privacy-mode assumptions that depend on) Tj
+0 -12 Td
+(chain-indexer or privacy-proxy. Make minimal PR-ready edits and list any blockers for source) Tj
+0 -12 Td
+(publication separately from binary/container blockers.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(gateway-fm/wallet-emulator-js) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(You are in gateway-fm/wallet-emulator-js on latest main. Decide whether this repo can be) Tj
+0 -12 Td
+(published or referenced publicly as part of the privacy-proxy source-only Apache-2.0 launch.) Tj
+0 -12 Td
+(Verify ownership, LICENSE, NOTICE, README license text, package metadata, third-party) Tj
+0 -12 Td
+(notices, dependency licenses, generated files, secrets, private URLs, CI, and release) Tj
+0 -12 Td
+(artifacts. If it can be public, prepare minimal Apache-compatible readiness commits. If it) Tj
+0 -12 Td
+(cannot be public, write the exact privacy-proxy change needed to remove or replace the) Tj
+0 -12 Td
+(submodule and any docs/tests that depend on it.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(Gateway Repositories In The Apache Plan) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| Repository | Source posture) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| gateway-fm/privacy-proxy | Publish source under Apache-2.0 after the source-public) Tj
+0 -12 Td
+(checklist is complete.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| gateway-fm/chain-indexer | Publish or coordinate under Apache-2.0 before public Privacy) Tj
+0 -12 Td
+(Proxy source launch.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| gateway-fm/block-explorer | Publish or coordinate under Apache-2.0 before public Privacy) Tj
+0 -12 Td
+(Proxy source launch.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| gateway-fm/wallet-emulator-js | Publish under an Apache-compatible license if retained as) Tj
+0 -12 Td
+(a submodule; otherwise remove or replace.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(Dependency And License Notes) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| Area | Current note) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| Apache source with LGPL dependencies | Acceptable for source publication with notice;) Tj
+0 -12 Td
+(binary/image distribution needs a compliance plan.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| github.com/ethereum/go-ethereum | Main notable LGPL-3.0 dependency for source users.) Tj
+0 -12 Td
+(Upstream command binaries are GPL-3.0; this repo uses library packages.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| github.com/iden3/go-rapidsnark/... | Go wrapper modules are understood to be) Tj
+0 -12 Td
+(Apache-2.0/MIT. Native iden3/rapidsnark remains an LGPL-3.0 binary/image review item.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| npm dependencies | Checked lockfiles are mostly MIT, ISC, BSD-family, or Apache-2.0, with) Tj
+0 -12 Td
+(MPL/CC/other notice items captured in THIRD_PARTY_NOTICES.md.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(Before First Official Binary Or Image Release) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| Status | Item) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| Open | Generate complete SBOMs for source, binaries, and container images.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| Open | Run Go, npm, Solidity, and container license scans and update) Tj
+0 -12 Td
+(THIRD_PARTY_NOTICES.md.) Tj
+0 -24 Td
+(Page 4 of 5) Tj
+ET
+endstream
+endobj
+9 0 obj
+<< /Type /Page /Parent 12 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 1 0 R >> >> /Contents 8 0 R >>
+endobj
+10 0 obj
+<< /Length 963 >>
+stream
+BT
+/F1 9 Tf
+1 0 0 1 54 738 Tm
+() Tj
+0 -12 Td
+(| Open | Resolve go-ethereum LGPL-3.0 binary/container distribution obligations.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| Open | Verify whether iden3 rapidsnark LGPL native code is linked, bundled, or dynamically) Tj
+0 -12 Td
+(loaded in release binaries.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| Open | Publish source-to-image mapping for each image tag.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(| Open | Sign images/artifacts and publish checksums/provenance.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(Source Files) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(This page summarizes the source-only readiness branch. The canonical working files remain in) Tj
+0 -12 Td
+(the repository.) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(OSS_SOURCE_ONLY_TODO.md THIRD_PARTY_NOTICES.md NOTICE SECURITY.md) Tj
+0 -12 Td
+() Tj
+0 -12 Td
+(Last updated from the local OSS audit branch on July 7, 2026. This page is informational and) Tj
+0 -12 Td
+(does not replace legal review.) Tj
+0 -24 Td
+(Page 5 of 5) Tj
+ET
+endstream
+endobj
+11 0 obj
+<< /Type /Page /Parent 12 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 1 0 R >> >> /Contents 10 0 R >>
+endobj
+12 0 obj
+<< /Type /Pages /Kids [ 3 0 R 5 0 R 7 0 R 9 0 R 11 0 R ] /Count 5 >>
+endobj
+13 0 obj
+<< /Type /Catalog /Pages 12 0 R >>
+endobj
+14 0 obj
+<< /Title (Privacy Proxy OSS Readiness Checklist) /Creator (Codex) >>
+endobj
+xref
+0 15
+0000000000 65535 f 
+0000000015 00000 n 
+0000000085 00000 n 
+0000002901 00000 n 
+0000003028 00000 n 
+0000006572 00000 n 
+0000006699 00000 n 
+0000010732 00000 n 
+0000010859 00000 n 
+0000014216 00000 n 
+0000014343 00000 n 
+0000015358 00000 n 
+0000015487 00000 n 
+0000015572 00000 n 
+0000015623 00000 n 
+trailer
+<< /Size 15 /Root 13 0 R /Info 14 0 R >>
+startxref
+15709
+%%EOF
