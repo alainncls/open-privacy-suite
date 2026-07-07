@@ -53,6 +53,7 @@ export const navigation: NavGroup[] = [
       { title: "Operator Deployment", href: "/docs/operator-deployment" },
       { title: "User Onboarding", href: "/docs/operator-onboarding" },
       { title: "Contract Deployment", href: "/docs/deployment" },
+      { title: "OSS Readiness", href: "/docs/oss-readiness" },
       { title: "Audit Log Integrity", href: "/docs/security/audit-integrity" },
       { title: "Scaling", href: "/docs/scaling" },
       { title: "Testing", href: "/docs/testing" },
