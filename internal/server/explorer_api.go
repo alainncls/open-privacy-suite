@@ -1357,9 +1357,11 @@ func (s *Server) getExplorerBlock(c *gin.Context) {
 	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID)
 	if filter != nil {
 		filteredCount, err := s.explorerStore.GetBlockTransactionCountFiltered(c.Request.Context(), num, filter)
-		if err == nil {
-			block.TransactionCount = filteredCount
+		if err != nil {
+			// RD-1176: fail-safe to 0, don't fall back to the raw chain-wide count.
+			filteredCount = 0
 		}
+		block.TransactionCount = filteredCount
 	}
 	c.JSON(http.StatusOK, block)
 }
@@ -1398,9 +1400,11 @@ func (s *Server) getExplorerBlockByHash(c *gin.Context) {
 	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID)
 	if filter != nil {
 		filteredCount, err := s.explorerStore.GetBlockTransactionCountFiltered(c.Request.Context(), block.Number, filter)
-		if err == nil {
-			block.TransactionCount = filteredCount
+		if err != nil {
+			// RD-1176: fail-safe to 0, don't fall back to the raw chain-wide count.
+			filteredCount = 0
 		}
+		block.TransactionCount = filteredCount
 	}
 	c.JSON(http.StatusOK, block)
 }
@@ -2879,9 +2883,12 @@ func (s *Server) getExplorerAddressContract(c *gin.Context) {
 	if contract.Creator != "" {
 		viewerDID := s.getViewerDIDFromRequest(c)
 		redactedCreator, err := s.explorerRedactor.RedactAddress(c.Request.Context(), contract.Creator, viewerDID)
-		if err == nil {
-			contract.Creator = redactedCreator
+		if err != nil {
+			// RD-1176: fail closed — never keep the raw deployer EOA on a
+			// redaction error (it may be a private foreign user).
+			redactedCreator = "[REDACTED]"
 		}
+		contract.Creator = redactedCreator
 	}
 	c.JSON(http.StatusOK, contract)
 }

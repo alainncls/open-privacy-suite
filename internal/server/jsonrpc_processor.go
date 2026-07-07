@@ -1144,7 +1144,12 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		strings.EqualFold(m, rbac.MethodGetBlockByNumber):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
 		if err != nil {
-			return responseBody // pass through on error
+			// RD-1176: fail CLOSED. nil addrs match nothing, so the block's
+			// transactions are filtered out rather than served unfiltered
+			// (matches the sibling getBlockTransactionCount/getTransactionByHash
+			// handlers). Previously this returned the raw block on a transient
+			// linked-address DB error, leaking every participant's txs.
+			addrs = nil
 		}
 
 		originalFull := false // JSON-RPC defaults false
@@ -1166,7 +1171,9 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 	case strings.EqualFold(m, rbac.MethodGetBlockReceipts):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
 		if err != nil {
-			return responseBody
+			// RD-1176: fail CLOSED (nil addrs match nothing) rather than
+			// serving the raw receipts of every participant in the block.
+			addrs = nil
 		}
 		return FilterBlockReceipts(responseBody, addrs)
 
