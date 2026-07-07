@@ -86,7 +86,7 @@ func TestVisibleToUnlock_Matrix(t *testing.T) {
 	accessCtrl := rbac.NewAccessController(database, 1*time.Minute)
 	t.Cleanup(accessCtrl.Stop)
 	engine := explorer.NewRedactionEngine(noopContractStore{}, database)
-	wireExplorerRedactor(engine, database, accessCtrl, noopLogParticipantStore{})
+	wireExplorerRedactor(engine, database, accessCtrl, noopLogParticipantStore{}, nil)
 
 	transferTopic := topicHex("Transfer(address,address,uint256)")
 	transferTopic0x := "0x" + transferTopic

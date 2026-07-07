@@ -121,6 +121,8 @@ The scope defines what data can be accessed:
 | `date_range` | Time period for transaction/log data |
 | `disclosure_level` | How addresses are displayed (full / pseudonymous / redacted) |
 
+**Scope is enforced on the disclosed data.** A grant with a `date_range` returns only transactions within that window, and a grant listing specific `addresses` returns only data for those contracts — activity outside the requested scope is never disclosed, regardless of the `disclosure_level`. Leaving a field unset means it is not narrowed (e.g. no `date_range` = the grant is not restricted by date).
+
 ## API Endpoints
 
 ### User Disclosure Dashboard
@@ -211,6 +213,11 @@ For **pseudonymous** and **redacted** disclosures:
 1. **Real addresses are never sent to the frontend.** The backend resolves `address_id` to the real address internally. Only pseudonyms or `[PRIVATE]` are returned to clients.
 2. **Transaction hashes are hidden.** This prevents lookup on other block explorers to find real addresses. Only block numbers, timestamps, and values are shown.
 3. **Consistent pseudonyms within a grant.** The same address always gets the same pseudonym (e.g., `Address-KDCM`). External addresses get pseudonyms like `External-7E56`. This allows pattern analysis without revealing identity.
+
+### Scope Integrity
+
+- **Approval cannot widen the request.** When approving a request, the approver can only narrow the requested `scope` (tighten the `date_range`, drop `addresses`, lower the `disclosure_level`) — never broaden it. A grant can never disclose more than the requester originally asked for and the data owner reviewed.
+- **The grant's scope bounds every response.** The `date_range` and `addresses` on the grant are enforced on all disclosed transaction and log data, so a viewer cannot reach activity outside the window or contracts they were granted.
 
 ### Opaque Address IDs
 

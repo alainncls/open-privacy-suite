@@ -1,6 +1,7 @@
 package explorer
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"strings"
@@ -27,7 +28,7 @@ const (
 	ReasonNoAccess            VisibilityReason = "no_access"
 	ReasonRBACGroupMember     VisibilityReason = "rbac_group_member"
 	ReasonParticipantOverride VisibilityReason = "participant_override"
-	ReasonVisibleToGrant     VisibilityReason = "visible_to_grant"
+	ReasonVisibleToGrant      VisibilityReason = "visible_to_grant"
 )
 
 // AddressVisibility represents the visibility status of a single address
@@ -41,27 +42,29 @@ type AddressVisibility struct {
 	ExpiresAt *time.Time       `json:"expires_at,omitempty"`
 }
 
-// GeneratePseudonym creates a consistent pseudonym for an address.
-// Uses the first 4 hex digits of the address (after 0x prefix), mapping each
-// hex digit (0-F) to a letter (A-P) to produce a human-readable identifier
-// that does not expose raw hex characters.
-func GeneratePseudonym(address string) string {
+// GeneratePseudonym creates a stable, non-reversible pseudonym for an address.
+//
+// RD-1164 #8: the 4-letter identifier is derived from HMAC-SHA256(key, address),
+// NOT from the address's own hex nibbles. The previous scheme mapped the first
+// 4 real nibbles to letters, which leaked the first 2 address bytes and was
+// trivially invertible. HMAC output leaks nothing about the address and cannot
+// be inverted, while staying deterministic per address so the explorer keeps a
+// stable "Address-XXXX" alias (consistency the UI and grant views rely on).
+//
+// When key is empty the HMAC is still non-reversible, but a candidate address
+// can be recomputed and matched; set EXPLORER_PSEUDONYM_KEY in production to
+// make the pseudonym non-enumerable as well.
+func GeneratePseudonym(address string, key []byte) string {
 	addr := strings.ToLower(strings.TrimPrefix(strings.ToLower(address), "0x"))
 	if len(addr) < 4 {
 		return "Address-Unknown"
 	}
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte(addr))
+	sum := mac.Sum(nil)
 	letters := make([]byte, 4)
 	for i := 0; i < 4; i++ {
-		c := addr[i]
-		var digit byte
-		if c >= '0' && c <= '9' {
-			digit = c - '0'
-		} else if c >= 'a' && c <= 'f' {
-			digit = c - 'a' + 10
-		} else {
-			return "Address-Unknown"
-		}
-		letters[i] = 'A' + digit
+		letters[i] = 'A' + (sum[i] & 0x0f) // low nibble of each HMAC byte → 'A'..'P'
 	}
 	return "Address-" + string(letters)
 }

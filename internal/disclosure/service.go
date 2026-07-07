@@ -6,20 +6,21 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 )
 
 var (
-	ErrRequestNotFound     = errors.New("disclosure request not found")
-	ErrRequestNotPending   = errors.New("disclosure request is not pending")
-	ErrRequestExpired      = errors.New("disclosure request has expired")
-	ErrGrantNotFound       = errors.New("disclosure grant not found")
-	ErrGrantNotActive      = errors.New("disclosure grant is not active")
-	ErrInvalidToken        = errors.New("invalid disclosure token")
-	ErrUnauthorized        = errors.New("unauthorized to perform this action")
-	ErrScopeOutOfBounds    = errors.New("requested scope exceeds granted scope")
+	ErrRequestNotFound   = errors.New("disclosure request not found")
+	ErrRequestNotPending = errors.New("disclosure request is not pending")
+	ErrRequestExpired    = errors.New("disclosure request has expired")
+	ErrGrantNotFound     = errors.New("disclosure grant not found")
+	ErrGrantNotActive    = errors.New("disclosure grant is not active")
+	ErrInvalidToken      = errors.New("invalid disclosure token")
+	ErrUnauthorized      = errors.New("unauthorized to perform this action")
+	ErrScopeOutOfBounds  = errors.New("requested scope exceeds granted scope")
 )
 
 // DefaultService implements the Service interface.
@@ -35,15 +36,15 @@ func NewService(store Store) *DefaultService {
 // CreateRequest creates a new disclosure request.
 func (s *DefaultService) CreateRequest(ctx context.Context, requesterUserID, requesterDID, targetUserID, orgID string, scope Scope, reason, legalBasis string, expiresIn *time.Duration) (*Request, error) {
 	req := &Request{
-		ID:              uuid.New().String(),
-		RequesterDID:    requesterDID,
-		TargetUserID:    targetUserID,
-		OrgID:           orgID,
-		Scope:           scope,
-		Reason:          reason,
-		LegalBasis:      legalBasis,
-		Status:          StatusPending,
-		RequestedAt:     time.Now(),
+		ID:           uuid.New().String(),
+		RequesterDID: requesterDID,
+		TargetUserID: targetUserID,
+		OrgID:        orgID,
+		Scope:        scope,
+		Reason:       reason,
+		LegalBasis:   legalBasis,
+		Status:       StatusPending,
+		RequestedAt:  time.Now(),
 	}
 
 	if requesterUserID != "" {
@@ -80,10 +81,22 @@ func (s *DefaultService) ApproveRequest(ctx context.Context, requestID, decidedB
 		return nil, ErrRequestExpired
 	}
 
-	// Determine granted scope (may be narrower than requested)
+	// Determine granted scope (may be narrower than requested). RD-1164 #9:
+	// reject an "approval" that would WIDEN the requested scope — the narrowed
+	// scope must stay within the request's bounds. Previously the narrowed scope
+	// simply replaced the requested one, leaving ErrScopeOutOfBounds dead code
+	// and letting an approver grant more than was asked.
 	grantedScope := req.Scope
 	if narrowedScope != nil {
-		grantedScope = *narrowedScope
+		// Merge: unset fields in the narrowed scope inherit from the request, so
+		// a partial narrowing (e.g. only lowering the disclosure level) does not
+		// accidentally widen the untouched dimensions. The merged scope must then
+		// stay within the request's bounds — an approval may only narrow.
+		merged := mergeNarrowedScope(req.Scope, *narrowedScope)
+		if !merged.isSubsetOf(req.Scope) {
+			return nil, ErrScopeOutOfBounds
+		}
+		grantedScope = merged
 	}
 
 	// Create grant - use a placeholder hash since we're using DID-based auth now
@@ -106,6 +119,91 @@ func (s *DefaultService) ApproveRequest(ctx context.Context, requestID, decidedB
 	}
 
 	return grant, nil
+}
+
+// mergeNarrowedScope returns base with any explicitly-set field of override
+// applied. An unset field in override (empty slice, nil DateRange, empty
+// DisclosureLevel) inherits base's value, so a partial narrowing never widens
+// an untouched dimension.
+func mergeNarrowedScope(base, override Scope) Scope {
+	out := base
+	if len(override.Methods) > 0 {
+		out.Methods = override.Methods
+	}
+	if len(override.Addresses) > 0 {
+		out.Addresses = override.Addresses
+	}
+	if override.DateRange != nil {
+		out.DateRange = override.DateRange
+	}
+	if override.DisclosureLevel != "" {
+		out.DisclosureLevel = override.DisclosureLevel
+	}
+	return out
+}
+
+// isSubsetOf reports whether s stays within the bounds of parent — i.e. it does
+// not grant anything parent does not (RD-1164 #9). An unset dimension on parent
+// (empty Methods/Addresses, nil DateRange) imposes no restriction there.
+func (s Scope) isSubsetOf(parent Scope) bool {
+	// Methods: if parent restricts methods, s must also restrict them and only
+	// to a subset. An empty s.Methods means "no method restriction" — broader
+	// than a restricted parent — so it is NOT a subset.
+	if len(parent.Methods) > 0 {
+		if len(s.Methods) == 0 {
+			return false
+		}
+		allowed := make(map[string]bool, len(parent.Methods))
+		for _, m := range parent.Methods {
+			allowed[m] = true
+		}
+		for _, m := range s.Methods {
+			if !allowed[m] {
+				return false
+			}
+		}
+	}
+	// Addresses: same rule, case-insensitive on the hex address.
+	if len(parent.Addresses) > 0 {
+		if len(s.Addresses) == 0 {
+			return false
+		}
+		allowed := make(map[string]bool, len(parent.Addresses))
+		for _, a := range parent.Addresses {
+			allowed[strings.ToLower(a)] = true
+		}
+		for _, a := range s.Addresses {
+			if !allowed[strings.ToLower(a)] {
+				return false
+			}
+		}
+	}
+	// DateRange: if parent is time-bounded, s must be bounded and within it.
+	if parent.DateRange != nil {
+		if s.DateRange == nil {
+			return false
+		}
+		if s.DateRange.Start.Before(parent.DateRange.Start) || s.DateRange.End.After(parent.DateRange.End) {
+			return false
+		}
+	}
+	// DisclosureLevel: s must not reveal more than parent.
+	return disclosureRank(s.DisclosureLevel) <= disclosureRank(parent.DisclosureLevel)
+}
+
+// disclosureRank orders disclosure levels by how much they reveal (higher =
+// more revealing). Empty/unspecified is treated as full disclosure because the
+// consuming handlers default "" to full (see server.resolveAddressID /
+// getGrantTransactions), so it must rank highest for the subset test.
+func disclosureRank(l DisclosureLevel) int {
+	switch l {
+	case DisclosurePseudonymous:
+		return 2
+	case DisclosureRedacted:
+		return 1
+	default: // DisclosureFull and "" (defaults to full downstream)
+		return 3
+	}
 }
 
 // RejectRequest rejects a disclosure request.
@@ -318,27 +416,27 @@ func (s *DefaultService) GenerateComplianceReport(ctx context.Context, grantID, 
 			return nil, err
 		}
 		reportData = map[string]any{
-			"type":               "activity_summary",
-			"target_user_id":     req.TargetUserID,
-			"total_requests":     summary.TotalRequests,
-			"successful_count":   summary.SuccessfulCount,
-			"failed_count":       summary.FailedCount,
-			"unique_methods":     summary.UniqueMethodCount,
-			"method_breakdown":   summary.MethodBreakdown,
-			"date_range":         summary.DateRange,
-			"generated_at":       time.Now(),
+			"type":             "activity_summary",
+			"target_user_id":   req.TargetUserID,
+			"total_requests":   summary.TotalRequests,
+			"successful_count": summary.SuccessfulCount,
+			"failed_count":     summary.FailedCount,
+			"unique_methods":   summary.UniqueMethodCount,
+			"method_breakdown": summary.MethodBreakdown,
+			"date_range":       summary.DateRange,
+			"generated_at":     time.Now(),
 		}
 
 	case ReportSanctionsCheck:
 		// For now, return a clean sanctions check
 		// In production, this would integrate with actual sanctions lists
 		reportData = map[string]any{
-			"type":                "sanctions_check",
-			"target_user_id":      req.TargetUserID,
-			"checked_at":          time.Now(),
-			"is_clear":            true,
+			"type":                 "sanctions_check",
+			"target_user_id":       req.TargetUserID,
+			"checked_at":           time.Now(),
+			"is_clear":             true,
 			"sanctioned_addresses": []string{},
-			"scope":               grantWithReq.Grant.Scope,
+			"scope":                grantWithReq.Grant.Scope,
 		}
 
 	case ReportCompliance:

@@ -1,7 +1,17 @@
 import '@testing-library/jest-dom';
 import { afterAll, afterEach, beforeAll, vi } from 'vitest';
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
 import { server } from './mocks/server';
+
+// Radix Select/Dialog open via a portal + state update that, under parallel CI
+// load (the full suite runs 40+ test files concurrently), can take longer than
+// React Testing Library's default 1000ms async timeout — intermittently failing
+// findBy*/waitFor lookups such as a Select's options (the classic "Unable to find
+// role=option" flake seen on CI but never locally). Raise the budget so a
+// slow-but-correct async render doesn't flake; a passing assertion still resolves
+// the instant the node appears (green runs are unaffected), only a genuinely
+// failing assertion waits the full window.
+configure({ asyncUtilTimeout: 5000 });
 
 // Suppress React act() warnings from Radix UI animations
 // These occur because Radix UI's Presence component triggers state updates

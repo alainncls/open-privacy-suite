@@ -442,7 +442,13 @@ func (v *Verifier) verifyRBACAuditLog(ctx context.Context) (*Result, error) {
 	}
 	res.TailHash = prev
 	if res.OK && seed != "" && seed != prev {
+		// RD-1164 #13: an anchor mismatch means the chain head does not match
+		// the external anchor (seed) — a tail truncation/replacement signal.
+		// This MUST fail verification: the integrity worker alerts on !res.OK,
+		// so leaving OK=true here made anchor mismatches silent.
+		res.OK = false
 		res.FirstMismatchReason = ReasonAnchorMismatch
+		res.FirstMismatchHash = prev
 	}
 	return res, nil
 }

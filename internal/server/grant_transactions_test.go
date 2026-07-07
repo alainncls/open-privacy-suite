@@ -64,6 +64,7 @@ func TestGrantTransactions_FullDisclosure(t *testing.T) {
 
 	req := httptest.NewRequest("GET",
 		"/api/v1/explorer/grant/"+grantID+"/"+addressID+"/transactions", nil)
+	addBearerToken(t, req, srv, testViewerDID)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -123,6 +124,7 @@ func TestGrantTransactions_PseudonymousDisclosure(t *testing.T) {
 
 	req := httptest.NewRequest("GET",
 		"/api/v1/explorer/grant/"+grantID+"/"+addressID+"/transactions", nil)
+	addBearerToken(t, req, srv, testViewerDID)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -134,7 +136,7 @@ func TestGrantTransactions_PseudonymousDisclosure(t *testing.T) {
 	assert.Equal(t, "pseudonymous", resp.DisclosureLevel)
 	assert.Len(t, resp.Transactions, 2)
 
-	disclosedPseudonym := explorer.GeneratePseudonym(testTargetAddress)
+	disclosedPseudonym := explorer.GeneratePseudonym(testTargetAddress, nil)
 	expectedExternalPseudo := testExternalPseudonym(externalAddr, grantID)
 
 	// SECURITY: Response body should NOT contain any real addresses
@@ -185,6 +187,7 @@ func TestGrantTransactions_PseudonymousDirection_Self(t *testing.T) {
 
 	req := httptest.NewRequest("GET",
 		"/api/v1/explorer/grant/"+grantID+"/"+addressID+"/transactions", nil)
+	addBearerToken(t, req, srv, testViewerDID)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -220,6 +223,7 @@ func TestGrantTransactions_RedactedDisclosure(t *testing.T) {
 
 	req := httptest.NewRequest("GET",
 		"/api/v1/explorer/grant/"+grantID+"/"+addressID+"/transactions", nil)
+	addBearerToken(t, req, srv, testViewerDID)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -266,6 +270,7 @@ func TestGrantTransactions_ExpiredGrant(t *testing.T) {
 
 	req := httptest.NewRequest("GET",
 		"/api/v1/explorer/grant/"+grantID+"/"+addressID+"/transactions", nil)
+	addBearerToken(t, req, srv, testViewerDID) // RD-1164 #10: grantee must be authenticated to see grant state
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -294,6 +299,7 @@ func TestGrantTransactions_RevokedGrant(t *testing.T) {
 
 	req := httptest.NewRequest("GET",
 		"/api/v1/explorer/grant/"+grantID+"/"+addressID+"/transactions", nil)
+	addBearerToken(t, req, srv, testViewerDID) // RD-1164 #10: grantee must be authenticated to see grant state
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -325,6 +331,7 @@ func TestGrantTransactions_InvalidAddressID(t *testing.T) {
 
 	req := httptest.NewRequest("GET",
 		"/api/v1/explorer/grant/"+grantID+"/wrong-address-id/transactions", nil)
+	addBearerToken(t, req, srv, testViewerDID)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -355,6 +362,7 @@ func TestGrantTransactions_Pagination(t *testing.T) {
 	// Request with limit=2
 	req := httptest.NewRequest("GET",
 		"/api/v1/explorer/grant/"+grantID+"/"+addressID+"/transactions?limit=2", nil)
+	addBearerToken(t, req, srv, testViewerDID)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -386,6 +394,7 @@ func TestResolveAddressID_PseudonymousDoesNotLeakRealAddress(t *testing.T) {
 
 	req := httptest.NewRequest("GET",
 		"/api/v1/explorer/grant/"+grantID+"/resolve/"+addressID, nil)
+	addBearerToken(t, req, srv, testViewerDID)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -425,6 +434,7 @@ func TestResolveAddressID_FullReturnsRealAddress(t *testing.T) {
 
 	req := httptest.NewRequest("GET",
 		"/api/v1/explorer/grant/"+grantID+"/resolve/"+addressID, nil)
+	addBearerToken(t, req, srv, testViewerDID)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -438,3 +448,116 @@ func TestResolveAddressID_FullReturnsRealAddress(t *testing.T) {
 	assert.Equal(t, "full", resp.DisclosureLevel)
 }
 
+// TestResolveAddressID_Anonymous401 is the RD-1164 #10 regression for the
+// resolve handler: an unauthenticated caller (no JWT) must be rejected with
+// 401 before any address is resolved, even for a valid full-disclosure grant.
+// Pre-fix, any caller who knew grant_id + address_id could resolve the real
+// address of a full grant they did not hold.
+func TestResolveAddressID_Anonymous401(t *testing.T) {
+	srv, database := setupTestServerForExplorer(t)
+	router := setupGrantTransactionsRouter(srv)
+
+	createTestUserForExplorer(t, database, testViewerDID)
+	linkEthAddressToUser(t, database, testViewerDID, testViewerWallet)
+
+	targetUserID := createTestUserForExplorer(t, database, testTargetDID)
+	linkEthAddressToUser(t, database, testTargetDID, testTargetAddress)
+
+	grantID := createDisclosureGrantWithLevel(t, database, testViewerDID, targetUserID,
+		disclosure.DisclosureFull, time.Now().Add(24*time.Hour))
+	addressID := explorer.GenerateAddressID(testTargetAddress, grantID)
+
+	req := httptest.NewRequest("GET",
+		"/api/v1/explorer/grant/"+grantID+"/resolve/"+addressID, nil)
+	// No bearer token — anonymous.
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code,
+		"anonymous resolve must be rejected 401")
+	// The real address must not leak in the error body.
+	assert.NotContains(t, w.Body.String(), testTargetAddress)
+}
+
+// TestResolveAddressID_WrongViewer404 is the RD-1164 #10 regression: a viewer
+// authenticated as someone OTHER than the grant's requester must get a uniform
+// 404 (not 403, not 200) so grant existence is not leaked to non-holders.
+func TestResolveAddressID_WrongViewer404(t *testing.T) {
+	srv, database := setupTestServerForExplorer(t)
+	router := setupGrantTransactionsRouter(srv)
+
+	createTestUserForExplorer(t, database, testViewerDID)
+	linkEthAddressToUser(t, database, testViewerDID, testViewerWallet)
+
+	targetUserID := createTestUserForExplorer(t, database, testTargetDID)
+	linkEthAddressToUser(t, database, testTargetDID, testTargetAddress)
+
+	grantID := createDisclosureGrantWithLevel(t, database, testViewerDID, targetUserID,
+		disclosure.DisclosureFull, time.Now().Add(24*time.Hour))
+	addressID := explorer.GenerateAddressID(testTargetAddress, grantID)
+
+	// Authenticate as a stranger who does not hold the grant.
+	strangerDID := "did:test:resolve_stranger"
+	createTestUserForExplorer(t, database, strangerDID)
+
+	req := httptest.NewRequest("GET",
+		"/api/v1/explorer/grant/"+grantID+"/resolve/"+addressID, nil)
+	addBearerToken(t, req, srv, strangerDID)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code,
+		"non-holder must get uniform 404, not 403/200, to prevent grant enumeration")
+	assert.NotContains(t, w.Body.String(), testTargetAddress)
+}
+
+// TestGrantTransactions_Anonymous401 is the RD-1164 #10 regression for the
+// grant-transactions handler: an unauthenticated caller must be rejected 401
+// before any transaction is disclosed.
+func TestGrantTransactions_Anonymous401(t *testing.T) {
+	srv, database, _ := setupTestServerForExplorerTransactions(t)
+	router := setupGrantTransactionsRouter(srv)
+
+	targetUserID := createTestUserForExplorer(t, database, testTargetDID)
+	linkEthAddressToUser(t, database, testTargetDID, testTargetAddress)
+
+	grantID := createDisclosureGrantWithLevel(t, database, testViewerDID, targetUserID,
+		disclosure.DisclosureFull, time.Now().Add(24*time.Hour))
+	addressID := explorer.GenerateAddressID(testTargetAddress, grantID)
+
+	req := httptest.NewRequest("GET",
+		"/api/v1/explorer/grant/"+grantID+"/"+addressID+"/transactions", nil)
+	// No bearer token — anonymous.
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code,
+		"anonymous grant-transactions request must be rejected 401")
+}
+
+// TestGrantTransactions_WrongViewer404 is the RD-1164 #10 regression: a viewer
+// who is not the grant's requester must get a uniform 404 from the
+// grant-transactions handler.
+func TestGrantTransactions_WrongViewer404(t *testing.T) {
+	srv, database, _ := setupTestServerForExplorerTransactions(t)
+	router := setupGrantTransactionsRouter(srv)
+
+	targetUserID := createTestUserForExplorer(t, database, testTargetDID)
+	linkEthAddressToUser(t, database, testTargetDID, testTargetAddress)
+
+	grantID := createDisclosureGrantWithLevel(t, database, testViewerDID, targetUserID,
+		disclosure.DisclosureFull, time.Now().Add(24*time.Hour))
+	addressID := explorer.GenerateAddressID(testTargetAddress, grantID)
+
+	strangerDID := "did:test:txs_stranger"
+	createTestUserForExplorer(t, database, strangerDID)
+
+	req := httptest.NewRequest("GET",
+		"/api/v1/explorer/grant/"+grantID+"/"+addressID+"/transactions", nil)
+	addBearerToken(t, req, srv, strangerDID)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code,
+		"non-holder must get uniform 404 from grant-transactions")
+}

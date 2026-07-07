@@ -55,8 +55,21 @@ const (
 // Helpers
 // ---------------------------------------------------------------------------
 
-// jsonRPCCall sends a JSON-RPC request and returns the parsed response.
-func jsonRPCCall(t *testing.T, serverURL, token, method string, params []any) map[string]any {
+// rpcURL builds the JSON-RPC endpoint. Mock-login users are auto-added to the
+// dev-admin org (see ensureMockUserIsAdmin), so every mock user belongs to at
+// least two orgs and the bare "/" endpoint fails with "multiple organizations".
+// Requests must be scoped to a specific org via /rpc/:org_id (same pattern as
+// proxy_test.go). Empty orgID falls back to "/" (used only for genuinely
+// org-free calls or to exercise the ambiguous-org path).
+func rpcURL(serverURL, orgID string) string {
+	if orgID == "" {
+		return serverURL + "/"
+	}
+	return serverURL + "/rpc/" + orgID
+}
+
+// jsonRPCCall sends a JSON-RPC request (scoped to orgID) and returns the parsed response.
+func jsonRPCCall(t *testing.T, serverURL, orgID, token, method string, params []any) map[string]any {
 	t.Helper()
 
 	body := map[string]any{
@@ -68,7 +81,7 @@ func jsonRPCCall(t *testing.T, serverURL, token, method string, params []any) ma
 	jsonBody, err := json.Marshal(body)
 	require.NoError(t, err)
 
-	req, err := http.NewRequest("POST", serverURL+"/", bytes.NewReader(jsonBody))
+	req, err := http.NewRequest("POST", rpcURL(serverURL, orgID), bytes.NewReader(jsonBody))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 	if token != "" {
@@ -90,8 +103,8 @@ func jsonRPCCall(t *testing.T, serverURL, token, method string, params []any) ma
 	return result
 }
 
-// jsonRPCCallRaw sends a JSON-RPC request and returns the raw HTTP response.
-func jsonRPCCallRaw(t *testing.T, serverURL, token, method string, params []any) (int, []byte) {
+// jsonRPCCallRaw sends a JSON-RPC request (scoped to orgID) and returns the raw HTTP response.
+func jsonRPCCallRaw(t *testing.T, serverURL, orgID, token, method string, params []any) (int, []byte) {
 	t.Helper()
 
 	body := map[string]any{
@@ -103,7 +116,7 @@ func jsonRPCCallRaw(t *testing.T, serverURL, token, method string, params []any)
 	jsonBody, err := json.Marshal(body)
 	require.NoError(t, err)
 
-	req, err := http.NewRequest("POST", serverURL+"/", bytes.NewReader(jsonBody))
+	req, err := http.NewRequest("POST", rpcURL(serverURL, orgID), bytes.NewReader(jsonBody))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 	if token != "" {
@@ -122,12 +135,12 @@ func jsonRPCCallRaw(t *testing.T, serverURL, token, method string, params []any)
 }
 
 // waitForReceipt polls eth_getTransactionReceipt until it returns a result.
-func waitForReceipt(t *testing.T, serverURL, token, txHash string) map[string]any {
+func waitForReceipt(t *testing.T, serverURL, orgID, token, txHash string) map[string]any {
 	t.Helper()
 
 	var receipt map[string]any
 	for i := 0; i < 30; i++ {
-		resp := jsonRPCCall(t, serverURL, token, "eth_getTransactionReceipt", []any{txHash})
+		resp := jsonRPCCall(t, serverURL, orgID, token, "eth_getTransactionReceipt", []any{txHash})
 		if result, ok := resp["result"]; ok && result != nil {
 			receipt, _ = result.(map[string]any)
 			if receipt != nil {
@@ -381,7 +394,7 @@ func createOrgWithUser(
 }
 
 // deployFactory deploys the Create2Factory contract and returns the factory address.
-func deployFactory(t *testing.T, serverURL, token string) string {
+func deployFactory(t *testing.T, serverURL, orgID, token string) string {
 	t.Helper()
 
 	// Send deployment transaction (to="" means contract creation).
@@ -391,13 +404,13 @@ func deployFactory(t *testing.T, serverURL, token string) string {
 		"gas":  "0x200000",
 	}
 
-	resp := jsonRPCCall(t, serverURL, token, "eth_sendTransaction", []any{txParams})
+	resp := jsonRPCCall(t, serverURL, orgID, token, "eth_sendTransaction", []any{txParams})
 	require.Nil(t, resp["error"], "factory deploy tx failed: %v", resp["error"])
 	txHash, ok := resp["result"].(string)
 	require.True(t, ok, "expected tx hash string, got: %v", resp["result"])
 
 	// Wait for receipt.
-	receipt := waitForReceipt(t, serverURL, token, txHash)
+	receipt := waitForReceipt(t, serverURL, orgID, token, txHash)
 	status, _ := receipt["status"].(string)
 	require.Equal(t, "0x1", status, "factory deployment failed")
 
@@ -440,18 +453,27 @@ func registerContract(t *testing.T, database *db.DB, orgID, address, name string
 		require.Equal(t, orgID, contract.OrgID, "auto-registered contract belongs to wrong org")
 	}
 
-	// Also create a grant for the org's first group so that users can access it.
+	// Also ensure a grant exists for the org's first group so that users can
+	// access it. The proxy auto-grants a freshly-deployed contract to the
+	// deployer's group (NotifyDeploymentMined / GrantContractToDeployerGroup),
+	// so a grant for this (contract, group) pair may already exist. Creating it
+	// again would violate the (contract_id, group_id) unique constraint, so this
+	// is idempotent — mirroring the helper's reuse of an auto-registered contract.
 	groups, err := database.ListGroups(ctx, orgID)
 	require.NoError(t, err)
 	require.NotEmpty(t, groups)
 
-	grant := &rbac.ContractGrant{
-		ID:         uuid.New().String(),
-		ContractID: contract.ID,
-		GroupID:    groups[0].ID,
-		Functions:  nil, // all functions
+	existingGrant, err := database.GetContractGrantByContractAndGroup(ctx, contract.ID, groups[0].ID)
+	require.NoError(t, err)
+	if existingGrant == nil {
+		grant := &rbac.ContractGrant{
+			ID:         uuid.New().String(),
+			ContractID: contract.ID,
+			GroupID:    groups[0].ID,
+			Functions:  nil, // all functions
+		}
+		require.NoError(t, database.CreateContractGrant(ctx, grant))
 	}
-	require.NoError(t, database.CreateContractGrant(ctx, grant))
 }
 
 // ---------------------------------------------------------------------------
@@ -479,8 +501,10 @@ func TestCreate2RuntimeDeployment_HappyPath(t *testing.T) {
 	// Get JWT token via mock login.
 	token := getJWTTokenForCreate2(t, env.serverURL, userDID)
 
-	// Step 1: Deploy the Create2Factory.
-	factoryAddr := deployFactory(t, env.serverURL, token)
+	// Step 1: Deploy the Create2Factory. Mock-login users belong to multiple
+	// orgs (the intended org + the auto-created dev-admin org), so all RPC
+	// calls are scoped to test-org via /rpc/:org_id.
+	factoryAddr := deployFactory(t, env.serverURL, orgID, token)
 	t.Logf("Factory deployed at: %s", factoryAddr)
 
 	// Step 2: Register the factory in the DB so the proxy knows it belongs to test-org.
@@ -501,20 +525,20 @@ func TestCreate2RuntimeDeployment_HappyPath(t *testing.T) {
 		"gas":  "0x200000",
 	}
 
-	resp := jsonRPCCall(t, env.serverURL, token, "eth_sendTransaction", []any{txParams})
+	resp := jsonRPCCall(t, env.serverURL, orgID, token, "eth_sendTransaction", []any{txParams})
 	require.Nil(t, resp["error"], "deployChild tx failed: %v", resp["error"])
 	deployTxHash, ok := resp["result"].(string)
 	require.True(t, ok, "expected tx hash string")
 
 	// Wait for the transaction to be mined.
-	receipt := waitForReceipt(t, env.serverURL, token, deployTxHash)
+	receipt := waitForReceipt(t, env.serverURL, orgID, token, deployTxHash)
 	status, _ := receipt["status"].(string)
 	require.Equal(t, "0x1", status, "deployChild tx reverted")
 	t.Logf("deployChild tx mined: %s", deployTxHash)
 
 	// Step 4: Predict the child address so we know what to look for.
 	predictData := encodePredictAddressCalldata(salt, childValue)
-	predictResp := jsonRPCCall(t, env.serverURL, token, "eth_call", []any{
+	predictResp := jsonRPCCall(t, env.serverURL, orgID, token, "eth_call", []any{
 		map[string]any{
 			"from": anvilAccount0,
 			"to":   factoryAddr,
@@ -548,7 +572,7 @@ func TestCreate2RuntimeDeployment_HappyPath(t *testing.T) {
 	// First, grant access to the child contract for the group (the auto-registration
 	// may not create a grant, but the org's deploy claim provides default access to
 	// unregistered addresses — and now the contract IS registered to the org).
-	valueResp := jsonRPCCall(t, env.serverURL, token, "eth_call", []any{
+	valueResp := jsonRPCCall(t, env.serverURL, orgID, token, "eth_call", []any{
 		map[string]any{
 			"from": anvilAccount0,
 			"to":   childAddr,
@@ -593,7 +617,7 @@ func TestCreate2RuntimeDeployment_CrossOrgDenied(t *testing.T) {
 	)
 
 	// Create org-b with read-only claims (no ETH address linked — different identity).
-	_ = createOrgWithUser(t, env.srv.DB(), "org-b", "b-readers", userBDID,
+	orgBID := createOrgWithUser(t, env.srv.DB(), "org-b", "b-readers", userBDID,
 		[]rbac.Claim{},
 		[]string{"eth_call", "eth_blockNumber", "eth_chainId", "eth_getCode"},
 		"",
@@ -603,8 +627,9 @@ func TestCreate2RuntimeDeployment_CrossOrgDenied(t *testing.T) {
 	tokenA := getJWTTokenForCreate2(t, env.serverURL, userADID)
 	tokenB := getJWTTokenForCreate2(t, env.serverURL, userBDID)
 
-	// Deploy factory as org-a.
-	factoryAddr := deployFactory(t, env.serverURL, tokenA)
+	// Deploy factory as org-a. Mock-login users are in multiple orgs, so scope
+	// every call to the intended org via /rpc/:org_id.
+	factoryAddr := deployFactory(t, env.serverURL, orgAID, tokenA)
 	registerContract(t, env.srv.DB(), orgAID, factoryAddr, "Create2Factory")
 
 	// Deploy child as org-a.
@@ -620,15 +645,15 @@ func TestCreate2RuntimeDeployment_CrossOrgDenied(t *testing.T) {
 		"data": encodeDeployChildCalldata(salt, childValue),
 		"gas":  "0x200000",
 	}
-	resp := jsonRPCCall(t, env.serverURL, tokenA, "eth_sendTransaction", []any{txParams})
+	resp := jsonRPCCall(t, env.serverURL, orgAID, tokenA, "eth_sendTransaction", []any{txParams})
 	require.Nil(t, resp["error"], "deployChild tx failed: %v", resp["error"])
 	txHash := resp["result"].(string)
 
-	receipt := waitForReceipt(t, env.serverURL, tokenA, txHash)
+	receipt := waitForReceipt(t, env.serverURL, orgAID, tokenA, txHash)
 	require.Equal(t, "0x1", receipt["status"].(string))
 
 	// Predict child address.
-	predictResp := jsonRPCCall(t, env.serverURL, tokenA, "eth_call", []any{
+	predictResp := jsonRPCCall(t, env.serverURL, orgAID, tokenA, "eth_call", []any{
 		map[string]any{
 			"from": anvilAccount0,
 			"to":   factoryAddr,
@@ -652,8 +677,11 @@ func TestCreate2RuntimeDeployment_CrossOrgDenied(t *testing.T) {
 		time.Sleep(1 * time.Second)
 	}
 
-	// Org-b user tries to call child.value() — should be denied (cross-org isolation).
-	statusCode, body := jsonRPCCallRaw(t, env.serverURL, tokenB, "eth_call", []any{
+	// Org-b user tries to call child.value() — should be denied (cross-org
+	// isolation). The call is scoped to org-b (the user's own org) so the
+	// denial provably comes from the target belonging to org-a, not from
+	// ambiguous org resolution.
+	statusCode, body := jsonRPCCallRaw(t, env.serverURL, orgBID, tokenB, "eth_call", []any{
 		map[string]any{
 			"from": anvilAccount1,
 			"to":   childAddr,
@@ -662,9 +690,13 @@ func TestCreate2RuntimeDeployment_CrossOrgDenied(t *testing.T) {
 		"latest",
 	})
 
-	// Cross-org access should be denied.
-	require.Equal(t, http.StatusForbidden, statusCode,
-		"expected 403 for cross-org access, got %d: %s", statusCode, string(body))
+	// Cross-org access is denied at the RBAC entry point (NewOrgContext sees
+	// the target is owned by org-a, of which org-b's user is not a member) and
+	// surfaced as an opaque 404 "method not found" — the uniform denial shape
+	// for every RBAC/cross-org rejection (RD-849/RD-1099; see
+	// cross_org_isolation_test.go and proxy_test.go).
+	require.Equal(t, http.StatusNotFound, statusCode,
+		"expected 404 (opaque cross-org denial), got %d: %s", statusCode, string(body))
 
 	t.Log("Cross-org denied: org-b cannot call org-a's auto-registered child.")
 }
@@ -732,9 +764,16 @@ func TestCreate2RuntimeDeployment_DeniedWithoutDeployClaim(t *testing.T) {
 	}
 	require.NoError(t, env.srv.DB().CreateMembership(ctx, writerMembership))
 
-	// Deploy factory as the deployer user.
+	// Link a distinct funded Anvil account to the writer. eth_sendTransaction
+	// rejects a `from` that is not linked to the caller (ReasonSenderNotLinked,
+	// HTTP 400) before the deploy-claim/trace gate runs, so the writer must use
+	// its own linked address — anvilAccount0 belongs to the deployer.
+	require.NoError(t, env.srv.DB().SystemLinkEthAddress(ctx, writerDID, anvilAccount1))
+
+	// Deploy factory as the deployer user. Mock-login users are in multiple
+	// orgs, so scope calls to write-org via /rpc/:org_id.
 	deployerToken := getJWTTokenForCreate2(t, env.serverURL, deployerDID)
-	factoryAddr := deployFactory(t, env.serverURL, deployerToken)
+	factoryAddr := deployFactory(t, env.serverURL, orgID, deployerToken)
 	registerContract(t, env.srv.DB(), orgID, factoryAddr, "Create2Factory")
 
 	// Grant the writer group access to the factory contract so method-level
@@ -772,13 +811,13 @@ func TestCreate2RuntimeDeployment_DeniedWithoutDeployClaim(t *testing.T) {
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03}
 
 	txParams := map[string]any{
-		"from": anvilAccount0,
+		"from": anvilAccount1, // writer's own linked address
 		"to":   factoryAddr,
 		"data": encodeDeployChildCalldata(salt, 77),
 		"gas":  "0x200000",
 	}
 
-	statusCode, body := jsonRPCCallRaw(t, env.serverURL, writerToken, "eth_sendTransaction", []any{txParams})
+	statusCode, body := jsonRPCCallRaw(t, env.serverURL, orgID, writerToken, "eth_sendTransaction", []any{txParams})
 
 	// The runtime tracer should detect the CREATE2 and the trace validator should deny
 	// the transaction because the user lacks the deploy claim.

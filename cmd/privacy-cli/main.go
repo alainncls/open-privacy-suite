@@ -31,6 +31,8 @@ func main() {
 		runList(listCmd, os.Args[2:])
 	case "audit":
 		runAudit(os.Args[2:])
+	case "reencrypt-rpc-keys":
+		runReencryptRPCKeys(os.Args[2:])
 	case "version", "-v", "--version":
 		fmt.Printf("privacy-cli version %s\n", Version)
 	case "help", "-h", "--help":
@@ -53,6 +55,7 @@ Commands:
   verify            Verify deployment matches registration
   list              List pending deployments for an organization
   audit verify      Walk an audit hash chain and report integrity (RD-858)
+  reencrypt-rpc-keys  Re-encrypt group RPC API keys after rotating RPC_API_KEY_ENCRYPTION_KEY (RD-1164)
 
 Options:
   -h, --help        Show this help message

@@ -255,6 +255,7 @@ type RedactionEngine struct {
 	visibleToUnlockResolver       VisibleToUnlockResolver
 	dynamicPayloadAllowedResolver DynamicPayloadAllowedResolver
 	logParticipantStore           LogParticipantStore
+	pseudonymKey                  []byte // RD-1164 #8: HMAC key for address pseudonyms (nil = unkeyed HMAC, still non-reversible)
 }
 
 // Database interface for the methods RedactionEngine needs from the main DB
@@ -343,6 +344,15 @@ func (r *RedactionEngine) SetABIResolver(resolver ABIResolver) {
 	r.abiResolver = resolver
 }
 
+// SetPseudonymKey wires the HMAC key used to derive address pseudonyms
+// (RD-1164 #8). With a key set, pseudonyms are non-reversible AND
+// non-enumerable; with nil they are still non-reversible (HMAC) but a
+// candidate address can be recomputed. Production server startup wires
+// cfg.ExplorerPseudonymKey via wireExplorerRedactor.
+func (r *RedactionEngine) SetPseudonymKey(key []byte) {
+	r.pseudonymKey = key
+}
+
 // SetLogParticipantStore wires the log-based participant detector (RD-939
 // Stage A). Without this resolver the redactor falls back to tx.from /
 // tx.to and the legacy hardcoded calldata heuristic, which misses
@@ -387,6 +397,13 @@ func extractUniqueAddresses(txs []Transaction) []string {
 		}
 		if tx.HasRecipient() {
 			addrMap[strings.ToLower(*tx.To)] = true
+		}
+		// RD-1143: include the deployed-contract address on CREATE receipts so
+		// its visibility is resolved in the same batch and it can be field-level
+		// redacted below. Nil for non-CREATE txs and factory/CREATE2 deploys
+		// (the receipt only carries contractAddress for a top-level CREATE).
+		if tx.ContractAddress != nil && *tx.ContractAddress != "" {
+			addrMap[strings.ToLower(*tx.ContractAddress)] = true
 		}
 	}
 
@@ -988,6 +1005,35 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 				redactedTx.AddressMetadata[aLower] = ReasonVisibleToGrant
 			} else if meta, ok := visibilityMapDetailed[aLower]; ok {
 				redactedTx.AddressMetadata[aLower] = meta.Reason
+			}
+		}
+
+		// RD-1143: redact the deployed-contract address on a CREATE receipt. It
+		// is a first-class address field and must follow the same field-level
+		// redaction as from/to — keyed on the CONTRACT's own resolved visibility
+		// (it is registered to the deployer's org via the deploy auto-grant, so it
+		// resolves to Redacted/Hidden for outsiders and Full for the deployer /
+		// org members). The participant/visibleTo override reveals it to the
+		// deployer (who is the `from` participant of their own CREATE). The
+		// elevated admin audit view deliberately does NOT reveal it: per
+		// /docs/security/privacy-requirements the flag reveals existence + value
+		// (row survival) but never counterparty/contract addresses. Fail-closed:
+		// only the two identifiable levels reveal; Hidden/Redacted AND any
+		// unknown level render [PRIVATE]. Runs before the branch split so it
+		// applies on every surviving row regardless of from/to outcome.
+		if tx.ContractAddress != nil && *tx.ContractAddress != "" {
+			caBase := visibilityMap[strings.ToLower(*tx.ContractAddress)]
+			caLevel := caBase
+			if (viewerIsParticipant || txVisibleToViewer) && isNonIdentifiable(caLevel) {
+				caLevel = VisibilityFull
+			}
+			if caLevel == VisibilityFull || caLevel == VisibilityPseudonymous {
+				red := r.applyRedaction(*tx.ContractAddress, caLevel)
+				redactedTx.ContractAddress = &red
+				setMeta(*tx.ContractAddress, caBase)
+			} else {
+				p := "[PRIVATE]"
+				redactedTx.ContractAddress = &p
 			}
 		}
 
@@ -2439,7 +2485,7 @@ func (r *RedactionEngine) applyRedaction(address string, level VisibilityLevel) 
 	case VisibilityFull:
 		return address
 	case VisibilityPseudonymous:
-		return GeneratePseudonym(address)
+		return GeneratePseudonym(address, r.pseudonymKey)
 	case VisibilityRedacted:
 		return "[PRIVATE]"
 	case VisibilityHidden:

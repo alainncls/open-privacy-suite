@@ -17436,7 +17436,7 @@
                 "description": "Lists the viewer's own linked addresses plus addresses disclosed to them via active disclosure grants. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: the viewer DID comes from a validated JWT (or the impersonation override) — never from a query param — and for non-full grants the disclosed address is a pseudonym or \"[PRIVATE]\", never the real address. Fail-closed: with no resolvable viewer, only empty lists are returned.",
                 "parameters": [
                     {
-                        "description": "Viewer wallet address (0x-prefixed hex); only honoured with a valid JWT. Its linked DID is used when the JWT carries none.",
+                        "description": "Viewer wallet address (0x-prefixed hex), echoed back for display only. The viewer identity is resolved solely from the JWT — a wallet value never resolves a DID (RD-1164 #7).",
                         "example": "0x0000000000000000000000000000000000000001",
                         "in": "query",
                         "name": "wallet",
