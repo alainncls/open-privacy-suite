@@ -39,6 +39,10 @@ node_modules/
 rpc-namespaces.json
 !rpc-namespaces.example.json
 
+# Local dev compose overrides (keep examples). Auto-included by privacy-dev-up.sh.
+docker-compose.*.override.yml
+!docker-compose.*.override.yml.example
+
 # IDE
 .vscode/
 .idea/
