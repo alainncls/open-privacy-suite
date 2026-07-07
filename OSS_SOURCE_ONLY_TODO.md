@@ -22,11 +22,12 @@ This checklist consolidates `OSS_AUDIT-GPT.md` and `OSS_AUDIT_GLM.md` into the f
 - [ ] Publish or coordinate `gateway-fm/chain-indexer` under Apache-2.0.
 - [ ] Publish or coordinate `gateway-fm/block-explorer` under Apache-2.0.
 - [ ] Decide whether `gateway-fm/wallet-emulator-js` is public Apache-2.0; otherwise remove/replace the submodule.
-- [ ] Make `.github/workflows/privacy-bypass.yml` safe for public forks without `CROSS_REPO_READ_TOKEN`, or disable it for public PRs until sibling repos are public.
-- [ ] Scrub public docs for private Linear URLs and internal roadmap wording.
+- [ ] Make `.github/workflows/privacy-bypass.yml` safe for public forks without `CROSS_REPO_READ_TOKEN`, or disable it for public PRs until sibling repos are public. *(PR #382 — preflight gate: skip on forks, fail loudly in the canonical repo.)*
+- [ ] Scrub public docs for private Linear URLs and internal roadmap wording. *(PR #383 — `linear.app` URLs removed, `OPEN_ITEMS.md` header reworded; keep-list in the PR description.)*
+- [ ] Decide posture for `docs/archive/security-audit-travel-rules.md` (tracked internal audit; not matched by the audit-report `.gitignore` patterns). Its stale "H4 High OPEN" status is corrected to FIXED in PR #383, so it is accurate now — keep public vs remove is a maintainer call. Removing it does not purge git history (see the history-posture item below).
 - [ ] Decide whether to keep `RD-XXXX` references outside migrations or strip them in a mechanical follow-up.
 - [ ] Decide whether to keep `.mcp.json` tracked publicly or move it to an example file.
-- [ ] Decide git-history email posture: accept as normal OSS attribution or rewrite before public launch.
+- [ ] Decide git-history posture before public launch: author emails (accept as normal OSS attribution vs rewrite), and note the published history also contains every previously tracked internal artifact (e.g. archived audit docs) — publishing full history vs a fresh/squashed start is one decision, not just an email question.
 - [ ] Confirm inbound contribution policy: DCO is documented; add CI enforcement if required.
 
 ## Before First Official Binary/Image Release
