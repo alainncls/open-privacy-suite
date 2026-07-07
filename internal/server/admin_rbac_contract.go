@@ -742,34 +742,32 @@ func (s *Server) deleteStaleContracts(c *gin.Context) {
 	for _, contractID := range input.ContractIDs {
 		contract, err := s.db.GetContract(c.Request.Context(), contractID)
 		if err != nil {
+			slog.Warn("sync-delete: contract lookup failed", "contract_id", contractID, "err", err) // RD-1178: don't echo raw err
 			skipped = append(skipped, struct {
 				ID     string `json:"id"`
 				Reason string `json:"reason"`
-			}{contractID, "database error: " + err.Error()})
+			}{contractID, "lookup failed"})
 			continue
 		}
-		if contract == nil {
+		// RD-1180: "not found" and "belongs to another org" return the SAME
+		// opaque reason so the by-ID skipped list can't be used as a
+		// cross-tenant existence oracle.
+		if contract == nil || contract.OrgID != orgID {
 			skipped = append(skipped, struct {
 				ID     string `json:"id"`
 				Reason string `json:"reason"`
-			}{contractID, "contract not found"})
-			continue
-		}
-		if contract.OrgID != orgID {
-			skipped = append(skipped, struct {
-				ID     string `json:"id"`
-				Reason string `json:"reason"`
-			}{contractID, "contract belongs to different organization"})
+			}{contractID, "not eligible for deletion"})
 			continue
 		}
 
 		// Re-verify the contract is still missing on-chain (safety check)
 		code, err := s.getContractCode(contract.Address)
 		if err != nil {
+			slog.Warn("sync-delete: on-chain code check failed", "contract_id", contractID, "err", err) // RD-1178
 			skipped = append(skipped, struct {
 				ID     string `json:"id"`
 				Reason string `json:"reason"`
-			}{contractID, "chain unavailable: " + err.Error()})
+			}{contractID, "chain check failed"})
 			continue
 		}
 		if code != "0x" && code != "" {
@@ -782,10 +780,11 @@ func (s *Server) deleteStaleContracts(c *gin.Context) {
 
 		// Delete the contract
 		if err := s.db.DeleteContract(c.Request.Context(), contractID); err != nil {
+			slog.Warn("sync-delete: delete failed", "contract_id", contractID, "err", err) // RD-1178: don't echo raw err
 			skipped = append(skipped, struct {
 				ID     string `json:"id"`
 				Reason string `json:"reason"`
-			}{contractID, "delete failed: " + err.Error()})
+			}{contractID, "delete failed"})
 			continue
 		}
 
