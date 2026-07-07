@@ -119,6 +119,12 @@ out/
 # Temporary progress/notes files
 TODO_*.md
 
+# Internal audit reports (do not publish)
+AUDIT_*.md
+*_AUDIT*.md
+OSS_AUDIT*.md
+CONSOLIDATED_CRITICAL_FINDINGS*.md
+
 # Backup files
 *.bak
 
