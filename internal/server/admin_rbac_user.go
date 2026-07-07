@@ -215,6 +215,25 @@ func resolveListUsersScope(c *gin.Context) ([]string, error) {
 	}
 }
 
+// listRBACUsers returns a paginated, filterable list of RBAC users.
+//
+// @Summary      List users
+// @Description  Returns a paginated list of RBAC users, each with a scoped summary of their group memberships. Results are scoped to the caller: a super-admin sees all users, a tier-2 org-admin JWT sees only users in the orgs it administers (full or read-only), and cardinality cannot be used as a cross-org enumeration oracle. Optional filters: org_id, search, one or more group_id, and role. Tenant-confidential: rejected for the operator token (403).
+// @Tags         Admin: RBAC
+// @Produce      json
+// @Param        org_id query string false "Restrict to users in this organization"
+// @Param        search query string false "Case-insensitive filter on user identifier"
+// @Param        group_id query []string false "Restrict to members of these group IDs (repeatable)"
+// @Param        role query string false "Filter by role" Enums(org_admin, admin, member)
+// @Param        limit query int false "Max rows to return (default 50)"
+// @Param        offset query int false "Rows to skip for pagination (default 0)"
+// @Success      200 {object} userListResponse
+// @Failure      400 {object} APIError "invalid role filter"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, or operator token (tenant data not readable)"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/users [get]
 func (s *Server) listRBACUsers(c *gin.Context) {
 	// RD-1132: tenant-confidential read — not readable with the operator token.
 	if denyOperatorTenantRead(c) {
@@ -276,6 +295,19 @@ func (s *Server) listRBACUsers(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": items, "total": total, "limit": limit, "offset": offset})
 }
 
+// getRBACUser returns a single RBAC user by ID.
+//
+// @Summary      Get a user
+// @Description  Returns a single RBAC user by ID. The caller must share at least one org with the user; otherwise the response is an opaque 403 identical to the not-found case, so a tier-2 org-admin JWT cannot distinguish "exists in another org" from "does not exist". Tenant-confidential: rejected for the operator token (403).
+// @Tags         Admin: RBAC
+// @Produce      json
+// @Param        user_id path string true "User ID (UUID)"
+// @Success      200 {object} rbac.User
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, user outside the caller's scope (opaque; also covers not-found), or operator token (tenant data not readable)"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/users/{user_id} [get]
 func (s *Server) getRBACUser(c *gin.Context) {
 	// RD-1132: tenant-confidential read — not readable with the operator token.
 	if denyOperatorTenantRead(c) {
@@ -299,6 +331,22 @@ func (s *Server) getRBACUser(c *gin.Context) {
 	c.JSON(http.StatusOK, user)
 }
 
+// updateRBACUser edits a user's KYC, ban, note, and/or metadata.
+//
+// @Summary      Update a user
+// @Description  Updates a user's kyc, banned, note, and/or metadata fields. All body fields are optional; only supplied fields change. Requires full (is_org_admin) scope over an org the user belongs to — read-only admins are rejected. Banning a user also revokes their refresh tokens for immediate session termination. Out-of-scope or unknown users return an opaque 403.
+// @Tags         Admin: RBAC
+// @Accept       json
+// @Produce      json
+// @Param        user_id path string true "User ID (UUID)"
+// @Param        request body rbacUserUpdateRequest true "fields to update (all optional)"
+// @Success      200 {object} rbac.User
+// @Failure      400 {object} APIError "invalid request body"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, or user outside the caller's full-admin scope (opaque; also covers not-found)"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/users/{user_id} [put]
 func (s *Server) updateRBACUser(c *gin.Context) {
 	userID := c.Param("user_id")
 	if !s.requireUserInFullAdminScope(c, userID) {
@@ -380,6 +428,19 @@ func (s *Server) updateRBACUser(c *gin.Context) {
 	c.JSON(http.StatusOK, user)
 }
 
+// getUserLinkedAddresses lists the ETH addresses linked to a user.
+//
+// @Summary      List a user's linked ETH addresses
+// @Description  Returns the Ethereum addresses linked to the user's DID, with verification time and any resolved ENS name. The caller must share at least one org with the user; otherwise an opaque 403 (same as not-found). Tenant-confidential: rejected for the operator token (403).
+// @Tags         Admin: RBAC
+// @Produce      json
+// @Param        user_id path string true "User ID (UUID)"
+// @Success      200 {object} userLinkedAddressesResponse
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, user outside the caller's scope (opaque; also covers not-found), or operator token (tenant data not readable)"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/users/{user_id}/linked-addresses [get]
 func (s *Server) getUserLinkedAddresses(c *gin.Context) {
 	// RD-1132: tenant-confidential read — not readable with the operator token.
 	if denyOperatorTenantRead(c) {
@@ -430,6 +491,19 @@ func (s *Server) getUserLinkedAddresses(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"addresses": addresses})
 }
 
+// deleteRBACUser deletes a user and all their group memberships.
+//
+// @Summary      Delete a user
+// @Description  Deletes a user along with all of their group memberships. Requires full (is_org_admin) scope over an org the user belongs to — read-only admins are rejected. Out-of-scope or unknown users return an opaque 403.
+// @Tags         Admin: RBAC
+// @Produce      json
+// @Param        user_id path string true "User ID (UUID)"
+// @Success      200 {object} APIMessage "user deleted"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, or user outside the caller's full-admin scope (opaque; also covers not-found)"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/users/{user_id} [delete]
 func (s *Server) deleteRBACUser(c *gin.Context) {
 	userID := c.Param("user_id")
 	if !s.requireUserInFullAdminScope(c, userID) {
@@ -517,6 +591,19 @@ func withExpiryStatus(memberships []*rbac.MembershipWithDetails, now time.Time) 
 	return items
 }
 
+// listUserMemberships lists a user's group memberships within the caller's scope.
+//
+// @Summary      List a user's memberships
+// @Description  Returns the user's group memberships (each with the group and a server-computed expired flag for time-boxed grants). For a tier-2 org-admin JWT the list is filtered to the caller's org scope, so a multi-org user's foreign-org memberships are never enumerated. The caller must share at least one org with the user. Tenant-confidential: rejected for the operator token (403).
+// @Tags         Admin: RBAC
+// @Produce      json
+// @Param        user_id path string true "User ID (UUID)"
+// @Success      200 {array} membershipListItem
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, user outside the caller's scope (opaque), or operator token (tenant data not readable)"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/users/{user_id}/memberships [get]
 func (s *Server) listUserMemberships(c *gin.Context) {
 	// RD-1132: tenant-confidential read — not readable with the operator token.
 	if denyOperatorTenantRead(c) {
@@ -594,6 +681,23 @@ func parseMembershipExpiry(c *gin.Context, raw *string) (*time.Time, bool) {
 	return &utc, true
 }
 
+// createUserMembership adds an existing user to a group.
+//
+// @Summary      Add a user to a group
+// @Description  Adds an existing user to a group. Body: group_id (required) and expires_at (optional RFC3339, must be in the future — a time-boxed access window; omit for permanent). Requires full (is_org_admin) scope over the target group's org; the check runs before the body is read so the response is not a user-enumeration oracle. Adding a member to an is_org_admin group is super-admin-only; adding to a regular group is rejected for the operator token. To onboard a not-yet-provisioned DID, use the by-did endpoint instead.
+// @Tags         Admin: RBAC
+// @Accept       json
+// @Produce      json
+// @Param        user_id path string true "User ID (UUID)"
+// @Param        request body membershipCreateRequest true "membership to create"
+// @Success      201 {object} rbac.UserMembership
+// @Failure      400 {object} APIError "invalid body or expires_at (must be RFC3339 and in the future)"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, target group outside the caller's full-admin scope (opaque), tier-2 JWT adding to an org-admin group, or operator token adding to a regular group"
+// @Failure      409 {object} APIError "user is already a member of this group"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/users/{user_id}/memberships [post]
 func (s *Server) createUserMembership(c *gin.Context) {
 	userID := c.Param("user_id")
 
@@ -774,6 +878,22 @@ func validateOnboardDID(did string) error {
 // membership (e.g. they previously self-authenticated on a different org's
 // surface), this endpoint does not touch that membership. ADD semantics, not
 // MOVE — symmetric with the existing remove path.
+//
+// @Summary      Onboard a DID into a group
+// @Description  Onboards a user identified by DID directly into a group in the path org, auto-provisioning the user if the DID is not yet known. Body: did (required, a syntactically valid W3C DID; iden3/Polygon-ID DIDs are checksum-verified), group_id (required), expires_at (optional RFC3339, future). Requires full (is_org_admin) scope over the path org; the target group must belong to that org (opaque 403 otherwise). Onboarding into an is_org_admin group is super-admin-only; a regular group is rejected for the operator token. Ban state is never revealed via this endpoint. ADD semantics — a new user is not also placed in the default group.
+// @Tags         Admin: RBAC
+// @Accept       json
+// @Produce      json
+// @Param        org_id path string true "Organization ID (UUID)"
+// @Param        request body membershipByDIDRequest true "onboarding request"
+// @Success      201 {object} membershipByDIDResponse
+// @Failure      400 {object} APIError "invalid body, invalid DID, or expires_at (must be RFC3339 and in the future)"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, path org outside the caller's full-admin scope, target group not in the path org (opaque), tier-2 JWT onboarding into an org-admin group, or operator token onboarding into a regular group"
+// @Failure      409 {object} APIError "user is already a member of this group"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/memberships/by-did [post]
 func (s *Server) createMembershipByDID(c *gin.Context) {
 	orgID := c.Param("org_id")
 
@@ -919,6 +1039,20 @@ func (s *Server) createMembershipByDID(c *gin.Context) {
 	})
 }
 
+// deleteUserMembership removes a user from a group.
+//
+// @Summary      Remove a membership
+// @Description  Removes a user's membership from a group. Requires full (is_org_admin) scope over the group's org; an unknown or out-of-scope membership returns an opaque 403. Removing a member from an is_org_admin group (a demotion) is super-admin-only; removing from a regular group is rejected for the operator token.
+// @Tags         Admin: RBAC
+// @Produce      json
+// @Param        user_id path string true "User ID (UUID)"
+// @Param        membership_id path string true "Membership ID (UUID)"
+// @Success      200 {object} APIMessage "membership deleted"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, membership's group outside the caller's full-admin scope (opaque; also covers not-found), tier-2 JWT removing from an org-admin group, or operator token removing from a regular group"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/users/{user_id}/memberships/{membership_id} [delete]
 func (s *Server) deleteUserMembership(c *gin.Context) {
 	userID := c.Param("user_id")
 	membershipID := c.Param("membership_id")
@@ -985,6 +1119,20 @@ func (s *Server) deleteUserMembership(c *gin.Context) {
 
 // Debugging handlers
 
+// getEffectivePermissions computes a user's resolved permissions in an org.
+//
+// @Summary      Get a user's effective permissions
+// @Description  Computes and returns the user's resolved permissions (allowed methods, claims, per-contract access) in the given organization — a debugging view of what the RBAC resolver grants. The org is selected by the org query param (slug; defaults to "default"). The caller must share the target org with the user, and a tier-2 org-admin JWT must have the queried org in scope, so this cannot be used as a cross-org probe. Tenant-confidential: rejected for the operator token (403).
+// @Tags         Admin: RBAC
+// @Produce      json
+// @Param        user_id path string true "User ID (UUID)"
+// @Param        org query string false "Organization slug to resolve against (default \"default\")"
+// @Success      200 {object} rbac.EffectivePermissions
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, user or queried org outside the caller's scope (opaque), or operator token (tenant data not readable)"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/users/{user_id}/effective-permissions [get]
 func (s *Server) getEffectivePermissions(c *gin.Context) {
 	// RD-1132: tenant-confidential read — not readable with the operator token.
 	if denyOperatorTenantRead(c) {
@@ -1045,6 +1193,21 @@ func (s *Server) getEffectivePermissions(c *gin.Context) {
 	c.JSON(http.StatusOK, perms)
 }
 
+// checkAccessAPI evaluates an RBAC access-check request.
+//
+// @Summary      Check access
+// @Description  Evaluates whether a given user (by external DID) would be allowed to call a method against a target in an organization, returning the resolver's decision and reason. For a tier-2 org-admin JWT the probe is clamped to the caller's scope: the target org must be specified and in scope, and the probed user must share an org with the caller — this prevents the endpoint from being a cluster-wide permission-map oracle. Tenant-confidential: rejected for the operator token (403).
+// @Tags         Admin: RBAC
+// @Accept       json
+// @Produce      json
+// @Param        request body rbac.AccessCheckRequest true "access-check request"
+// @Success      200 {object} rbac.AccessCheckResult
+// @Failure      400 {object} APIError "invalid request body"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, target org/user outside the caller's scope (opaque), or operator token (tenant data not readable)"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/access/check [post]
 func (s *Server) checkAccessAPI(c *gin.Context) {
 	// RD-1132: tenant-confidential read — not readable with the operator token.
 	if denyOperatorTenantRead(c) {
@@ -1107,6 +1270,17 @@ func (s *Server) checkAccessAPI(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// getCacheStats returns RBAC permission-cache statistics.
+//
+// @Summary      Get RBAC cache stats
+// @Description  Returns statistics for the RBAC permission cache (entry count, expired-pending count, capacity) — cluster-wide observability tooling. Because these counts expose cross-org cardinality, the endpoint is restricted to the super-admin (full X-Admin-Token); tier-2 org-admin JWTs and the operator token are rejected with 403.
+// @Tags         Admin: RBAC
+// @Produce      json
+// @Success      200 {object} rbac.CacheStats
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, or caller is not a super-admin"
+// @Security     AdminToken
+// @Router       /api/v1/admin/cache/stats [get]
 func (s *Server) getCacheStats(c *gin.Context) {
 	// Cache statistics expose cross-org cardinality. Restrict to
 	// super-admin (cluster-wide observability tooling).
@@ -1127,6 +1301,17 @@ func (s *Server) getCacheStats(c *gin.Context) {
 // caller who legitimately needs the cluster-wide list); JWT admins
 // receive only collisions involving at least one user in their org
 // scope.
+//
+// @Summary      List ETH address collisions
+// @Description  Returns ETH addresses linked to more than one DID — potential key-sharing or key-compromise events to review. A super-admin (full X-Admin-Token) receives the cluster-wide list; a tier-2 org-admin JWT receives only collisions involving at least one user in its org scope, so it cannot read foreign-org DIDs or addresses.
+// @Tags         Admin: RBAC
+// @Produce      json
+// @Success      200 {object} ethAddressCollisionsResponse
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/eth-addresses/collisions [get]
 func (s *Server) getEthAddressCollisions(c *gin.Context) {
 	collisions, err := s.db.GetAddressLinkCollisions(c.Request.Context())
 	if err != nil {

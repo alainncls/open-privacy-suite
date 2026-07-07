@@ -20,6 +20,23 @@ import (
 // whose resource lives in one of their admin_org_ids /
 // admin_readonly_org_ids. The DB layer filters at the SQL level so
 // the response cardinality cannot be used as an enumeration oracle.
+//
+// @Summary      List RBAC audit logs
+// @Description  Returns RBAC audit-log entries. At least one of resource_type or actor_id must be supplied to avoid unbounded scans; resource_id further narrows a resource_type query. A super-admin sees all entries; a tier-2 org-admin JWT receives only entries whose resource lives in an org it administers (filtered in SQL, so cardinality is not an enumeration oracle). Tenant-confidential: rejected for the operator token (403).
+// @Tags         Admin: RBAC
+// @Produce      json
+// @Param        resource_type query string false "Filter by resource type (required unless actor_id is given)"
+// @Param        resource_id query string false "Further narrow a resource_type query to one resource"
+// @Param        actor_id query string false "Filter by actor (required unless resource_type is given)"
+// @Param        limit query int false "Max rows to return (default 100, max 1000)"
+// @Param        offset query int false "Rows to skip for pagination (default 0)"
+// @Success      200 {array} AuditLogEntryDoc
+// @Failure      400 {object} APIError "at least one filter (resource_type or actor_id) is required"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, or operator token (tenant data not readable)"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/audit-logs [get]
 func (s *Server) listAuditLogs(c *gin.Context) {
 	// RD-1132: tenant-confidential read — not readable with the operator token.
 	if denyOperatorTenantRead(c) {

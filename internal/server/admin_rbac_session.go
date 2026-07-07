@@ -24,6 +24,16 @@ type sessionInfoResponse struct {
 // are not org-tagged — they're cluster-wide auth-flow sessions, so a
 // JWT admin in Org A has no legitimate need to enumerate them
 // (audit H7). Restrict to super-admin.
+//
+// @Summary      List auth sessions
+// @Description  Returns the in-flight authentication sessions (id, created/expiry/completed timestamps) held in the session store. These are cluster-wide auth-flow sessions, not org-tagged, so the endpoint is restricted to the super-admin (full X-Admin-Token); tier-2 org-admin JWTs and the operator token are rejected with 403.
+// @Tags         Admin: RBAC
+// @Produce      json
+// @Success      200 {object} SessionListResponse
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, caller is not a super-admin, or operator token (tenant data not readable)"
+// @Security     AdminToken
+// @Router       /api/v1/admin/sessions [get]
 func (s *Server) listSessions(c *gin.Context) {
 	// RD-1132: tenant-confidential read — not readable with the operator token.
 	if denyOperatorTenantRead(c) {
@@ -60,6 +70,18 @@ func (s *Server) listSessions(c *gin.Context) {
 // listSessions — sessions are cluster-wide and not org-tagged, so a
 // JWT admin in Org A could mass-DoS in-progress logins across the
 // cluster (audit H7). Restrict to super-admin.
+//
+// @Summary      Delete an auth session
+// @Description  Terminates a single in-flight authentication session by ID. Restricted to the super-admin (full X-Admin-Token) — sessions are cluster-wide, so allowing tier-2 org-admin JWTs would enable mass-DoS of in-progress logins; the operator token is likewise rejected.
+// @Tags         Admin: RBAC
+// @Produce      json
+// @Param        session_id path string true "Auth session ID"
+// @Success      200 {object} APIMessage "session deleted"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, or caller is not a super-admin"
+// @Failure      404 {object} APIError "session not found or expired"
+// @Security     AdminToken
+// @Router       /api/v1/admin/sessions/{session_id} [delete]
 func (s *Server) deleteSession(c *gin.Context) {
 	if !requireSuperAdmin(c) {
 		return

@@ -217,6 +217,17 @@ type AuthRequestBody struct {
 
 // handleAuthRequest handles POST /auth/request - creates authorization request
 // Step 1: Client requests authentication, server creates proof request
+//
+// @Summary      Start a Privado ID authentication session
+// @Description  Step 1 of the Privado ID wallet login. Creates a pending session and returns a session ID plus the authorization request the frontend renders as a QR code for the wallet to scan. The optional body may carry the browser's window.location.origin so the wallet callback URL is reachable from the caller's hostname. Rate-limited.
+// @Tags         Auth
+// @Accept       json
+// @Produce      json
+// @Param        request body AuthRequestBody false "optional callback origin"
+// @Success      200 {object} AuthRequestResponse
+// @Failure      500 {object} APIError "VERIFIER_ID not configured (production) or failed to create the authorization request"
+// @Failure      503 {object} APIError "authentication service at capacity"
+// @Router       /api/v1/auth/request [post]
 func (s *Server) handleAuthRequest(c *gin.Context) {
 	// Parse optional request body for callback_origin
 	var reqBody AuthRequestBody
@@ -383,6 +394,20 @@ func (s *Server) scheduleDemoAutoAuth(sessionID string) {
 
 // handleAuthCallback handles POST /auth/callback - wallet callback with proof
 // Step 2: Wallet automatically sends proof here after user approves
+//
+// @Summary      Submit a Privado ID proof (wallet callback)
+// @Description  Step 2 of the Privado ID wallet login. The wallet posts the JWZ proof to the session named by the `session` query parameter (the callback URL from step 1). On success the proof is verified and access + refresh tokens are issued. The body is the JWZ token, accepted either as JSON (`{"token":"<jwz>"}` or `{"jwz_token":"<jwz>"}`) or as the raw token string; it is size-capped. Rate-limited.
+// @Tags         Auth
+// @Accept       json
+// @Produce      json
+// @Param        session query string true "auth session ID from /auth/request"
+// @Param        request body object true "JWZ token, as {\"token\":\"<jwz>\"} or the raw token string"
+// @Success      200 {object} AuthResponse
+// @Failure      400 {object} APIError "missing session parameter, unreadable body, or missing JWZ token"
+// @Failure      401 {object} APIError "session not found/expired, or JWZ verification failed"
+// @Failure      403 {object} HumanityVerificationError "ProofOfHumanity verification required, or account banned"
+// @Failure      500 {object} APIError "failed to persist user record or issue tokens"
+// @Router       /api/v1/auth/callback [post]
 func (s *Server) handleAuthCallback(c *gin.Context) {
 	// Get session ID from query parameter (wallet includes it in callback URL)
 	sessionID := c.Query("session")
@@ -441,6 +466,19 @@ func (s *Server) handleAuthCallback(c *gin.Context) {
 
 // handleAuthVerify handles POST /auth/verify - manual proof submission (development only)
 // Alternative flow for testing: client submits proof manually
+//
+// @Summary      Submit a Privado ID proof manually (dev only)
+// @Description  Available only in non-production builds. Alternative to the wallet callback: the client submits the session ID and JWZ token in the body, the proof is verified, and access + refresh tokens are issued (also mirrored into an HttpOnly access cookie). Used by the dev mock-login flow. Rate-limited.
+// @Tags         Auth
+// @Accept       json
+// @Produce      json
+// @Param        request body AuthVerifyRequest true "session ID and JWZ token"
+// @Success      200 {object} AuthResponse
+// @Failure      400 {object} APIError "invalid request body"
+// @Failure      401 {object} APIError "session not found/expired, or JWZ verification failed"
+// @Failure      403 {object} HumanityVerificationError "ProofOfHumanity verification required, or account banned"
+// @Failure      500 {object} APIError "failed to persist user record or issue tokens"
+// @Router       /api/v1/auth/verify [post]
 func (s *Server) handleAuthVerify(c *gin.Context) {
 	var req AuthVerifyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -635,6 +673,16 @@ type SessionStatusResponse struct {
 
 // handleAuthSessionStatus handles GET /api/auth/session/:id/status - poll for session completion
 // Frontend polls this after displaying QR code to check if wallet has completed auth
+//
+// @Summary      Poll a Privado ID auth session for completion
+// @Description  The frontend polls this after showing the QR code to learn whether the wallet has completed authentication. While pending it returns `completed:false`; once complete it returns the issued tokens (and mirrors the access JWT into an HttpOnly cookie). Rate-limited.
+// @Tags         Auth
+// @Produce      json
+// @Param        id path string true "auth session ID"
+// @Success      200 {object} SessionStatusResponse
+// @Failure      400 {object} APIError "session ID required"
+// @Failure      404 {object} APIError "session not found or expired"
+// @Router       /api/v1/auth/session/{id}/status [get]
 func (s *Server) handleAuthSessionStatus(c *gin.Context) {
 	sessionID := c.Param("id")
 	if sessionID == "" {
@@ -672,6 +720,19 @@ func (s *Server) handleAuthSessionStatus(c *gin.Context) {
 }
 
 // handleRefresh handles POST /refresh - issues new access token from refresh token
+//
+// @Summary      Exchange a refresh token for new tokens
+// @Description  Validates the refresh token, rejects it if revoked, expired, or the account is banned, then issues a new access token and rotates the refresh token (the old one is revoked). The access JWT is also refreshed in an HttpOnly cookie. Rate-limited.
+// @Tags         Auth
+// @Accept       json
+// @Produce      json
+// @Param        request body RefreshRequest true "refresh token"
+// @Success      200 {object} AuthResponse
+// @Failure      400 {object} APIError "invalid request body"
+// @Failure      401 {object} APIError "refresh token invalid, expired, revoked, or not found"
+// @Failure      403 {object} APIError "account is banned"
+// @Failure      500 {object} APIError "failed to check or issue tokens"
+// @Router       /api/v1/refresh [post]
 func (s *Server) handleRefresh(c *gin.Context) {
 	var req RefreshRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -801,6 +862,17 @@ type IntrospectResponse struct {
 
 // handleIntrospect handles POST /introspect - token introspection per RFC 7662
 // Allows clients to validate tokens and retrieve basic token metadata
+//
+// @Summary      Introspect a token (RFC 7662)
+// @Description  OAuth 2.0 token introspection. Accepts a form-encoded `token` (and optional `token_type_hint`) and reports whether it is currently active, with basic metadata for active tokens. Per RFC 7662 the response is always 200 with `active:false` for unknown, expired, or revoked tokens. Rate-limited.
+// @Tags         Auth
+// @Accept       x-www-form-urlencoded
+// @Produce      json
+// @Param        token formData string true "the token to introspect"
+// @Param        token_type_hint formData string false "\"access_token\" or \"refresh_token\""
+// @Success      200 {object} IntrospectResponse
+// @Failure      400 {object} APIError "token is required"
+// @Router       /api/v1/introspect [post]
 func (s *Server) handleIntrospect(c *gin.Context) {
 	var req IntrospectRequest
 	if err := c.ShouldBind(&req); err != nil {
@@ -856,6 +928,17 @@ func (s *Server) handleIntrospect(c *gin.Context) {
 }
 
 // handleRevoke handles POST /revoke - revokes refresh and optionally access tokens
+//
+// @Summary      Revoke a refresh token (and optionally an access token)
+// @Description  Revokes the supplied refresh token; if an access token is also supplied it is blacklisted for immediate invalidation. The access cookie is cleared. Revocation is best-effort against already-invalid tokens (defense in depth). Rate-limited.
+// @Tags         Auth
+// @Accept       json
+// @Produce      json
+// @Param        request body RevokeRequest true "refresh token, and optional access token"
+// @Success      200 {object} APIMessage "token revoked successfully"
+// @Failure      400 {object} APIError "invalid request body"
+// @Failure      500 {object} APIError "failed to revoke token"
+// @Router       /api/v1/revoke [post]
 func (s *Server) handleRevoke(c *gin.Context) {
 	var req RevokeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

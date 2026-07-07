@@ -49,7 +49,7 @@ In development mode, click the flask icon on the login page for instant mock aut
 | [Authentication](site/src/app/docs/authentication/page.mdx) | ZK-proof auth, ETH address linking |
 | [Azure AD / SSO](site/src/app/docs/azure-ad/page.mdx) | Microsoft Entra ID integration |
 | [RBAC](site/src/app/docs/rbac/page.mdx) | Role-based access control system |
-| [API Reference](site/src/app/docs/api/page.mdx) | Complete HTTP endpoint documentation |
+| [API Reference](site/src/app/docs/api/page.mdx) | Auth model + link to the interactive OpenAPI reference |
 | [Security](site/src/app/docs/security/page.mdx) | Request filtering, cross-org isolation |
 | [Compliance](site/src/app/docs/compliance/page.mdx) | Travel rule enforcement |
 | [Selective Disclosure](site/src/app/docs/disclosure/page.mdx) | Privacy-aware data sharing |
@@ -64,6 +64,17 @@ To run the docs site locally:
 make site-dev
 # Open http://localhost:3000
 ```
+
+### REST API specification
+
+The full OpenAPI 3.1 document is **generated from handler annotations**
+(`make api-spec`, enforced by CI and a route↔spec coverage gate):
+
+- Served by every running proxy at `GET /openapi.json` — import it into
+  Postman/Insomnia directly.
+- Rendered interactively in the docs site at `/api-reference`.
+- [`API_ENDPOINTS.md`](API_ENDPOINTS.md) — generated method/path inventory of
+  every registered route.
 
 ## Testing
 
