@@ -255,6 +255,7 @@ type RedactionEngine struct {
 	visibleToUnlockResolver       VisibleToUnlockResolver
 	dynamicPayloadAllowedResolver DynamicPayloadAllowedResolver
 	logParticipantStore           LogParticipantStore
+	pseudonymKey                  []byte // RD-1164 #8: HMAC key for address pseudonyms (nil = unkeyed HMAC, still non-reversible)
 }
 
 // Database interface for the methods RedactionEngine needs from the main DB
@@ -341,6 +342,15 @@ func (r *RedactionEngine) SetDynamicPayloadAllowedResolver(resolver DynamicPaylo
 // keeping legacy tests passing. Production server startup MUST wire it.
 func (r *RedactionEngine) SetABIResolver(resolver ABIResolver) {
 	r.abiResolver = resolver
+}
+
+// SetPseudonymKey wires the HMAC key used to derive address pseudonyms
+// (RD-1164 #8). With a key set, pseudonyms are non-reversible AND
+// non-enumerable; with nil they are still non-reversible (HMAC) but a
+// candidate address can be recomputed. Production server startup wires
+// cfg.ExplorerPseudonymKey via wireExplorerRedactor.
+func (r *RedactionEngine) SetPseudonymKey(key []byte) {
+	r.pseudonymKey = key
 }
 
 // SetLogParticipantStore wires the log-based participant detector (RD-939
@@ -2475,7 +2485,7 @@ func (r *RedactionEngine) applyRedaction(address string, level VisibilityLevel) 
 	case VisibilityFull:
 		return address
 	case VisibilityPseudonymous:
-		return GeneratePseudonym(address)
+		return GeneratePseudonym(address, r.pseudonymKey)
 	case VisibilityRedacted:
 		return "[PRIVATE]"
 	case VisibilityHidden:

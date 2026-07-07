@@ -427,6 +427,7 @@ type Config struct {
 	RPCAPIKey              string // RPC_API_KEY — global fallback when no group-specific key is set
 	RPCAPIKeyHeader        string // RPC_API_KEY_HEADER — header name used to send the RPC API key (default "Authorization", which sends "Bearer <key>"); any other value sends the raw key under that header
 	RPCAPIKeyEncryptionKey []byte // RPC_API_KEY_ENCRYPTION_KEY — 32-byte hex key for AES-256 encryption of RPC API keys at rest
+	ExplorerPseudonymKey   []byte // EXPLORER_PSEUDONYM_KEY — HMAC key for explorer address pseudonyms (non-reversible, non-enumerable). Optional; set in production.
 	MaxConcurrentRequests  int    // MAX_CONCURRENT_REQUESTS — per-user concurrency cap (default: 50)
 
 	// Azure AD / Microsoft Entra ID authentication
@@ -670,13 +671,35 @@ func Load() *Config {
 		}
 	}
 
-	// RPC API key encryption key (hex-encoded 32 bytes for AES-256)
+	// RPC API key encryption key (hex-encoded 32 bytes for AES-256).
+	// RD-1164 #2: fail fast on a set-but-invalid key. Previously an invalid value
+	// was silently ignored, leaving the key nil — which disables encryption and
+	// stores RPC API keys in plaintext at rest while the operator believes
+	// encryption is on. A misconfigured prod must not boot silently.
 	var rpcAPIKeyEncKey []byte
 	if hexKey := getEnv("RPC_API_KEY_ENCRYPTION_KEY", ""); hexKey != "" {
 		decoded, err := hex.DecodeString(hexKey)
-		if err == nil && len(decoded) == 32 {
-			rpcAPIKeyEncKey = decoded
+		if err != nil {
+			panic(fmt.Sprintf("RPC_API_KEY_ENCRYPTION_KEY: invalid hex: %v", err))
 		}
+		if len(decoded) != 32 {
+			panic(fmt.Sprintf("RPC_API_KEY_ENCRYPTION_KEY: must decode to 32 bytes (AES-256), got %d", len(decoded)))
+		}
+		rpcAPIKeyEncKey = decoded
+	}
+
+	// Explorer pseudonym HMAC key (hex-encoded, any length). Keys the address
+	// pseudonyms shown to viewers so they are non-reversible and non-enumerable
+	// (RD-1164 #8). Optional: when unset, pseudonyms are still HMAC-derived (never
+	// the old reversible scheme) but, without a secret, can be recomputed from a
+	// candidate address — set this in production. Fail fast on invalid hex.
+	var pseudonymKey []byte
+	if hexKey := getEnv("EXPLORER_PSEUDONYM_KEY", ""); hexKey != "" {
+		decoded, err := hex.DecodeString(hexKey)
+		if err != nil {
+			panic(fmt.Sprintf("EXPLORER_PSEUDONYM_KEY: invalid hex: %v", err))
+		}
+		pseudonymKey = decoded
 	}
 
 	// RPC API key header name. Default "Authorization" preserves Bearer token
@@ -795,6 +818,7 @@ func Load() *Config {
 		RPCAPIKey:                           getEnv("RPC_API_KEY", ""),
 		RPCAPIKeyHeader:                     rpcAPIKeyHeader,
 		RPCAPIKeyEncryptionKey:              rpcAPIKeyEncKey,
+		ExplorerPseudonymKey:                pseudonymKey,
 		MaxConcurrentRequests:               maxConcurrentRequests,
 		AzureADClientID:                     getEnv("AZURE_AD_CLIENT_ID", ""),
 		AzureADClientSecret:                 getEnv("AZURE_AD_CLIENT_SECRET", ""),

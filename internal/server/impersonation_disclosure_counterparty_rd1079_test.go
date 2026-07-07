@@ -168,9 +168,9 @@ func TestImpersonation_DisclosureCounterparty_NoAdminBleed_RD1079(t *testing.T) 
 	gotFrom := asDave[0].From
 	require.NotEqualf(t, charlieEOA, gotFrom,
 		"RD-1079 / View-as bleed: counterparty leaked in full hex under impersonation (got %q)", gotFrom)
-	require.Equalf(t, explorer.GeneratePseudonym(charlieEOA), gotFrom,
+	require.Equalf(t, explorer.GeneratePseudonym(charlieEOA, nil), gotFrom,
 		"counterparty must render as Dave's pseudonymous lens, got %q", gotFrom)
-	require.Equalf(t, explorer.GeneratePseudonym(eveEOA), asDave[0].To,
+	require.Equalf(t, explorer.GeneratePseudonym(eveEOA, nil), asDave[0].To,
 		"disclosed subject must render at her pseudonym, got %q", asDave[0].To)
 
 	// Label check (the frontend-visible symptom): the counterparty must NOT be

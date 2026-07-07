@@ -58,6 +58,11 @@ services:
     environment:
       - NODE_URL=http://anvil:8545
       - DATABASE_URL=postgres://postgres:postgres@postgres:5432/privacy_proxy?sslmode=disable
+      # RD-1147: server.New requires a resolvable audit DB. Co-locate the audit
+      # schema in the same e2e Postgres (the lean audit migration is idempotent),
+      # mirroring the Go e2e configs. Avoids needing a separate privacy_proxy_audit DB.
+      - AUDIT_DATABASE_URL=postgres://postgres:postgres@postgres:5432/privacy_proxy?sslmode=disable
+      - AUDIT_ADMIN_DATABASE_URL=postgres://postgres:postgres@postgres:5432/privacy_proxy?sslmode=disable
       - PORT=8080
       - ENVIRONMENT=test
       - VERIFIER_ID=did:privado:verifier:e2e-test-verifier-0000000000000000

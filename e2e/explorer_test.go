@@ -109,8 +109,12 @@ func TestE2E_Explorer_ViewableAddresses(t *testing.T) {
 
 	client := &http.Client{Timeout: 5 * time.Second}
 
+	// RD-1164 #7: identity comes from the validated JWT, not a ?wallet= lookup
+	// (the wallet param is only echoed as ViewerWallet). Authenticate as the viewer.
+	token := getJWTToken(t, serverURL, e2eViewerDID)
 	req, _ := http.NewRequest("GET", serverURL+"/api/v1/explorer/viewable-addresses?wallet="+e2eViewerWallet, nil)
 	req.Header.Set("X-Forwarded-For", "127.0.0.1")
+	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := client.Do(req)
 	require.NoError(t, err)
@@ -201,8 +205,11 @@ func TestE2E_Explorer_MultipleAddressesPerUser(t *testing.T) {
 
 	client := &http.Client{Timeout: 5 * time.Second}
 
+	// RD-1164 #7: authenticate as the viewer; identity is JWT-based now, not ?wallet=.
+	token := getJWTToken(t, serverURL, e2eViewerDID)
 	req, _ := http.NewRequest("GET", serverURL+"/api/v1/explorer/viewable-addresses?wallet="+addresses[0], nil)
 	req.Header.Set("X-Forwarded-For", "127.0.0.1")
+	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := client.Do(req)
 	require.NoError(t, err)

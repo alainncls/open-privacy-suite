@@ -390,13 +390,31 @@ Each RBAC group can have an API key for the upstream RPC node. This enables per-
 <EnvTable vars={[
   { name: "RPC_API_KEY", default: "(none)", description: "Global fallback API key for the upstream RPC node. Used when no group-specific key is configured." },
   { name: "RPC_API_KEY_HEADER", default: "Authorization", description: "Header name used to send the upstream RPC API key. Default 'Authorization' sends 'Bearer <key>'; any other value (e.g. 'X-API-Key') sends the key verbatim under that header. Validated against ^[A-Za-z0-9-]+$ at startup." },
-  { name: "RPC_API_KEY_ENCRYPTION_KEY", default: "(none)", description: "Hex-encoded 32-byte key for encrypting API keys at rest. Required in production. Generate with: openssl rand -hex 32" },
+  { name: "RPC_API_KEY_ENCRYPTION_KEY", default: "(none)", description: "Hex-encoded 32-byte key for encrypting API keys at rest. Required in production. Generate with: openssl rand -hex 32. The proxy refuses to start if this is set to an invalid value (bad hex or wrong length) rather than silently storing keys in plaintext — fix or unset it to boot." },
   { name: "MAX_CONCURRENT_REQUESTS", default: "50", description: "Maximum concurrent in-flight requests per authenticated user." },
 ]} />
 
 Per-group keys are configured in the admin dashboard under group access settings. Keys are encrypted at rest in production and masked in API responses (only last 4 characters visible). Each group can also override `rpc_api_key_header` to switch between `Authorization` and any single-header alternative such as `X-API-Key`.
 
+Rotating `RPC_API_KEY_ENCRYPTION_KEY` orphans every stored key. To rotate, generate a new key and re-encrypt the stored keys with `privacy-cli`:
+
+```bash
+privacy-cli reencrypt-rpc-keys --database-url $DATABASE_URL --old-key $OLD_KEY --new-key $NEW_KEY
+```
+
+Add `--dry-run` to preview the change without writing. Run it before switching `RPC_API_KEY_ENCRYPTION_KEY` over to the new value.
+
 The client's IP is forwarded to the upstream node via `X-Forwarded-For` for upstream rate limiting.
+
+---
+
+## Explorer Pseudonyms
+
+Under a pseudonymous disclosure grant the explorer renders addresses as a stable `Address-XXXX` alias. The alias is non-reversible in all configurations — it reveals nothing about the underlying address. Setting a key additionally makes aliases non-enumerable, so an attacker cannot recompute the alias for a candidate address.
+
+<EnvTable vars={[
+  { name: "EXPLORER_PSEUDONYM_KEY", default: "(none)", description: "Optional hex-encoded key that makes explorer address pseudonyms non-enumerable. Recommended in production. When unset, aliases are still stable and non-reversible but can be recomputed from a candidate address; when set, they cannot. Changing this value changes every alias, so set it once and keep it stable. Generate with: openssl rand -hex 32. The proxy refuses to start if this is set to an invalid value (bad hex)." },
+]} />
 
 ---
 

@@ -141,6 +141,7 @@ func TestGrantVisibilityMatrix(t *testing.T) {
 		t.Run("Resolve", func(t *testing.T) {
 			req := httptest.NewRequest("GET",
 				"/api/v1/explorer/grant/"+gs.GrantID+"/resolve/"+gs.AddressID, nil)
+			addBearerToken(t, req, srv, gs.RequesterDID)
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
 
@@ -205,6 +206,7 @@ func TestGrantVisibilityMatrix(t *testing.T) {
 		t.Run("Resolve", func(t *testing.T) {
 			req := httptest.NewRequest("GET",
 				"/api/v1/explorer/grant/"+gs.GrantID+"/resolve/"+gs.AddressID, nil)
+			addBearerToken(t, req, srv, gs.RequesterDID)
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
 
@@ -273,6 +275,7 @@ func TestGrantVisibilityMatrix(t *testing.T) {
 		t.Run("Resolve", func(t *testing.T) {
 			req := httptest.NewRequest("GET",
 				"/api/v1/explorer/grant/"+gs.GrantID+"/resolve/"+gs.AddressID, nil)
+			addBearerToken(t, req, srv, gs.RequesterDID)
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
 
@@ -343,6 +346,7 @@ func TestGrantVisibilityMatrix(t *testing.T) {
 		t.Run("Resolve", func(t *testing.T) {
 			req := httptest.NewRequest("GET",
 				"/api/v1/explorer/grant/"+gs.GrantID+"/resolve/"+gs.AddressID, nil)
+			addBearerToken(t, req, srv, gs.RequesterDID)
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
 
@@ -398,6 +402,7 @@ func TestGrantVisibilityMatrix(t *testing.T) {
 		t.Run("Resolve", func(t *testing.T) {
 			req := httptest.NewRequest("GET",
 				"/api/v1/explorer/grant/"+gs.GrantID+"/resolve/"+gs.AddressID, nil)
+			addBearerToken(t, req, srv, gs.RequesterDID)
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
 
@@ -445,7 +450,7 @@ func TestGrantVisibilityMatrix(t *testing.T) {
 				"SECURITY: real external address must not leak in pseudonymous mode")
 
 			// Check pseudonym labels
-			disclosedPseudonym := explorer.GeneratePseudonym(gs.TargetAddr)
+			disclosedPseudonym := explorer.GeneratePseudonym(gs.TargetAddr, nil)
 			assert.Equal(t, "disclosed", resp.AddressLabels[disclosedPseudonym])
 		})
 
@@ -477,6 +482,7 @@ func TestGrantVisibilityMatrix(t *testing.T) {
 		t.Run("Resolve_200", func(t *testing.T) {
 			req := httptest.NewRequest("GET",
 				"/api/v1/explorer/grant/"+gs.GrantID+"/resolve/"+gs.AddressID, nil)
+			addBearerToken(t, req, srv, gs.RequesterDID)
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
 
@@ -518,6 +524,7 @@ func TestGrantVisibilityMatrix(t *testing.T) {
 		t.Run("Resolve_Forbidden", func(t *testing.T) {
 			req := httptest.NewRequest("GET",
 				"/api/v1/explorer/grant/"+gs.GrantID+"/resolve/"+gs.AddressID, nil)
+			addBearerToken(t, req, srv, gs.RequesterDID)
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
 
@@ -566,6 +573,7 @@ func TestGrantVisibilityMatrix(t *testing.T) {
 
 		req := httptest.NewRequest("GET",
 			"/api/v1/explorer/grant/"+gs.GrantID+"/resolve/"+gs.AddressID, nil)
+		addBearerToken(t, req, srv, gs.RequesterDID)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -631,6 +639,7 @@ func TestGrantVisibilityMatrix(t *testing.T) {
 		t.Run("Resolve_Forbidden", func(t *testing.T) {
 			req := httptest.NewRequest("GET",
 				"/api/v1/explorer/grant/"+gs.GrantID+"/resolve/"+gs.AddressID, nil)
+			addBearerToken(t, req, srv, gs.RequesterDID)
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
 
@@ -672,6 +681,7 @@ func TestGrantVisibilityMatrix(t *testing.T) {
 		t.Run("Resolve_404", func(t *testing.T) {
 			req := httptest.NewRequest("GET",
 				"/api/v1/explorer/grant/"+fakeGrant+"/resolve/"+fakeAddr, nil)
+			addBearerToken(t, req, srv, viewerDID)
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
 			assert.Equal(t, http.StatusNotFound, w.Code)
@@ -707,6 +717,7 @@ func TestGrantVisibilityMatrix(t *testing.T) {
 		t.Run("Resolve_404", func(t *testing.T) {
 			req := httptest.NewRequest("GET",
 				"/api/v1/explorer/grant/"+gs.GrantID+"/resolve/"+wrongAddrID, nil)
+			addBearerToken(t, req, srv, gs.RequesterDID)
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
 			assert.Equal(t, http.StatusNotFound, w.Code)
