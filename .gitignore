@@ -107,6 +107,7 @@ out/
 
 # Git worktrees
 .worktrees/
+.agents/
 
 # Built binaries (root level)
 /privacy-proxy
