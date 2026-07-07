@@ -43,5 +43,6 @@
   },
   "overrides": {
     "dompurify": "^3.4.2"
-  }
+  },
+  "license": "Apache-2.0"
 }

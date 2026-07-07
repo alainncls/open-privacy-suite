@@ -314,4 +314,4 @@ When `ADMIN_API_TOKEN` is **not set** and no JWT is provided, the admin auth mid
 
 ## License
 
-MIT
+Apache-2.0. See [LICENSE](./LICENSE).
