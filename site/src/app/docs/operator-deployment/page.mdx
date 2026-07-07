@@ -163,7 +163,7 @@ A few admin endpoints are gated to the super-admin (`X-Admin-Token`) only — th
 | Surface | Purpose | Endpoints |
 |---|---|---|
 | **Shared infrastructure** (`shared_infrastructure`) | Whitelist of public-utility contracts the runtime trace validator can skip when checking cross-org calls (Uniswap V3 Router, Multicall3, ENS resolver, CREATE3 factory, etc.). Entries are global — no `org_id`. | `GET POST /api/v1/admin/shared-infrastructure`<br/>`GET PUT DELETE /api/v1/admin/shared-infrastructure/:address`<br/>`POST /api/v1/admin/shared-infrastructure/:address/refresh-codehash` |
-| **Base currency** | Sets the compliance pricing currency for every org. | `GET PUT /api/v1/admin/compliance/currency` |
+| **Default base currency** | Sets the system default/fallback compliance currency and the currency system token prices display in. It does **not** override a tenant's own currency — each org sets its own currency in its compliance config (an org-admin action), so this no longer re-values other tenants. | `GET PUT /api/v1/admin/compliance/currency` |
 | **Azure tenant CRUD** | Tenant-pinning configuration for SSO. | `/api/v1/admin/azure-tenants/...` |
 | **Anonymous group_access edit** | Editing the anonymous allowlist (the six metadata methods seeded by migration 044). | `PUT /api/v1/admin/orgs/<anon-org>/groups/<anon-group>/access` (rejected if not super-admin via the `is_system` gate) |
 

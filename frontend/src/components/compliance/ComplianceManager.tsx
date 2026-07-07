@@ -175,7 +175,7 @@ export default function ComplianceManager() {
   const singleOrgLock = organizations.length === 1;
 
   return (
-    <CurrencyProvider>
+    <CurrencyProvider orgId={selectedOrg?.id}>
     <ComplianceOrgContext.Provider
       value={{ selectedOrg, setSelectedOrg, organizations }}
     >

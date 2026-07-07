@@ -506,7 +506,7 @@ func TestFilterEventLogs_NilAndEmptyEventRulesEquivalent(t *testing.T) {
 			result := FilterEventLogs(
 				[]json.RawMessage{logWithUser, logWithoutUser},
 				perms, []string{userAddr}, nil, nil,
-			nil,
+				nil,
 			)
 			if len(result) != 0 {
 				t.Errorf("EventRules=%v: expected 0 logs (deny all), got %d", tc.rules, len(result))
@@ -1282,8 +1282,8 @@ func TestFilterEventLogs_MixedRules_SelfAndCustom(t *testing.T) {
 						Topic0: transferTopic0,
 						Name:   "Transfer",
 						ParamRules: []ParamRule{
-							{Index: 0, MustBe: "self"},        // from must be caller's address
-							{Index: 1, MustBe: targetToAddr},  // OR to must be the specific address
+							{Index: 0, MustBe: "self"},       // from must be caller's address
+							{Index: 1, MustBe: targetToAddr}, // OR to must be the specific address
 						},
 					},
 				}},
@@ -1453,8 +1453,8 @@ func TestFilterEventLogs_CustomHex_ShortFormEquivalence(t *testing.T) {
 
 	// All these short-form values should match the same uint256 value 42
 	shortForms := []string{
-		"0x2a",                                                               // minimal
-		"0x002a",                                                             // extra leading zero byte
+		"0x2a",   // minimal
+		"0x002a", // extra leading zero byte
 		"0x000000000000000000000000000000000000000000000000000000000000002a", // fully padded 32 bytes
 	}
 
@@ -1593,9 +1593,9 @@ func TestFilterEventLogs_CustomHex_NoABI_FallbackTopicCompare(t *testing.T) {
 
 func TestValidateParamRuleMustBe(t *testing.T) {
 	tests := []struct {
-		name    string
-		mustBe  string
-		wantOK  bool
+		name   string
+		mustBe string
+		wantOK bool
 	}{
 		{"self is valid", "self", true},
 		{"valid address hex", "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", true},
@@ -2816,8 +2816,8 @@ func TestFilterEventLogs_AdminBypassWithEmptyEventRules(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims:     []Claim{ClaimAdmin},
-				EventRules: &EventRulesField{Rules: []EventRule{}, // deny all — but admin overrides
-			}},
+				EventRules: &EventRulesField{Rules: []EventRule{}}}, // deny all — but admin overrides
+
 		},
 	}
 
@@ -2885,8 +2885,7 @@ func TestFilterEventLogs_CrossOrgIsolation_NoAccessToOtherOrg(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims:     []Claim{},
-				EventRules: &EventRulesField{Rules: []EventRule{{Topic0: transferTopic0, Name: "Transfer"}},
-			}},
+				EventRules: &EventRulesField{Rules: []EventRule{{Topic0: transferTopic0, Name: "Transfer"}}}},
 			// 0xcontract_other_org is NOT in ContractAccess → no access
 		},
 	}
@@ -3382,5 +3381,103 @@ func TestEventHasDynamicNonIndexedParam_TypeMatrix(t *testing.T) {
 				t.Errorf("expected %v, got %v", tc.expected, got)
 			}
 		})
+	}
+}
+
+// --- RD-1162: participant/sender admission of address-less own-tx logs ---
+
+// paymentCompletedABI mirrors the partior PaymentCompleted event: an indexed
+// bytes32 key plus a NON-indexed dynamic string — no stakeholder address in the
+// event, and a dynamic non-indexed param that trips the M15 gate.
+const paymentCompletedABI = `[{"type":"event","name":"PaymentCompleted","inputs":[{"name":"paymentKey","type":"bytes32","indexed":true},{"name":"paymentIdentifier","type":"string","indexed":false}]}]`
+
+// PaymentCompleted(bytes32,string) topic0.
+const completedTopic0 = "0xddf95b69771b95e4126efdd2ac8d6b9a2aeb30d74e247005737f56588dd64ce0"
+
+// PaymentCreated(bytes32,string,address,address) topic0 — used as the (only)
+// allowlisted event, so PaymentCompleted is NOT allowed by event_rules and must
+// rely on participant admission.
+const createdTopic0 = "0x9128dad45ff816f65a1a98775963317aac7593b90bace0d7dda7c3108cc71edc"
+
+func TestFilterEventLogs_ParticipantSeesOwnTxLog_RD1162(t *testing.T) {
+	const contract = "0xpayment0000000000000000000000000000cafe"
+	const myTx = "0xa11ce00000000000000000000000000000000000000000000000000000000001"
+	keyTopic := "0x1111111111111111111111111111111111111111111111111111111111111111"
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			contract: {
+				// Allowlist has ONLY PaymentCreated → PaymentCompleted denied by rules.
+				EventRules: &EventRulesField{Rules: []EventRule{
+					{Topic0: createdTopic0, Name: "PaymentCreated"},
+				}},
+			},
+		},
+	}
+	// The caller's linked address is NOT in the event (address-less event).
+	userAddrs := []string{"0xdead00000000000000000000000000000000beef"}
+	log := json.RawMessage(`{"address":"` + contract + `","topics":["` + completedTopic0 + `","` + keyTopic + `"],"data":"0x","transactionHash":"` + myTx + `"}`)
+
+	// Without participant context: denied (topic0 not in allowlist, no addr match).
+	if got := FilterEventLogs([]json.RawMessage{log}, perms, userAddrs, nil, nil, nil); len(got) != 0 {
+		t.Fatalf("non-participant: expected 0 logs, got %d", len(got))
+	}
+
+	// With participant context (caller sent this tx): the log is admitted even
+	// though the event is not allowlisted and carries no address of theirs.
+	visCtx := &TxVisibilityContext{ParticipantTxHashes: map[string]bool{myTx: true}}
+	if got := FilterEventLogs([]json.RawMessage{log}, perms, userAddrs, nil, visCtx, nil); len(got) != 1 {
+		t.Fatalf("participant: expected 1 log, got %d", len(got))
+	}
+
+	// A DIFFERENT tx the caller did not participate in stays denied.
+	otherVis := &TxVisibilityContext{ParticipantTxHashes: map[string]bool{"0xbbbb000000000000000000000000000000000000000000000000000000000002": true}}
+	if got := FilterEventLogs([]json.RawMessage{log}, perms, userAddrs, nil, otherVis, nil); len(got) != 0 {
+		t.Fatalf("non-matching tx: expected 0 logs, got %d", len(got))
+	}
+}
+
+func TestFilterEventLogs_ParticipantBounds_RD1162(t *testing.T) {
+	const granted = "0xpayment0000000000000000000000000000cafe"
+	const foreign = "0xfore1gn0000000000000000000000000000beef"
+	const myTx = "0xa11ce00000000000000000000000000000000000000000000000000000000001"
+	keyTopic := "0x1111111111111111111111111111111111111111111111111111111111111111"
+	userAddrs := []string{"0xdead00000000000000000000000000000000beef"}
+	visCtx := &TxVisibilityContext{ParticipantTxHashes: map[string]bool{myTx: true}}
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			granted: {EventRules: &EventRulesField{Rules: []EventRule{{Topic0: createdTopic0, Name: "PaymentCreated"}}}},
+			// `foreign` intentionally absent → GetContractAccess returns nil.
+		},
+	}
+
+	// Bound 1 — no grant on the emitting contract: participant does NOT admit a
+	// foreign-org log (a tx that internally touched a contract we can't see).
+	foreignLog := json.RawMessage(`{"address":"` + foreign + `","topics":["` + completedTopic0 + `","` + keyTopic + `"],"data":"0x","transactionHash":"` + myTx + `"}`)
+	if got := FilterEventLogs([]json.RawMessage{foreignLog}, perms, userAddrs, nil, visCtx, nil); len(got) != 0 {
+		t.Fatalf("bound(no-grant): expected 0 logs, got %d", len(got))
+	}
+
+	grantedLog := json.RawMessage(`{"address":"` + granted + `","topics":["` + completedTopic0 + `","` + keyTopic + `"],"data":"0x","transactionHash":"` + myTx + `"}`)
+
+	// Bound 2 — deny-when-no-ABI gate fires BEFORE participant admission:
+	// abiProvider that returns "" for the contract → dropped even for the sender.
+	noABI := &testABIProvider{abis: map[string]string{}}
+	if got := FilterEventLogs([]json.RawMessage{grantedLog}, perms, userAddrs, noABI, visCtx, nil); len(got) != 0 {
+		t.Fatalf("bound(no-ABI): expected 0 logs, got %d", len(got))
+	}
+
+	// Bound 3 — M15 dynamic-payload gate fires BEFORE participant admission when
+	// the operator has NOT opted the contract in. PaymentCompleted has a dynamic
+	// non-indexed string, so it is dropped for the participant...
+	dpOff := &testABIProviderWithDP{abis: map[string]string{granted: paymentCompletedABI}, allow: map[string]bool{granted: false}}
+	if got := FilterEventLogs([]json.RawMessage{grantedLog}, perms, userAddrs, dpOff, visCtx, nil); len(got) != 0 {
+		t.Fatalf("bound(M15 off): expected 0 logs, got %d", len(got))
+	}
+	// ...and admitted once the operator sets events_allow_dynamic_payload.
+	dpOn := &testABIProviderWithDP{abis: map[string]string{granted: paymentCompletedABI}, allow: map[string]bool{granted: true}}
+	if got := FilterEventLogs([]json.RawMessage{grantedLog}, perms, userAddrs, dpOn, visCtx, nil); len(got) != 1 {
+		t.Fatalf("bound(M15 on): expected 1 log, got %d", len(got))
 	}
 }

@@ -53,6 +53,13 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
 
 RUN useradd -r -u 1000 -m appuser
 
+# RD-1112: pre-create the async audit buffer dir (the recommended AUDIT_BUFFER_DIR)
+# owned by the non-root runtime user. A fresh Docker named volume mounted here
+# inherits this ownership, so the async buffer works with no host-side chown.
+# (Kubernetes PVCs are root-owned regardless — set the pod's fsGroup to 1000;
+# see docs/security/audit-integrity.)
+RUN mkdir -p /var/lib/pp/auditbuf && chown -R appuser:appuser /var/lib/pp/auditbuf
+
 WORKDIR /app
 EXPOSE 8080
 

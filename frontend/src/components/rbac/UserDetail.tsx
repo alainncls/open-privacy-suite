@@ -28,6 +28,7 @@ import {
   Save,
   AlertCircle,
   Wallet,
+  Clock,
 } from 'lucide-react';
 import { useAdmin } from '@/components/auth/RequireAdmin';
 
@@ -417,7 +418,7 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
                 {orgMemberships.map((m, idx) => (
                   <div
                     key={m.membership?.id || idx}
-                    className="flex items-center justify-between p-3 rounded-lg bg-neutral-100"
+                    className={`flex items-center justify-between p-3 rounded-lg bg-neutral-100 ${m.expired ? 'opacity-60' : ''}`}
                   >
                     <div className="flex items-center gap-3">
                       <FolderTree className="w-4 h-4 text-primary" />
@@ -446,6 +447,19 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
                                 : m.membership.source === 'zk_attested'
                                 ? 'ZK Attested'
                                 : m.membership.source}
+                            </Badge>
+                          )}
+                          {m.membership?.expires_at && (
+                            <Badge
+                              variant="outline"
+                              className={`text-xs inline-flex items-center gap-1 ${
+                                m.expired
+                                  ? 'text-error-dark border-red-300 bg-red-50'
+                                  : 'text-amber-700 border-amber-300 bg-amber-50'
+                              }`}
+                            >
+                              <Clock className="w-3 h-3" />
+                              {m.expired ? 'Expired' : 'Expires'} {new Date(m.membership.expires_at).toLocaleString()}
                             </Badge>
                           )}
                         </div>

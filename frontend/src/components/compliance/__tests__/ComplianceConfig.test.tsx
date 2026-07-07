@@ -185,6 +185,33 @@ describe('ComplianceConfig', () => {
       expect(screen.getByText('You have unsaved changes')).toBeInTheDocument();
     });
 
+    it('enables Save when only the enforcement mode changes (RD-1044 isDirty regression)', async () => {
+      // Regression guard for RD-1044: ComplianceConfig.isDirty must track
+      // enforcement_mode. Before the fix, switching enforce→monitor with nothing
+      // else changed left the form "clean", so Save stayed disabled and an
+      // operator could not save a mode-only switch at all.
+      const user = userEvent.setup();
+      renderWithComplianceContext(<ComplianceConfig />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Compliance Configuration')).toBeInTheDocument();
+      });
+
+      // Loaded config is enforce + enabled → nothing changed yet → Save disabled.
+      expect(screen.getByRole('button', { name: /Save Configuration/ })).toBeDisabled();
+
+      // Change ONLY the enforcement mode (the last combobox): enforce → monitor.
+      const comboboxes = screen.getAllByRole('combobox');
+      await user.click(comboboxes[comboboxes.length - 1]);
+      await user.click(await screen.findByRole('option', { name: /Monitor/i }));
+
+      // The mode change alone marks the form dirty: Save enabled, the unsaved cue
+      // appears, and the amber "sanctions still block" warning surfaces.
+      expect(screen.getByRole('button', { name: /Save Configuration/ })).toBeEnabled();
+      expect(screen.getByText('You have unsaved changes')).toBeInTheDocument();
+      expect(screen.getByText(/Sanctions still block/)).toBeInTheDocument();
+    });
+
     it('shows last updated timestamp', async () => {
       renderWithComplianceContext(<ComplianceConfig />);
 

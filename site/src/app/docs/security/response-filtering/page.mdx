@@ -92,7 +92,7 @@ Transaction receipts contain execution results including status, gas used, and -
 | Yes | Receipt (but logs are filtered to only show those involving the user, and `logsBloom` is zeroed) |
 | No | `null` |
 
-Non-participants receive `null`, consistent with `eth_getTransactionByHash`. Importantly, even when a user is a participant, the receipt's `logs` array is filtered using the same strict rules as `eth_getLogs`, and the `logsBloom` is zeroed out to prevent leaking the total number or presence of redacted logs.
+Non-participants receive `null`, consistent with `eth_getTransactionByHash`. Even when a user is a participant, the receipt's `logs` array is filtered using the same rules as `eth_getLogs` (see below), and the `logsBloom` is zeroed out to prevent leaking the total number or presence of redacted logs. Note that "the same rules as `eth_getLogs`" includes the own-transaction rule below: a participant sees every log of their own transaction that was emitted by a contract they have access to — including events that do not carry their address (e.g. an event keyed by a business identifier).
 
 ---
 
@@ -118,7 +118,18 @@ For each log entry in the response:
 1. **Check all four topics including `topics[0]`** -- for standard (non-anonymous) events, `topics[0]` is the event signature hash (e.g., `keccak256("Transfer(address,address,uint256)")`). Because this is not a zero-padded address, the address-pattern check naturally skips it. For anonymous events (declared with the `anonymous` keyword), `topics[0]` may contain an indexed address parameter and is therefore scanned.
 2. **Check `topics[1]` through `topics[3]`** -- for each topic, extract the lower 20 bytes as an Ethereum address (topics are 32 bytes; addresses are the last 20 bytes, zero-padded on the left).
 3. **Compare each extracted address** against the user's linked ETH addresses (case-insensitive).
-4. **Keep the log entry** if at least one topic address matches a linked address. **Remove it** otherwise.
+4. **Keep the log entry** if at least one topic address matches a linked address. Otherwise, apply the own-transaction rule below; if that also does not apply, **remove it**.
+
+### Own-transaction logs
+
+An event does not always name its stakeholders in an indexed address topic — some contracts emit events keyed only by a business identifier (for example `PaymentCompleted(bytes32 paymentKey, string paymentId)`). Address matching alone would hide such an event from the very people it concerns, including the account that submitted the transaction.
+
+To close this, a user also sees the logs of **transactions they participated in** (their linked address is the transaction's `from` or `to`), for logs emitted by contracts they have access to — even when the event carries no address of theirs. This reveals nothing new: the user submitted (or received) the transaction and already knows its contents.
+
+This admission is bounded:
+
+- It applies **only to contracts the user has a grant on**. A log emitted by a contract the user cannot otherwise see stays hidden, even if it appeared in one of their transactions (for example, an internal call into another organization's private contract).
+- It does **not** relax the ABI and dynamic-payload requirements. An event whose contract has no registered ABI, or that carries a dynamic non-indexed parameter without the contract's `events_allow_dynamic_payload` setting enabled, remains hidden — those protections guard against leaking addresses embedded in the payload, and they apply to participants too.
 
 ### Example: ERC-20 Transfer event
 
@@ -212,32 +223,36 @@ So "I listed Bob in `visibleTo`" does **not** by itself mean "Bob sees every eve
 
 ### How it works
 
-The sender includes a `visibleTo` array when submitting the transaction:
-
-**`eth_sendTransaction`** -- `visibleTo` is a field in the transaction object (params\[0\]):
+**Recommended: a top-level `visibleTo` field** on the JSON-RPC request (a sibling of `params`), on either send method. `privateFor` is accepted as an alias for Quorum/Tessera/Besu compatibility. Recipients may be **DIDs and/or Ethereum addresses** — an address is resolved to the DID it is linked to (fail-closed: an address with no linked identity is ignored, never widening visibility):
 
 ```json
 {
-  "method": "eth_sendTransaction",
-  "params": [{
-    "from": "0xabc...",
-    "to": "0xdef...",
-    "data": "0x...",
-    "visibleTo": ["did:privado:auditor1", "did:privado:bank2"]
-  }]
-}
-```
-
-**`eth_sendRawTransaction`** -- `visibleTo` is passed as a second parameter (since the raw transaction bytes cannot be modified):
-
-```json
-{
+  "jsonrpc": "2.0", "id": 1,
   "method": "eth_sendRawTransaction",
-  "params": ["0xf86c...", {"visibleTo": ["did:privado:auditor1"]}]
+  "params": ["0xf86c..."],
+  "visibleTo": ["did:privado:auditor1", "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"]
 }
 ```
 
-The proxy strips the `visibleTo` field before forwarding the transaction to the node, stores the rule in the database, and applies it during response filtering and explorer visibility.
+`privateFor` is an alias with identical behaviour (useful when migrating from Quorum/Tessera):
+
+```json
+{
+  "jsonrpc": "2.0", "id": 1,
+  "method": "eth_sendRawTransaction",
+  "params": ["0xf86c..."],
+  "privateFor": ["0x70997970C51812dc3A010C7d01b50e0d17dc79C8"]
+}
+```
+
+The top-level form works with standard Ethereum client libraries. For back-compat the field is also accepted **inside the params** — in the transaction object for `eth_sendTransaction` (params\[0\]), or as a second parameter for `eth_sendRawTransaction`:
+
+```json
+{"method":"eth_sendTransaction","params":[{"from":"0xabc...","to":"0xdef...","data":"0x...","visibleTo":["did:privado:auditor1"]}]}
+{"method":"eth_sendRawTransaction","params":["0xf86c...",{"visibleTo":["did:privado:auditor1"]}]}
+```
+
+All forms present on one request are combined (deduped, capped at 32 recipients). The proxy strips every `visibleTo`/`privateFor` field before forwarding to the node, resolves addresses to DIDs, stores the rule in the database, and applies it during response filtering and explorer visibility.
 
 ### Interaction with static event rules
 
@@ -327,7 +342,7 @@ A DID listed in `visibleTo` whose group does not allow the relevant method is de
 <Callout variant="warning" title="Not covered by response filtering">
   1. **Multi-party event stakeholder whitelists** -- Events that use a business identifier (e.g., `event PaymentInitiated(string indexed paymentIdentifier)`) require a per-event-ID whitelist of stakeholders (debtor bank, settlement bank, creditor bank). Without it, events with non-address indexed parameters are filtered out for all users. Requires a new data model, admin API, and on-chain lookup to resolve stakeholders dynamically.
 
-  2. **`eth_call` return data** -- responses are raw ABI-encoded bytes passed through unmodified; address-typed return values are not field-level redacted. Avoid returning sensitive addresses from view functions exposed to unauthorized callers.
+  2. **`eth_call` return data (residual cases)** -- address-typed return values from contracts with a **registered ABI** are now field-level redacted: an address the caller is not authorized to see is zeroed in the returned bytes. Two cases remain uncovered. (a) Contracts with **no registered ABI** pass their return through by default; set `ETH_CALL_DENY_WITHOUT_ABI=true` to blank these instead (this also blocks legitimate reads of unregistered contracts — a privacy-vs-usability choice). (b) Addresses returned only inside **dynamic or nested types** (`address[]`, structs, dynamic tuples) cause the whole return to be blanked (fail-closed) rather than precisely redacted. Register an ABI for any view function that returns an address to get precise field-level redaction.
 
   3. **Value inference for mixed public/private transactions** -- When a transaction involves one private address and one public address, the `value` field is stripped and the private side is replaced with `[PRIVATE]` in the block explorer. However, the transferred amount may still be inferable from the public address's balance deltas across adjacent blocks. Stripping the value removes the direct leakage path but is not a complete financial privacy guarantee. See [Privacy Requirements](/docs/security/privacy-requirements) for details.
 

@@ -49,6 +49,18 @@ if (( ${#missing[@]} )); then
 fi
 export BLOCK_EXPLORER_PATH CHAIN_INDEXER_PATH
 
+# Auto-include an optional local compose override. Passing -f above disables
+# Docker Compose's usual auto-merge of docker-compose.override.yml, so a local
+# override would otherwise only apply if hand-passed with a second -f. Picking
+# it up here keeps `make full-stack-dev` a single command while letting a dev
+# layer a CONFIG_FILE mount + extra env (operator token, Azure, …) on top.
+# Gitignored (docker-compose.*.override.yml); copy the .example to start.
+OVERRIDE_FILE="docker-compose.privacy.dev.override.yml"
+if [[ -f "$OVERRIDE_FILE" ]]; then
+  COMPOSE_ARGS+=(-f "$OVERRIDE_FILE")
+  echo "$(bold '==>') $(green "Including local compose override: $OVERRIDE_FILE")"
+fi
+
 echo "$(bold '==>') $(yellow 'Stopping any existing privacy stack')"
 docker compose "${COMPOSE_ARGS[@]}" down --remove-orphans 2>/dev/null || true
 
@@ -79,6 +91,11 @@ ensure_secret() {
 }
 
 ensure_secret PRIVACY_POSTGRES_PASSWORD        "$(openssl rand -hex 32)"
+# RD-1147: password for the restricted audit-DB runtime role (privacy_proxy_app).
+# The container's init hook (scripts/init-audit-db.sh) provisions the role with
+# this password; the backend's AUDIT_DATABASE_URL connects as it so the
+# access_logs append-only seal is enforced in dev.
+ensure_secret AUDIT_APP_PASSWORD               "$(openssl rand -hex 32)"
 ensure_secret INDEXER_POSTGRES_PASSWORD        "$(openssl rand -hex 32)"
 ensure_secret BLOCK_EXPLORER_POSTGRES_PASSWORD "$(openssl rand -hex 32)"
 ensure_secret REDIS_PASSWORD                   "$(openssl rand -hex 32)"

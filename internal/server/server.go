@@ -17,6 +17,7 @@ import (
 	"privacy-proxy/internal/compliance"
 	"privacy-proxy/internal/config"
 	"privacy-proxy/internal/db"
+	migrationsaudit "privacy-proxy/internal/db/migrations_audit"
 	"privacy-proxy/internal/disclosure"
 	"privacy-proxy/internal/ens"
 	"privacy-proxy/internal/explorer"
@@ -72,7 +73,22 @@ const (
 // Server represents the API server
 // Server represents the API server
 type Server struct {
-	db                   *db.DB
+	db *db.DB
+	// auditDB is the RUNTIME handle for the access_logs audit trail (RD-1147).
+	// auditDB is the RUNTIME handle for the separate append-only audit Postgres
+	// that holds access_logs (RD-1147). AUDIT_DATABASE_URL should connect as the
+	// restricted privacy_proxy_app role so the append-only seal bites; when unset
+	// it is DERIVED to "<name>_audit" (a separate DB, owner creds, so the seal is
+	// not enforced) — never main. It aliases db (main) only in the co-located case
+	// where the resolved DSN equals DATABASE_URL (dev/tests). All access_logs
+	// reads/writes go through this handle.
+	auditDB *db.DB
+	// auditAdminDB is the ADMIN/owner handle for the audit Postgres (RD-1147):
+	// runs audit-DB migrations and access_logs retention prune (DELETE). When
+	// AUDIT_ADMIN_DATABASE_URL is unset it is DERIVED to "<name>_audit" (a
+	// separate DB), never main; it aliases db (main) only when the resolved DSN
+	// equals DATABASE_URL (co-located dev/tests, where the pool is reused).
+	auditAdminDB         *db.DB
 	rbacAccessCtrl       *rbac.AccessController
 	proxy                *proxy.Proxy
 	privadoVerifier      PrivadoVerifier
@@ -99,8 +115,16 @@ type Server struct {
 	siemForwarder        *audit.SIEMForwarder
 	retentionCleaner     *audit.RetentionCleaner
 	auditIntegrityWorker *audit.IntegrityWorker
-	visibilityReconciler *VisibilityReconciler // M7 outbox drain
-	redisCloser          io.Closer
+	// auditIntegrityWorkerRBAC verifies the rbac_audit_log chain on the MAIN DB.
+	// RD-1147 ALWAYS splits the two chains across databases (access_logs in the
+	// audit DB, rbac_audit_log in main) and one verifier connection cannot span
+	// two databases — so the primary worker is scoped to the access_logs chain
+	// (audit DB) and this second worker covers rbac_audit_log (main). Both are
+	// created together when AUDIT_INTEGRITY_VERIFY_INTERVAL > 0; nil only when
+	// verification is disabled (interval 0).
+	auditIntegrityWorkerRBAC *audit.IntegrityWorker
+	visibilityReconciler     *VisibilityReconciler // M7 outbox drain
+	redisCloser              io.Closer
 	// RD-1112 async access-log auditing (nil when AUDIT_BUFFER_DIR unset).
 	auditBuffer       *buffer.Buffer
 	auditSealer       *sealer.Sealer
@@ -190,6 +214,9 @@ func (s *Server) Stop() {
 	if s.auditIntegrityWorker != nil {
 		s.auditIntegrityWorker.Stop()
 	}
+	if s.auditIntegrityWorkerRBAC != nil {
+		s.auditIntegrityWorkerRBAC.Stop()
+	}
 	if s.visibilityReconciler != nil {
 		s.visibilityReconciler.Stop()
 	}
@@ -217,6 +244,15 @@ func (s *Server) Stop() {
 	}
 	if s.redisCloser != nil {
 		s.redisCloser.Close()
+	}
+	// RD-1147: close the separate audit pools if (and only if) they are distinct
+	// handles from the main DB. When the audit DB is not separated they alias
+	// s.db and must not be double-closed.
+	if s.auditDB != nil && s.auditDB != s.db {
+		s.auditDB.Close()
+	}
+	if s.auditAdminDB != nil && s.auditAdminDB != s.db && s.auditAdminDB != s.auditDB {
+		s.auditAdminDB.Close()
 	}
 	if s.db != nil {
 		s.db.Close()
@@ -316,6 +352,98 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	if err != nil {
 		return nil, fmt.Errorf("failed to create database: %w", err)
 	}
+
+	// RD-1147: access_logs ALWAYS lives in a SEPARATE, always-on append-only
+	// audit database — the main DB no longer has an access_logs table at all
+	// (dropped by migration 068). There is NO fallback to main. Two DSNs, two
+	// roles:
+	//   * AUDIT_ADMIN_DATABASE_URL — admin/owner. Runs the LEAN audit migrations
+	//     (roles + access_logs + chain tables + append-only grants) at startup
+	//     and later the retention prune (DELETE, which the runtime role cannot).
+	//   * AUDIT_DATABASE_URL — RUNTIME. SHOULD connect as the restricted
+	//     privacy_proxy_app role so the append-only seal (INSERT+SELECT, no
+	//     UPDATE/DELETE) bites. Opened WITHOUT migrations — the runtime role
+	//     must never run DDL.
+	// When unset, both are DERIVED from DATABASE_URL as "<name>_audit" on the
+	// same server (config.deriveAuditDatabaseURL), reusing DATABASE_URL's owner
+	// credentials — the app connects to an already-provisioned DB and migrates
+	// it; the app NEVER runs CREATE DATABASE. In the derived-default case the
+	// runtime pool connects as the owner, so the seal is not enforced (see docs).
+	if cfg.AuditAdminDatabaseURL == "" || cfg.AuditDatabaseURL == "" {
+		database.Close()
+		return nil, fmt.Errorf("audit database URL unresolved: DATABASE_URL must be a parseable postgres:// URL so the <name>_audit default can be derived, or set AUDIT_ADMIN_DATABASE_URL / AUDIT_DATABASE_URL explicitly (RD-1147)")
+	}
+
+	// RD-1147 isolation guard: in production an audit DSN must never point at the
+	// main database. Unset DSNs derive a SEPARATE "<name>_audit" DB, so equality
+	// here can only be an explicit misconfiguration that would run the audit
+	// migrations against main and recreate access_logs there — silently defeating
+	// the isolation guarantee. Co-location stays allowed in dev/tests, where the
+	// pool is intentionally reused.
+	if cfg.Environment == "production" &&
+		(cfg.AuditDatabaseURL == cfg.DatabaseURL || cfg.AuditAdminDatabaseURL == cfg.DatabaseURL) {
+		database.Close()
+		return nil, fmt.Errorf("RD-1147: in production the audit database must be separate from the main database — AUDIT_DATABASE_URL / AUDIT_ADMIN_DATABASE_URL must not equal DATABASE_URL (leave them unset to derive a separate <name>_audit DB)")
+	}
+
+	// Admin/owner pool: open WITHOUT running the main migration FS (the audit DB
+	// must NOT get users/contracts/groups/rbac_audit_log/etc), then apply the
+	// lean audit-only migration set that builds the entire audit schema.
+	//
+	// RD-1147 connection-pool reuse: when an audit DSN resolves to the SAME
+	// database as DATABASE_URL (co-located deployments and the test harness,
+	// which point every DSN at one Postgres), REUSE the main pool instead of
+	// opening a second/third pool against the same server. Without this each
+	// Server holds up to 3× the connections on one Postgres and the full test
+	// suite exhausts max_connections ("sorry, too many clients already"). The
+	// append-only seal is not enforced in this mode anyway (owner credentials),
+	// consistent with the documented co-located/derived-default behaviour. The
+	// Close() logic already guards against double-closing a reused pool.
+	var auditAdminDB *db.DB
+	if cfg.AuditAdminDatabaseURL == cfg.DatabaseURL {
+		auditAdminDB = database
+	} else {
+		auditAdminDB, err = db.NewWithoutMigrate(cfg.AuditAdminDatabaseURL, db.WithPool(cfg.DBMaxOpenConns, cfg.DBMaxIdleConns, cfg.DBConnMaxLifetime))
+		if err != nil {
+			database.Close()
+			return nil, fmt.Errorf("failed to open audit admin database: %w", err)
+		}
+	}
+	if mErr := auditAdminDB.MigrateAuditOnly(context.Background(), migrationsaudit.FS); mErr != nil {
+		if auditAdminDB != database {
+			auditAdminDB.Close()
+		}
+		database.Close()
+		return nil, fmt.Errorf("failed to apply lean audit migrations: %w", mErr)
+	}
+
+	// Runtime pool: restricted role, NO migrations (it lacks DDL rights; the
+	// admin pool above already migrated the audit DB). Reuse the main or admin
+	// pool when the runtime DSN matches (see the pool-reuse note above).
+	var auditDB *db.DB
+	switch {
+	case cfg.AuditDatabaseURL == cfg.DatabaseURL:
+		auditDB = database
+	case cfg.AuditDatabaseURL == cfg.AuditAdminDatabaseURL:
+		auditDB = auditAdminDB
+	default:
+		auditDB, err = db.NewWithoutMigrate(cfg.AuditDatabaseURL, db.WithPool(cfg.DBMaxOpenConns, cfg.DBMaxIdleConns, cfg.DBConnMaxLifetime))
+		if err != nil {
+			if auditAdminDB != database {
+				auditAdminDB.Close()
+			}
+			database.Close()
+			return nil, fmt.Errorf("failed to open audit runtime database: %w", err)
+		}
+	}
+	if cfg.AuditDatabaseURL == cfg.AuditAdminDatabaseURL {
+		// Derived-default deployment (or an operator pointing both DSNs at the
+		// same owner identity): the runtime pool connects as the owner, so the
+		// INSERT-only seal is NOT enforced. Warn so a production deployment that
+		// wants the seal knows to set AUDIT_DATABASE_URL to the restricted role.
+		slog.Warn("audit runtime and admin DSNs are identical — the access_logs append-only seal is NOT enforced (runtime connects as the owner). Set AUDIT_DATABASE_URL to connect as the restricted privacy_proxy_app role to enforce the seal (RD-1147)")
+	}
+	slog.Info("access_logs isolated in separate audit database (RD-1147); lean audit schema migrated via admin pool")
 
 	var explorerSQL *explorer.Store
 	if cfg.ExplorerDatabaseURL != "" {
@@ -484,7 +612,12 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	zkRoleExtractor := auth.NewZKRoleExtractor(database)
 
 	// Initialize disclosure service
-	disclosureService := disclosure.NewService(database)
+	// RD-1147: the disclosure store reads the access_logs audit trail
+	// (GetActivityLogs / GetActivitySummary) from the audit DB while all other
+	// disclosure ops (grants, requests, reports, user lookups) stay on main. When
+	// the audit DB is not separated, auditDB == database and this is a
+	// transparent pass-through.
+	disclosureService := disclosure.NewService(newDisclosureAuditStore(database, auditDB))
 
 	// Initialize runtime tracer for cross-org isolation validation
 	runtimeTracer := tracer.NewRuntimeTracer(tracer.RuntimeTracerConfig{
@@ -508,6 +641,8 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 
 	s := &Server{
 		db:                 database,
+		auditDB:            auditDB,
+		auditAdminDB:       auditAdminDB,
 		rbacAccessCtrl:     rbacAccessCtrl,
 		proxy:              proxySvc,
 		privadoVerifier:    privadoVerifier,
@@ -553,17 +688,25 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	circuitBreaker := NewCircuitBreaker()
 	concurrencyLimiter := NewConcurrencyLimiter(cfg.MaxConcurrentRequests)
 
-	// Initialize JSON-RPC processor with dependencies
+	// Initialize JSON-RPC processor with dependencies. RD-1147: the basic
+	// LogAccess fallback (used only when the chained/buffered audit write fails)
+	// targets the audit DB too, so no access-log row ever lands in the main DB
+	// when the audit DB is separated. auditDB == database when not separated.
 	if runtimeTracer != nil {
-		s.jsonrpcProcessor = NewJSONRPCProcessorWithTracing(rbacAccessCtrl, rateLimiter, proxySvc, database, runtimeTracer, traceValidator, circuitBreaker, concurrencyLimiter, cfg.RPCAPIKey)
+		s.jsonrpcProcessor = NewJSONRPCProcessorWithTracing(rbacAccessCtrl, rateLimiter, proxySvc, auditDB, runtimeTracer, traceValidator, circuitBreaker, concurrencyLimiter, cfg.RPCAPIKey)
 	} else {
-		s.jsonrpcProcessor = NewJSONRPCProcessor(rbacAccessCtrl, rateLimiter, proxySvc, database, circuitBreaker, concurrencyLimiter, cfg.RPCAPIKey)
+		s.jsonrpcProcessor = NewJSONRPCProcessor(rbacAccessCtrl, rateLimiter, proxySvc, auditDB, circuitBreaker, concurrencyLimiter, cfg.RPCAPIKey)
 	}
 	s.jsonrpcProcessor.SetMetrics(m)
 	s.jsonrpcProcessor.SetTxVisibilityStore(database)
 	s.jsonrpcProcessor.SetDefaultRPCAPIKeyHeader(cfg.RPCAPIKeyHeader)
 	s.jsonrpcProcessor.SetEthCallTracing(cfg.RuntimeTracingEthCallEnabled, cfg.EthCallTraceTimeout)
 	s.jsonrpcProcessor.SetIntraOrgGrantTracing(cfg.RuntimeTracingIntraOrgGrantsEnabled)
+	// RD-1144: eth_call return-data field redaction reuses the explorer's
+	// DID-based visibility resolver (database satisfies it) so the RPC and
+	// explorer layers agree per (viewer, address).
+	s.jsonrpcProcessor.SetExplorerVisibilityResolver(database)
+	s.jsonrpcProcessor.SetEthCallDenyWithoutABI(cfg.EthCallDenyWithoutABI)
 
 	// Initialize compliance checker for travel rule enforcement
 	if cfg.EnableTravelRule {
@@ -588,8 +731,9 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		slog.Warn("travel rule compliance is DISABLED (ENABLE_TRAVEL_RULE=false) - value transfers will NOT be checked against thresholds or sanctions lists")
 	}
 
-	// Initialize enhanced audit: hash chain, SIEM forwarder, retention cleaner
-	hashChainSeed, err := database.GetLatestAccessLogHashForChain(context.Background(), cfg.AuditChainName)
+	// Initialize enhanced audit: hash chain, SIEM forwarder, retention cleaner.
+	// RD-1147: the access_logs chain lives in the audit DB — seed it from there.
+	hashChainSeed, err := auditDB.GetLatestAccessLogHashForChain(context.Background(), cfg.AuditChainName)
 	if err != nil {
 		slog.Warn("failed to seed hash chain from DB, starting fresh", "error", err)
 	}
@@ -638,7 +782,8 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	}
 
 	// Wire enhanced audit into JSON-RPC processor
-	s.jsonrpcProcessor.SetEnhancedAudit(database, hashChain, siemForwarder, cfg.AuditLogParams)
+	// RD-1147: access_logs writes (synchronous chained path) go to the audit DB.
+	s.jsonrpcProcessor.SetEnhancedAudit(auditDB, hashChain, siemForwarder, cfg.AuditLogParams)
 
 	// RD-1112: async access-log auditing. When AUDIT_BUFFER_DIR is set, the hot
 	// path appends each entry to a durable Pebble buffer and a single background
@@ -648,7 +793,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	if cfg.AuditBufferDir != "" {
 		auditBuf, bufErr := buffer.Open(cfg.AuditBufferDir)
 		if bufErr != nil {
-			return nil, fmt.Errorf("open audit buffer at %q: %w", cfg.AuditBufferDir, bufErr)
+			return nil, fmt.Errorf("async audit buffer init (AUDIT_BUFFER_DIR=%q): %w", cfg.AuditBufferDir, bufErr)
 		}
 		s.auditBuffer = auditBuf
 
@@ -660,7 +805,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 				slog.Error("audit sealer: corrupt buffered record skipped", "seq", seq, "error", err)
 				return nil
 			}
-			hash, err := database.SealBufferedAccessLog(ctx, hashChain, rec, seq, cfg.AuditChainName)
+			hash, err := auditDB.SealBufferedAccessLog(ctx, hashChain, rec, seq, cfg.AuditChainName)
 			if err != nil {
 				return err
 			}
@@ -697,7 +842,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 			return nil
 		}
 		highWater := func(ctx context.Context) (uint64, error) {
-			return database.GetMaxAccessLogBufferSeq(ctx, cfg.AuditChainName)
+			return auditDB.GetMaxAccessLogBufferSeq(ctx, cfg.AuditChainName)
 		}
 		s.auditSealer = sealer.New(auditBuf, sealFn, highWater, sealer.Config{})
 		sealerCtx, sealerCancel := context.WithCancel(context.Background())
@@ -717,7 +862,10 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	var checkpointReader audit.CheckpointReader
 	if cfg.AuditCheckpointKey != "" {
 		checkpointSigner = audit.NewHMACSigner("default", []byte(cfg.AuditCheckpointKey))
-		adapter := checkpointAdapter{db: database}
+		// RD-1147: checkpoints roll up the access_logs chain, which lives in the
+		// audit DB — sign/read them there. audit_chain_checkpoint is append-only
+		// (SELECT+INSERT), which the runtime role holds.
+		adapter := checkpointAdapter{db: auditDB}
 		checkpointReader = adapter
 		s.auditCheckpointWorker = audit.NewCheckpointWorker(adapter, checkpointSigner,
 			[]audit.ChainName{audit.ChainName(cfg.AuditChainName)}, cfg.AuditCheckpointInterval)
@@ -727,7 +875,10 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		slog.Info("audit chain checkpointing enabled (RD-1112 #8)", "interval", cfg.AuditCheckpointInterval)
 	}
 
-	// Initialize retention cleaner
+	// Initialize retention cleaner. RD-1147: the store routes access_logs prune
+	// (needs DELETE) to the audit ADMIN pool; all other prune targets + the
+	// audit-of-the-audit rbac_audit_log row stay on main. When the audit DB is
+	// not separated, auditAdminDB == database and this is a pass-through.
 	retentionCleaner := audit.NewRetentionCleaner(audit.RetentionConfig{
 		AccessLogs:       cfg.RetentionAccessLogs,
 		ComplianceLogs:   cfg.RetentionComplianceLogs,
@@ -735,7 +886,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		TravelRecords:    cfg.RetentionTravelRecords,
 		CleanupInterval:  cfg.RetentionCleanupInterval,
 		MaxAccessLogRows: cfg.MaxAccessLogRows,
-	}, database, cfg.EnableTravelRule)
+	}, newRetentionAuditStore(database, auditAdminDB), cfg.EnableTravelRule)
 	s.retentionCleaner = retentionCleaner
 	slog.Info("retention cleaner started",
 		"access", cfg.RetentionAccessLogs,
@@ -769,29 +920,51 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	// POST to AUDIT_TAMPER_WEBHOOK_URL. The SSRF guard on the webhook
 	// URL is enforced in config.Validate.
 	if cfg.AuditIntegrityVerifyInterval > 0 {
-		verifier := audit.NewVerifier(database.Conn(), database)
-		// RD-1112 #8: enable the signed-checkpoint tail-truncation guard.
-		if checkpointSigner != nil && checkpointReader != nil {
-			verifier.SetCheckpointVerification(checkpointReader, checkpointSigner)
-		}
-		notifiers := &audit.MultiNotifier{}
-		if siemForwarder != nil {
-			notifiers.Notifiers = append(notifiers.Notifiers, &audit.SIEMNotifier{Forwarder: siemForwarder})
-		}
-		if cfg.AuditTamperWebhookURL != "" {
-			webhookNotifier, whErr := audit.NewWebhookNotifier(cfg.AuditTamperWebhookURL)
-			if whErr != nil {
-				slog.Error("audit tamper webhook init failed; continuing without webhook notification", "err", whErr)
-			} else if webhookNotifier != nil {
-				notifiers.Notifiers = append(notifiers.Notifiers, webhookNotifier)
+		// Notifiers are shared by every worker (SIEM + optional tamper webhook).
+		buildNotifiers := func() *audit.MultiNotifier {
+			n := &audit.MultiNotifier{}
+			if siemForwarder != nil {
+				n.Notifiers = append(n.Notifiers, &audit.SIEMNotifier{Forwarder: siemForwarder})
 			}
+			if cfg.AuditTamperWebhookURL != "" {
+				webhookNotifier, whErr := audit.NewWebhookNotifier(cfg.AuditTamperWebhookURL)
+				if whErr != nil {
+					slog.Error("audit tamper webhook init failed; continuing without webhook notification", "err", whErr)
+				} else if webhookNotifier != nil {
+					n.Notifiers = append(n.Notifiers, webhookNotifier)
+				}
+			}
+			return n
 		}
-		s.auditIntegrityWorker = audit.NewIntegrityWorker(verifier, notifiers, audit.IntegrityWorkerConfig{
+
+		// RD-1147: access_logs and rbac_audit_log now ALWAYS live in different
+		// databases (access_logs in the audit DB, rbac_audit_log in main), and a
+		// single verifier connection cannot span two databases. So scope the
+		// primary worker to the access_logs chain (audit DB) and run a second
+		// worker for the rbac_audit_log chain on main.
+		//
+		// access_logs chain verifier — audit DB. RD-1112 #8 checkpoint guard
+		// applies to this chain.
+		accessVerifier := audit.NewVerifier(auditDB.Conn(), auditDB)
+		if checkpointSigner != nil && checkpointReader != nil {
+			accessVerifier.SetCheckpointVerification(checkpointReader, checkpointSigner)
+		}
+		s.auditIntegrityWorker = audit.NewIntegrityWorker(accessVerifier, buildNotifiers(), audit.IntegrityWorkerConfig{
 			Interval:   cfg.AuditIntegrityVerifyInterval,
 			Violations: m.AuditChainIntegrityViolations,
+			Chains:     []audit.ChainName{audit.ChainAccessLogs},
 		})
 		s.auditIntegrityWorker.Start(context.Background())
-		slog.Info("audit chain integrity verifier started",
+
+		// rbac_audit_log chain verifier — main DB.
+		rbacVerifier := audit.NewVerifier(database.Conn(), database)
+		s.auditIntegrityWorkerRBAC = audit.NewIntegrityWorker(rbacVerifier, buildNotifiers(), audit.IntegrityWorkerConfig{
+			Interval:   cfg.AuditIntegrityVerifyInterval,
+			Violations: m.AuditChainIntegrityViolations,
+			Chains:     []audit.ChainName{audit.ChainRBACAuditLog},
+		})
+		s.auditIntegrityWorkerRBAC.Start(context.Background())
+		slog.Info("audit chain integrity verifiers started (RD-1147: access_logs on audit DB, rbac_audit_log on main DB)",
 			"interval", cfg.AuditIntegrityVerifyInterval,
 			"siem_notify", siemForwarder != nil,
 			"webhook_notify", cfg.AuditTamperWebhookURL != "")
@@ -1243,12 +1416,14 @@ func (s *Server) getLogs(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	logs, err := s.db.GetAccessLogs(ctx, filter)
+	// RD-1147: access_logs reads route to the audit DB (== main when not split).
+	auditDB := s.accessLogDB()
+	logs, err := auditDB.GetAccessLogs(ctx, filter)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read access logs"})
 		return
 	}
-	total, err := s.db.CountAccessLogs(ctx, filter)
+	total, err := auditDB.CountAccessLogs(ctx, filter)
 	if err != nil {
 		// Don't fail the whole request if the count fails; return -1 as a
 		// sentinel so the UI can fall back to "load more".
@@ -1745,6 +1920,9 @@ type TestRequestResponse struct {
 }
 
 func (s *Server) handleTestRequest(c *gin.Context) {
+	// RD-1147: diagnostic access-log writes go to the audit DB (== main when not
+	// split). accessLogDB() also guards lightweight test Server literals.
+	auditDB := s.accessLogDB()
 	var input TestRequestInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		// gin validator messages name struct fields — that's fine for a
@@ -1786,7 +1964,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 	}
 	result, err := s.rbacAccessCtrl.CheckAccess(c.Request.Context(), accessReq)
 	if err != nil {
-		s.db.LogAccess(c.Request.Context(), testIdentity, input.Method, http.StatusInternalServerError, c.ClientIP())
+		auditDB.LogAccess(c.Request.Context(), testIdentity, input.Method, http.StatusInternalServerError, c.ClientIP())
 		// CheckAccess errors expose RBAC internals (DB shape, cache
 		// state, store-layer codes) — operator-only. RD-934.
 		slog.Error("test-request: CheckAccess errored", "identity", testIdentity, "method", input.Method, "err", err)
@@ -1797,7 +1975,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 		return
 	}
 	if !result.Allowed {
-		s.db.LogAccess(c.Request.Context(), testIdentity, input.Method, http.StatusForbidden, c.ClientIP())
+		auditDB.LogAccess(c.Request.Context(), testIdentity, input.Method, http.StatusForbidden, c.ClientIP())
 		// AccessCheckResult.Reason is operator-only by contract (see
 		// the type's doc-comment in internal/rbac/models.go). The
 		// previous behaviour echoed it verbatim, which would leak the
@@ -1859,7 +2037,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 				return
 			}
 			if !compResult.Allowed {
-				s.db.LogAccess(c.Request.Context(), testIdentity, input.Method, http.StatusForbidden, c.ClientIP())
+				auditDB.LogAccess(c.Request.Context(), testIdentity, input.Method, http.StatusForbidden, c.ClientIP())
 				c.JSON(http.StatusForbidden, TestRequestResponse{
 					Error:    "compliance denied: " + compResult.Reason,
 					Identity: testIdentity,
@@ -1884,7 +2062,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 	latency := time.Since(start).Milliseconds()
 
 	if err != nil {
-		s.db.LogAccess(c.Request.Context(), testIdentity, input.Method, http.StatusBadGateway, c.ClientIP())
+		auditDB.LogAccess(c.Request.Context(), testIdentity, input.Method, http.StatusBadGateway, c.ClientIP())
 		c.JSON(http.StatusBadGateway, TestRequestResponse{
 			Error:     err.Error(),
 			LatencyMs: latency,
@@ -1896,7 +2074,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 	// Parse response
 	var rpcResp proxy.JSONRPCResponse
 	if err := json.Unmarshal(respBody, &rpcResp); err != nil {
-		s.db.LogAccess(c.Request.Context(), testIdentity, input.Method, http.StatusBadGateway, c.ClientIP())
+		auditDB.LogAccess(c.Request.Context(), testIdentity, input.Method, http.StatusBadGateway, c.ClientIP())
 		c.JSON(http.StatusBadGateway, TestRequestResponse{
 			Error:     "invalid JSON-RPC response",
 			LatencyMs: latency,
@@ -1906,7 +2084,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 	}
 
 	// Log successful access
-	s.db.LogAccess(c.Request.Context(), testIdentity, input.Method, statusCode, c.ClientIP())
+	auditDB.LogAccess(c.Request.Context(), testIdentity, input.Method, statusCode, c.ClientIP())
 
 	// Return JSON-RPC response (may contain RPC-level error, that's fine - HTTP 200)
 	if rpcResp.Error != nil {

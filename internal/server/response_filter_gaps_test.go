@@ -792,6 +792,47 @@ func TestFilterBlockReceipts_EmptyBlock(t *testing.T) {
 	}
 }
 
+// TestFilterBlockReceipts_ParticipantAddresslessOwnTxLog_GAP_RD1162 pins a KNOWN
+// GAP: eth_getBlockReceipts still uses the simple topic-address filter
+// (filterReceiptLogs), NOT the event-rules/participant path. So a participant's
+// own address-less log (e.g. PaymentCompleted, keyed by a business identifier)
+// is NOT admitted here — unlike eth_getLogs / eth_getTransactionReceipt after
+// RD-1162. The participant keeps the receipt envelope but the address-less log
+// is stripped.
+//
+// GAP RD-1162: fix = migrate eth_getBlockReceipts to FilterReceiptLogsWithEventRules
+// (the event-rules path). When fixed this test will see the log admitted — update
+// the expectation to 1 and move it out of the gap section.
+func TestFilterBlockReceipts_ParticipantAddresslessOwnTxLog_GAP_RD1162(t *testing.T) {
+	userAddr := "0xabc1234567890123456789012345678901234567"
+	contract := "0xcontract0000000000000000000000000000001"
+	// Address-less log: topics = [event signature, indexed bytes32 record key];
+	// neither is the viewer's address. userAddr is the tx sender (participant).
+	eventTopic0 := "0xddd0000000000000000000000000000000000000000000000000000000000000"
+	recordKey := "0x1111111111111111111111111111111111111111111111111111111111111111"
+	response := `{"jsonrpc":"2.0","id":1,"result":[{"from":"` + userAddr + `","to":"` + contract +
+		`","status":"0x1","transactionHash":"0xdeadbeef","logs":[{"address":"` + contract +
+		`","topics":["` + eventTopic0 + `","` + recordKey + `"],"transactionHash":"0xdeadbeef"}],"logsBloom":"0xfull"}]}`
+
+	got := FilterBlockReceipts([]byte(response), []string{userAddr})
+	var resp struct {
+		Result []struct {
+			Logs []json.RawMessage `json:"logs"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(got, &resp); err != nil {
+		t.Fatalf("output not valid JSON: %v", err)
+	}
+	if len(resp.Result) != 1 {
+		t.Fatalf("participant's receipt must be kept, got %d receipts", len(resp.Result))
+	}
+	if len(resp.Result[0].Logs) != 0 {
+		t.Errorf("GAP RD-1162: eth_getBlockReceipts does not yet admit a participant's "+
+			"address-less own-tx log; expected 0 logs (documented gap), got %d. "+
+			"If this is now 1, the gap was fixed — migrate getBlockReceipts to the "+
+			"event-rules path and update this test.", len(resp.Result[0].Logs))
+	}
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Group 7: topicMatchesAddress — additional edge cases

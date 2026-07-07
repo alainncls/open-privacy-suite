@@ -36,7 +36,7 @@ Both layers work in concert. A viewer who bypasses the block explorer and querie
 | `inputData` (calldata) | Hidden (omitted) |
 | `nonce` | Hidden (omitted) — prevents transaction-count fingerprinting of the sender |
 | `error` / `revertReason` | Hidden (omitted) |
-| `contractAddress` (deploy txs) | See known limitations below |
+| `contractAddress` (deploy txs) | `[PRIVATE]` (revealed only to the deployer or a viewer with access to the contract) |
 | Gas parameters (`gasUsed`, `gasPrice`, etc.) | Visible — see known limitations below |
 
 When both the sender and receiver of a transaction are private, the transaction is dropped from the response entirely. A viewer cannot determine that the transaction exists.
@@ -215,7 +215,7 @@ are NEVER revealed by the flag, only the existence and amount of the row.
 | `bothHidden` tx (both `from` and `to` Hidden/Redacted to admin) | drop | keep + `[PRIVATE]` / `[PRIVATE]`, value preserved, timing visible |
 | `bothHidden` token transfer | drop | keep + `[PRIVATE]` / `[PRIVATE]`, amount preserved |
 | `bothHidden` internal tx | drop | keep + `[PRIVATE]` / `[PRIVATE]`, value preserved |
-| Contract deployment by Hidden deployer | drop | keep + `[PRIVATE]` deployer, contract address visible, value preserved |
+| Contract deployment by Hidden deployer | drop | keep + `[PRIVATE]` deployer, contract address `[PRIVATE]` (unless the admin has org access to it), value preserved |
 
 Field-level redaction from the earlier matrix still applies on top of the
 admin flag: addresses stay `[PRIVATE]`, calldata stays stripped, nonces
@@ -308,11 +308,11 @@ any one of them is a privacy or UX regression:
 
 The following limitations are known and accepted in the current release. They are documented here so operators can make informed decisions about their deployment.
 
-### 1. Contract deployment: deployed address visible when deployer is private
+### 1. Contract deployment address
 
-Some deploy-transaction metadata (e.g. the created contract address) is not redacted in the current release.
+For a top-level `CREATE` deployment, the receipt's `contractAddress` is field-level redacted: an unauthorized viewer sees `[PRIVATE]`, while the deployer (and viewers with access to the contract) see the real address. Contracts deployed through a factory or `CREATE2` do not carry a `contractAddress` on the transaction receipt — their address can instead appear in event logs or internal transactions, which apply their own field-level redaction.
 
-**Mitigation:** Register deployed contracts to the deployer's org so their activity is access-controlled.
+**Operator note:** Register deployed contracts to the deployer's organization so the contract resolves as private to outsiders and its subsequent activity is access-controlled.
 
 ### 2. Gas parameters are not hidden
 

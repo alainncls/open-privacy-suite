@@ -101,7 +101,8 @@ export default function ComplianceConfig() {
     !config ||
     enabled !== config.enabled ||
     thresholdFiat !== String(config.threshold_fiat) ||
-    unknownPricePolicy !== (config.unknown_price_policy || 'forbidden');
+    unknownPricePolicy !== (config.unknown_price_policy || 'forbidden') ||
+    enforcementMode !== (config.enforcement_mode || 'enforce');
 
   // Warn before a full reload / tab close while there are unsaved changes —
   // compliance enablement is security-relevant and silently losing a toggle
