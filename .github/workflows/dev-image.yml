@@ -108,7 +108,13 @@ jobs:
           file: Dockerfile.backend
           target: dev
           push: true
-          platforms: linux/amd64,linux/arm64
+          # amd64-only. Dev images target amd64 test infra; building arm64 here
+          # means QEMU emulation, and the frontend's `npm rebuild esbuild` crashes
+          # under emulated arm64 (SIGILL / exit 132). Keep the pair arch-consistent
+          # and fast. For native arm64, switch both jobs to per-arch runners
+          # (ubuntu-24.04 + ubuntu-24.04-arm) with a manifest merge — that would
+          # also fix release.yml's frontend build.
+          platforms: linux/amd64
           tags: gatewayfm/privacy-proxy-backend:${{ needs.prep.outputs.tag }}
           labels: |
             org.opencontainers.image.title=privacy-proxy-backend (DEV / mock-auth — NOT FOR PRODUCTION)
@@ -159,7 +165,9 @@ jobs:
           file: frontend/Dockerfile
           target: prod
           push: true
-          platforms: linux/amd64,linux/arm64
+          # amd64-only — see the backend job's note. This is the build that hits
+          # the QEMU arm64 SIGILL via `npm rebuild esbuild` (exit 132).
+          platforms: linux/amd64
           tags: gatewayfm/privacy-proxy-frontend:${{ needs.prep.outputs.tag }}
           labels: |
             org.opencontainers.image.title=privacy-proxy-frontend (DEV / mock-login — NOT FOR PRODUCTION)
