@@ -19,7 +19,7 @@ type APIError struct {
 
 // APIMessage is the uniform success envelope of respondMessage/respondDeleted.
 type APIMessage struct {
-	Message string `json:"message" example:"address unlinked successfully"`
+	Message string `json:"message" example:"operation completed"`
 }
 
 // EthLinkVerifyResponse is the success body of POST /api/v1/eth/link/verify.

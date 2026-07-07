@@ -49,11 +49,15 @@ type ApproveDisclosureRequestBody struct {
 // ---- Response bodies (mirror the gin.H shapes) ----
 
 // DisclosureStatusResponse is the body of the status-only admin/user actions
-// that reply with a single {"status": "..."} object: deleteDisclosureRequest
-// ("deleted"), adminRevokeDisclosureGrant / revokeDisclosureRequest
-// ("revoked"), and rejectDisclosureRequest ("rejected").
+// that reply with a single {"status": "..."} object. The concrete value is
+// operation-specific: deleteDisclosureRequest returns "deleted",
+// adminRevokeDisclosureGrant / revokeDisclosureRequest return "revoked", and
+// rejectDisclosureRequest returns "rejected". No field-level example is set so
+// the single value does not bleed a wrong status onto the other operations that
+// share this shape; the per-operation @Success description states the actual
+// value, and the enum below documents the full domain.
 type DisclosureStatusResponse struct {
-	Status string `json:"status" example:"revoked"`
+	Status string `json:"status" enums:"deleted,revoked,rejected"`
 }
 
 // DisclosureCheckAccessResponse is the body of GET

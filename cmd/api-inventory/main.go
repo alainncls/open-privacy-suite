@@ -72,7 +72,15 @@ func main() {
 	for m := range methodTotals {
 		methods = append(methods, m)
 	}
-	sort.Slice(methods, func(i, j int) bool { return methodTotals[methods[i]] > methodTotals[methods[j]] })
+	sort.Slice(methods, func(i, j int) bool {
+		// Tie-break by name: several methods share a count (the .Any()
+		// mounts), and without this the order is map-iteration randomness —
+		// which the CI drift check (regenerate + git diff) rightly rejects.
+		if methodTotals[methods[i]] != methodTotals[methods[j]] {
+			return methodTotals[methods[i]] > methodTotals[methods[j]]
+		}
+		return methods[i] < methods[j]
+	})
 	var parts []string
 	for _, m := range methods {
 		parts = append(parts, fmt.Sprintf("%s %d", m, methodTotals[m]))

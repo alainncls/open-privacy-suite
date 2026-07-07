@@ -1586,11 +1586,11 @@ func (s *Server) lookupContractByAddress(c *gin.Context) {
 // GET /orgs/:org_id/contracts/grant-summary
 //
 // @Summary      Get contract grant summary
-// @Description  Returns the grant count and assigned group names aggregated across the organization's contracts. Scoped to {org_id}; a tier-2 admin can only read their own org.
+// @Description  Returns, keyed by contract ID, the grant count and assigned group names for each of the organization's contracts that has at least one grant. Scoped to {org_id}; a tier-2 admin can only read their own org.
 // @Tags         Admin: RBAC
 // @Produce      json
 // @Param        org_id path string true "Organization ID"
-// @Success      200 {object} rbac.ContractGrantSummary
+// @Success      200 {object} map[string]rbac.ContractGrantSummary "grant summary keyed by contract ID"
 // @Failure      401 {object} APIError "missing or invalid admin token"
 // @Failure      403 {object} APIError "operator token cannot read tenant data, or caller is out of org scope"
 // @Failure      500 {object} APIError
