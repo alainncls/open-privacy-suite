@@ -56,6 +56,7 @@
     th { color: var(--muted); font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; background: #fbfcfe; }
     tr:last-child td { border-bottom: 0; }
     code { background: #eef1f7; border-radius: 4px; padding: 1px 5px; font-size: .92em; }
+    pre { margin: 10px 0 18px; padding: 14px; background: #111827; color: #eef4ff; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; font-size: .9rem; }
     .pill { display: inline-flex; border-radius: 999px; padding: 3px 8px; font-size: .78rem; font-weight: 700; white-space: nowrap; }
     .done { background: var(--green-bg); color: var(--green); }
     .critical { background: var(--red-bg); color: var(--red); }
@@ -131,6 +132,23 @@
           <tr><td><span class="pill medium">Medium</span></td><td>Confirm inbound contribution policy enforcement.</td><td>DCO is documented; CI enforcement is a maintainer decision.</td></tr>
         </tbody>
       </table>
+    </section>
+
+    <section>
+      <h2>Prompts To Run Next</h2>
+      <p>Use these prompts as task briefs. Each prompt should produce either a focused PR or a written decision record.</p>
+      <h3>Legal notice, security contact, and inbound policy</h3>
+      <pre>Take the current OSS readiness branch for gateway-fm/privacy-proxy. Verify the public source-only Apache-2.0 legal artifacts: LICENSE, NOTICE, SECURITY.md, CONTRIBUTING.md, CODE_OF_CONDUCT.md, GOVERNANCE.md, README license text, and package metadata. Confirm the correct copyright holder, security contact, and inbound contribution posture. Make only minimal public-source-readiness edits and list any remaining legal decisions that require counsel.</pre>
+      <h3>Gateway sibling repositories</h3>
+      <pre>Audit gateway-fm/chain-indexer and gateway-fm/block-explorer for source-only Apache-2.0 publication readiness. Check LICENSE, NOTICE, README license text, package metadata, third-party notices, generated code provenance, secrets, private links, CI behavior for public forks, and image/binary release blockers. Produce a short blocker list and minimal PR-ready fixes.</pre>
+      <h3>Wallet emulator submodule decision</h3>
+      <pre>Determine whether gateway-fm/wallet-emulator-js can be made public under an Apache-compatible license before privacy-proxy is public. If yes, prepare the minimum license/notice/metadata changes in that repo. If no, prepare a privacy-proxy PR that removes or replaces the submodule and updates docs/tests that refer to it.</pre>
+      <h3>Public-fork CI hardening</h3>
+      <pre>Review .github/workflows/privacy-bypass.yml and any cross-repo CI assumptions for public-fork safety. Make the workflow skip or clearly gate private sibling-repo checkouts when CROSS_REPO_READ_TOKEN is unavailable, while preserving manual/internal coverage. Keep changes minimal and document how maintainers should run the full privacy-mode test.</pre>
+      <h3>Public docs and internal-reference scrub</h3>
+      <pre>Scan README.md, docs/, site/, .github/, scripts/, and tracked config for private Linear URLs, internal roadmap language, and unnecessary RD-XXXX references. Do not remove useful technical context. Propose or make low-risk wording changes that make the repo public-friendly, and leave a separate list of references that should stay because they are migrations, tests, or useful historical identifiers.</pre>
+      <h3>Binary and container release licensing</h3>
+      <pre>Prepare the pre-release compliance plan for official binaries and Docker images. Generate or specify SBOMs for Go, npm, Solidity, submodules, and container base images. Identify LGPL/GPL/MPL/CC obligations, especially go-ethereum and native rapidsnark, and update THIRD_PARTY_NOTICES.md with scanner-backed data. Do not publish images or binaries as part of this task.</pre>
     </section>
 
     <section>

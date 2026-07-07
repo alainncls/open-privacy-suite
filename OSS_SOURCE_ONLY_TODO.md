@@ -29,6 +29,46 @@ This checklist consolidates `OSS_AUDIT-GPT.md` and `OSS_AUDIT_GLM.md` into the f
 - [ ] Decide git-history email posture: accept as normal OSS attribution or rewrite before public launch.
 - [ ] Confirm inbound contribution policy: DCO is documented; add CI enforcement if required.
 
+## Prompts To Run Next
+
+Use these prompts as task briefs. Each prompt should produce either a focused PR or a written decision record.
+
+### Legal notice, security contact, and inbound policy
+
+```text
+Take the current OSS readiness branch for gateway-fm/privacy-proxy. Verify the public source-only Apache-2.0 legal artifacts: LICENSE, NOTICE, SECURITY.md, CONTRIBUTING.md, CODE_OF_CONDUCT.md, GOVERNANCE.md, README license text, and package metadata. Confirm the correct copyright holder, security contact, and inbound contribution posture. Make only minimal public-source-readiness edits and list any remaining legal decisions that require counsel.
+```
+
+### Gateway sibling repositories
+
+```text
+Audit gateway-fm/chain-indexer and gateway-fm/block-explorer for source-only Apache-2.0 publication readiness. Check LICENSE, NOTICE, README license text, package metadata, third-party notices, generated code provenance, secrets, private links, CI behavior for public forks, and image/binary release blockers. Produce a short blocker list and minimal PR-ready fixes.
+```
+
+### Wallet emulator submodule decision
+
+```text
+Determine whether gateway-fm/wallet-emulator-js can be made public under an Apache-compatible license before privacy-proxy is public. If yes, prepare the minimum license/notice/metadata changes in that repo. If no, prepare a privacy-proxy PR that removes or replaces the submodule and updates docs/tests that refer to it.
+```
+
+### Public-fork CI hardening
+
+```text
+Review .github/workflows/privacy-bypass.yml and any cross-repo CI assumptions for public-fork safety. Make the workflow skip or clearly gate private sibling-repo checkouts when CROSS_REPO_READ_TOKEN is unavailable, while preserving manual/internal coverage. Keep changes minimal and document how maintainers should run the full privacy-mode test.
+```
+
+### Public docs and internal-reference scrub
+
+```text
+Scan README.md, docs/, site/, .github/, scripts/, and tracked config for private Linear URLs, internal roadmap language, and unnecessary RD-XXXX references. Do not remove useful technical context. Propose or make low-risk wording changes that make the repo public-friendly, and leave a separate list of references that should stay because they are migrations, tests, or useful historical identifiers.
+```
+
+### Binary and container release licensing
+
+```text
+Prepare the pre-release compliance plan for official binaries and Docker images. Generate or specify SBOMs for Go, npm, Solidity, submodules, and container base images. Identify LGPL/GPL/MPL/CC obligations, especially go-ethereum and native rapidsnark, and update THIRD_PARTY_NOTICES.md with scanner-backed data. Do not publish images or binaries as part of this task.
+```
+
 ## Before First Official Binary/Image Release
 
 - [ ] Generate complete SBOMs for source, binaries, and container images.
