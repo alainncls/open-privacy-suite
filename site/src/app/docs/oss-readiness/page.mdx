@@ -90,6 +90,32 @@ Scan README.md, docs/, site/, .github/, scripts/, and tracked config for private
 Prepare the pre-release compliance plan for official binaries and Docker images. Generate or specify SBOMs for Go, npm, Solidity, submodules, and container base images. Identify LGPL/GPL/MPL/CC obligations, especially go-ethereum and native rapidsnark, and update THIRD_PARTY_NOTICES.md with scanner-backed data. Do not publish images or binaries as part of this task.
 ```
 
+## Prompts To Run In Each Repository
+
+### `gateway-fm/privacy-proxy`
+
+```text
+You are in gateway-fm/privacy-proxy. Work from the latest main plus the OSS readiness branch context. Finish the minimal source-only Apache-2.0 readiness path without broad source refactors. Verify LICENSE, NOTICE, SECURITY.md, CONTRIBUTING.md, CODE_OF_CONDUCT.md, GOVERNANCE.md, THIRD_PARTY_NOTICES.md, README license text, npm metadata, Solidity SPDX identifiers, .gitignore audit-report hygiene, .gitmodules URLs, public-fork CI behavior, .mcp.json posture, RD/internal-reference posture, and sibling-repo assumptions. Produce a small PR-ready commit stack and a final blocker list limited to items that still require legal or maintainer decisions.
+```
+
+### `gateway-fm/chain-indexer`
+
+```text
+You are in gateway-fm/chain-indexer on latest main. Audit and prepare the repository for source-only Apache-2.0 publication coordinated with gateway-fm/privacy-proxy. Check for missing or conflicting LICENSE, NOTICE, SECURITY.md, CONTRIBUTING.md, CODE_OF_CONDUCT.md, GOVERNANCE.md, THIRD_PARTY_NOTICES.md, README license text, package/module metadata, generated protobuf provenance, checked-in secrets, private URLs, internal audit files, submodules, CI behavior for public forks, and binary/container release blockers. Make only minimal public-source-readiness edits and produce a concise remaining blocker list. Do not publish binaries or images.
+```
+
+### `gateway-fm/block-explorer`
+
+```text
+You are in gateway-fm/block-explorer on latest main. Audit and prepare the repository for source-only Apache-2.0 publication coordinated with gateway-fm/privacy-proxy. Check LICENSE, NOTICE, SECURITY.md, CONTRIBUTING.md, CODE_OF_CONDUCT.md, GOVERNANCE.md, THIRD_PARTY_NOTICES.md, README/package metadata, frontend/backend dependency licenses, generated artifacts, environment examples, private service URLs, secrets, internal roadmap references, public-fork CI behavior, and privacy-mode assumptions that depend on chain-indexer or privacy-proxy. Make minimal PR-ready edits and list any blockers for source publication separately from binary/container blockers.
+```
+
+### `gateway-fm/wallet-emulator-js`
+
+```text
+You are in gateway-fm/wallet-emulator-js on latest main. Decide whether this repo can be published or referenced publicly as part of the privacy-proxy source-only Apache-2.0 launch. Verify ownership, LICENSE, NOTICE, README license text, package metadata, third-party notices, dependency licenses, generated files, secrets, private URLs, CI, and release artifacts. If it can be public, prepare minimal Apache-compatible readiness commits. If it cannot be public, write the exact privacy-proxy change needed to remove or replace the submodule and any docs/tests that depend on it.
+```
+
 ## Gateway Repositories To Add To The Apache Plan
 
 | Repository | Source posture |
