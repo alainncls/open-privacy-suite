@@ -12,6 +12,7 @@ This checklist consolidates `OSS_AUDIT-GPT.md` and `OSS_AUDIT_GLM.md` into the f
 - [x] Add `SECURITY.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, and `GOVERNANCE.md`.
 - [x] Ignore internal audit report filenames so they are not accidentally committed.
 - [x] Switch `tools/wallet-emulator-js` submodule URL from SSH to public HTTPS.
+- [x] Align project-owned Solidity SPDX identifiers with Apache-2.0.
 - [x] Remove accidental `.agents` gitlink on the base hygiene branch.
 
 ## Must Finish Before Making The Source Repo Public
