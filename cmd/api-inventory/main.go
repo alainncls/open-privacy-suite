@@ -72,7 +72,15 @@ func main() {
 	for m := range methodTotals {
 		methods = append(methods, m)
 	}
-	sort.Slice(methods, func(i, j int) bool { return methodTotals[methods[i]] > methodTotals[methods[j]] })
+	sort.Slice(methods, func(i, j int) bool {
+		// Alphabetical tie-break: map iteration order is random, and equal
+		// counts would otherwise reorder between runs, tripping the CI
+		// drift check on an unchanged API surface.
+		if methodTotals[methods[i]] != methodTotals[methods[j]] {
+			return methodTotals[methods[i]] > methodTotals[methods[j]]
+		}
+		return methods[i] < methods[j]
+	})
 	var parts []string
 	for _, m := range methods {
 		parts = append(parts, fmt.Sprintf("%s %d", m, methodTotals[m]))
