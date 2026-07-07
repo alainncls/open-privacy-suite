@@ -1,12 +1,12 @@
 # RD-915 — runtime tracing for `eth_call`: design decisions
 
-Compiled 2026-05-07. Untracked until reviewed; promote to tracked once the team signs off.
+Compiled 2026-05-07.
 
 Sister of `docs/rd-855-behavioral-shifts.md` — the precedent for per-ticket design rationale.
 
 ## Problem (one paragraph)
 
-Today the proxy traces every internal CALL/STATICCALL/DELEGATECALL frame on the **send side** (`eth_sendTransaction`, `eth_sendRawTransaction`) and denies any frame whose target sits in another org without a grant. The **read side** (`eth_call`) only checks the entry-point address; once the entry contract is approved, anything its bytecode does internally is invisible to the proxy. In privacy-mode this lets an attacker in org A read org B's private state by composing a same-org wrapper contract that internally `STATICCALL`s into the org-B private contract and bubbles the result up via the return value. Read-only, but information leakage across org boundaries is exactly the threat the proxy must stop. Issue: [RD-915](https://linear.app/gateway-fm/issue/RD-915).
+Today the proxy traces every internal CALL/STATICCALL/DELEGATECALL frame on the **send side** (`eth_sendTransaction`, `eth_sendRawTransaction`) and denies any frame whose target sits in another org without a grant. The **read side** (`eth_call`) only checks the entry-point address; once the entry contract is approved, anything its bytecode does internally is invisible to the proxy. In privacy-mode this lets an attacker in org A read org B's private state by composing a same-org wrapper contract that internally `STATICCALL`s into the org-B private contract and bubbles the result up via the return value. Read-only, but information leakage across org boundaries is exactly the threat the proxy must stop. Issue: RD-915.
 
 ## Cross-check verdict: fix the docs, not the requirements
 
@@ -110,9 +110,9 @@ The counting `TraceCache` mock is not used; the same guarantee is delivered by a
 
 ## Items added by security review that the architect missed
 
-- **Per-call timeout for eth_call** distinct from the 30s send-side budget. 5s recommended. Caps individual trace duration on the read path. *Note (2026-05-08):* the original framing claimed this also prevented filling the concurrency-limiter quota for a JWT. That claim was wrong — the limiter is acquired *after* the trace runs (`jsonrpc_processor.go:460`), so the timeout caps a single trace's duration but not how many concurrent traces a single JWT may pin. Tracked separately as [RD-923](https://linear.app/gateway-fm/issue/RD-923) (orthogonal to the cross-org isolation logic).
+- **Per-call timeout for eth_call** distinct from the 30s send-side budget. 5s recommended. Caps individual trace duration on the read path. *Note (2026-05-08):* the original framing claimed this also prevented filling the concurrency-limiter quota for a JWT. That claim was wrong — the limiter is acquired *after* the trace runs (`jsonrpc_processor.go:460`), so the timeout caps a single trace's duration but not how many concurrent traces a single JWT may pin. Tracked separately as RD-923 (orthogonal to the cross-org isolation logic).
 - **Input validation**: `IsHexAddress` on `to` and `from` *before* trace, so a malformed request doesn't burn a concurrency slot.
-- **`eth_estimateGas` is a sibling read RPC that runs the EVM** and can leak the same state (revert reasons, SLOAD-derived branches). RD-915 must either include it or explicitly defer with a follow-up ticket. **Decision: defer — tracked as [RD-924](https://linear.app/gateway-fm/issue/RD-924).** Including it doubles the PR scope and the threat shape is identical, so the follow-up is mechanical.
+- **`eth_estimateGas` is a sibling read RPC that runs the EVM** and can leak the same state (revert reasons, SLOAD-derived branches). RD-915 must either include it or explicitly defer with a follow-up ticket. **Decision: defer — tracked as RD-924.** Including it doubles the PR scope and the threat shape is identical, so the follow-up is mechanical.
 
 ## Implementation order (final)
 

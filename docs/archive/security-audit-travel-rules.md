@@ -1,7 +1,7 @@
 # Travel Rule Compliance — Security Audit
 
 **Date:** 2026-02-17
-**Last updated:** 2026-02-18 (second hardening pass, per-address thresholds, delete records, DID display)
+**Last updated:** 2026-07-07 (H4 status corrected to FIXED — the fix landed in commit 07f10f2 but this doc was never updated; remaining OPEN items are two Lows that are documented, intentional behavior)
 **Scope:** `internal/compliance/`, `internal/server/admin_compliance.go`, `internal/server/server.go` (handleTestRequest), `internal/server/jsonrpc_processor.go` (Process, processRawTransaction), `internal/db/compliance_store.go`, `internal/db/db.go`, migrations `012_travel_rule_compliance.sql`, `013_compliance_check_constraints.sql`, `014_address_threshold_overrides.sql`
 
 ---
@@ -44,10 +44,10 @@
 **Issue:** `amount_wei` is `string` with only `required`. Could be `"abc"`, `"-1"`, or garbage. Stored in DB and appeared in audit logs but was never verified.
 **Fixed:** Now parsed as `big.Int` (base 10) and rejected if non-positive.
 
-### H4. `originator_user_id` not verified against org membership — OPEN
+### H4. ~~`originator_user_id` not verified against org membership~~ FIXED
 **File:** `internal/server/admin_compliance.go`
 **Issue:** No check that user exists in the org. DB FK constraint catches non-existent UUIDs, but wrong-org users slip through.
-**Fix:** Verify user membership in the target org before creating the record.
+**Fixed:** `createTravelRuleRecord` now verifies the originator's membership in the target org (`ListUserMembershipsInOrg`) before creating the record and returns 400 for non-members (commit 07f10f2). This doc was not updated when the fix landed; corrected 2026-07-07.
 
 ### H5. ~~`token_address` not required for ERC-20 records~~ FIXED
 **File:** `internal/server/admin_compliance.go`
@@ -195,7 +195,7 @@ Compliance logs and travel rule records now show user DID (`external_id`) via LE
 | H1 | High | **FIXED** | AmountUSD rejects 0 (Go required tag) |
 | H2 | High | **FIXED** | Negative amounts accepted |
 | H3 | High | **FIXED** | amount_wei not validated as numeric |
-| H4 | High | OPEN | originator_user_id not verified against org |
+| H4 | High | **FIXED** | originator_user_id not verified against org |
 | H5 | High | **FIXED** | token_address not required for ERC-20 |
 | H6 | High | **FIXED** | No DB CHECK constraints |
 | H7 | High | **FIXED** | WeiToUSD overflow (promoted from L3) |

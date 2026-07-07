@@ -2,7 +2,7 @@
 
 Last updated: 2026-04-21
 
-Compiled for team review. Each item describes the current state, the decision made (or deferred), and whether action is needed. Items that have been fully resolved are removed — see the git history for the cleanup log. Ongoing security hardening work is tracked in Linear (e.g. RD-851); this doc is for items that need a team decision before implementation.
+Each item describes the current state, the decision made (or deferred), and whether action is needed. Items that have been fully resolved are removed — see the git history for the cleanup log. Ongoing security hardening work is tracked in the project's issue tracker (`RD-XXXX` identifiers throughout the codebase refer to those tickets); this doc is for items that need a maintainer decision before implementation.
 
 ---
 
