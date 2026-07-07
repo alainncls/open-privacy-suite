@@ -853,6 +853,9 @@ func (s *Server) populateEffectiveClaims(ctx context.Context, group *rbac.Group,
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/groups/batch-delete-preview [post]
 func (s *Server) batchDeletePreview(c *gin.Context) {
+	if denyOperatorTenantRead(c) { // RD-1173: operator token must not enumerate tenant groups
+		return
+	}
 	orgID := c.Param("org_id")
 
 	var input struct {

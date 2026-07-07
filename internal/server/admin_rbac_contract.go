@@ -632,6 +632,9 @@ type ContractSyncStatus struct {
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/contracts/sync-check [post]
 func (s *Server) checkContractsOnChain(c *gin.Context) {
+	if denyOperatorTenantRead(c) { // RD-1173: operator token must not read tenant contract inventory
+		return
+	}
 	orgID := c.Param("org_id")
 
 	contracts, err := s.db.ListContracts(c.Request.Context(), orgID)
@@ -869,8 +872,11 @@ const noABIForEventRulesErrorMessage = "cannot save event_rules: contract has no
 //     "topic0 not in ABI" case for the privacy product.)
 //
 //   - Per-rule param_rules are checked:
+//
 //   - index must be within the event's input count
+//
 //   - "self" constraints must target an address-typed parameter
+//
 //   - hex value constraints must have the correct byte length for the param type
 //
 // Returns a descriptive error message, or "" if valid.
@@ -1237,8 +1243,8 @@ func (s *Server) createContractGrant(c *gin.Context) {
 	}
 
 	var input struct {
-		GroupID    string               `json:"group_id" binding:"required"`
-		Functions  []rbac.FunctionRule  `json:"functions"`   // nil = all functions
+		GroupID    string                `json:"group_id" binding:"required"`
+		Functions  []rbac.FunctionRule   `json:"functions"`   // nil = all functions
 		EventRules *rbac.EventRulesField `json:"event_rules"` // nil = deny, "*" = wildcard, [...] = allowlist
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -1715,9 +1721,9 @@ func (s *Server) batchMoveContracts(c *gin.Context) {
 	orgID := c.Param("org_id")
 
 	var input struct {
-		ContractIDs            []string `json:"contract_ids" binding:"required"`
-		TargetGroupID          string   `json:"target_group_id"`
-		NewGroup               *struct {
+		ContractIDs   []string `json:"contract_ids" binding:"required"`
+		TargetGroupID string   `json:"target_group_id"`
+		NewGroup      *struct {
 			Slug string `json:"slug" binding:"required"`
 			Name string `json:"name" binding:"required"`
 		} `json:"new_group"`
@@ -1748,9 +1754,9 @@ func (s *Server) batchMoveContracts(c *gin.Context) {
 	}
 
 	type moveResult struct {
-		TargetGroupID     string   `json:"target_group_id"`
-		MovedCount        int      `json:"moved_count"`
-		DeletedGroupIDs   []string `json:"deleted_group_ids,omitempty"`
+		TargetGroupID   string   `json:"target_group_id"`
+		MovedCount      int      `json:"moved_count"`
+		DeletedGroupIDs []string `json:"deleted_group_ids,omitempty"`
 	}
 
 	var result moveResult
