@@ -522,6 +522,11 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 	// using a minimal mock store) we err on the side of allowing
 	// historical queries — those fixtures don't model multi-tenant
 	// ownership changes, so the leak isn't reproducible there.
+	// The production store (*db.DB) is guaranteed to implement
+	// OrgAdminChecker at compile time (see the `var _ rbac.OrgAdminChecker`
+	// assertion in internal/db, RD-1164 #14), so this fail-open branch is
+	// unreachable in production and cannot be silently disabled by a
+	// dropped method.
 	if isHistorical, reason := IsHistoricalStateQuery(req.Method, req.Params); isHistorical {
 		allow := true
 		if adminChk, ok := c.store.(OrgAdminChecker); ok {
