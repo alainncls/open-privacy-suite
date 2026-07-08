@@ -664,9 +664,12 @@ func (s *Server) checkContractsOnChain(c *gin.Context) {
 		// Make eth_getCode RPC call
 		code, err := s.getContractCode(contract.Address)
 		if err != nil {
-			// RPC error - could be chain unavailable
+			// RPC error - could be chain unavailable. Opaque status to the
+			// client; raw chain/RPC error stays in slog. (RD-1178 / RD-934)
+			slog.Warn("admin_rbac_contract: getContractCode failed (checkContractsOnChain)",
+				"org_id", orgID, "contract_id", contract.ID, "err", err)
 			status.Status = "error"
-			status.Error = err.Error()
+			status.Error = "chain unavailable"
 			errors = append(errors, status)
 			continue
 		}
@@ -739,10 +742,13 @@ func (s *Server) deleteStaleContracts(c *gin.Context) {
 	for _, contractID := range input.ContractIDs {
 		contract, err := s.db.GetContract(c.Request.Context(), contractID)
 		if err != nil {
+			// Opaque reason to the client; raw DB error stays in slog. (RD-1178 / RD-934)
+			slog.Error("admin_rbac_contract: GetContract failed (deleteStaleContracts)",
+				"org_id", orgID, "contract_id", contractID, "err", err)
 			skipped = append(skipped, struct {
 				ID     string `json:"id"`
 				Reason string `json:"reason"`
-			}{contractID, "database error: " + err.Error()})
+			}{contractID, "database error"})
 			continue
 		}
 		if contract == nil {
@@ -763,10 +769,13 @@ func (s *Server) deleteStaleContracts(c *gin.Context) {
 		// Re-verify the contract is still missing on-chain (safety check)
 		code, err := s.getContractCode(contract.Address)
 		if err != nil {
+			// Opaque reason; raw chain/RPC error stays in slog. (RD-1178 / RD-934)
+			slog.Warn("admin_rbac_contract: getContractCode failed (deleteStaleContracts)",
+				"org_id", orgID, "contract_id", contractID, "err", err)
 			skipped = append(skipped, struct {
 				ID     string `json:"id"`
 				Reason string `json:"reason"`
-			}{contractID, "chain unavailable: " + err.Error()})
+			}{contractID, "chain unavailable"})
 			continue
 		}
 		if code != "0x" && code != "" {
@@ -779,10 +788,13 @@ func (s *Server) deleteStaleContracts(c *gin.Context) {
 
 		// Delete the contract
 		if err := s.db.DeleteContract(c.Request.Context(), contractID); err != nil {
+			// Opaque reason; raw DB error stays in slog. (RD-1178 / RD-934)
+			slog.Error("admin_rbac_contract: DeleteContract failed (deleteStaleContracts)",
+				"org_id", orgID, "contract_id", contractID, "err", err)
 			skipped = append(skipped, struct {
 				ID     string `json:"id"`
 				Reason string `json:"reason"`
-			}{contractID, "delete failed: " + err.Error()})
+			}{contractID, "delete failed"})
 			continue
 		}
 

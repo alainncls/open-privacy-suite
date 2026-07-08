@@ -549,7 +549,12 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 				return nil, verifyErr
 			}
 			s.recordAuthAttempt("privado", "error")
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "JWZ verification failed: " + verifyErr.Error()})
+			// Opaque message to this (unauthenticated) caller: the raw verifier
+			// error names the server verifier DID and circuit/issuer/schema
+			// internals, which aid proof forgery and config enumeration. Detail
+			// goes to slog for operators only. (RD-1178 #5 / RD-934)
+			slog.Warn("auth: JWZ verification failed", "error", verifyErr)
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication failed"})
 			return nil, verifyErr
 		}
 		userDID = verificationResult.UserDID
