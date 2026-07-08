@@ -113,7 +113,7 @@ func (s *Server) orgCurrency(ctx context.Context, orgID string) string {
 // @Param        org_id path string true "Organization ID"
 // @Success      200 {object} compliance.ComplianceConfig
 // @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "not readable with the operator token"
+// @Failure      403 {object} APIError "source address not on the private network, org outside the caller's scope, or operator token (tenant data not readable)"
 // @Failure      500 {object} APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/compliance/config [get]
@@ -158,7 +158,7 @@ func (s *Server) getComplianceConfig(c *gin.Context) {
 // @Success      200 {object} compliance.ComplianceConfig
 // @Failure      400 {object} APIError "invalid body, negative threshold, or unsupported policy/mode/currency"
 // @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "per-org config is not mutable with the operator/super-admin token"
+// @Failure      403 {object} APIError "source address not on the private network, org outside the caller's scope (read-only admins cannot mutate), or operator token (per-org management is the org admin's job)"
 // @Failure      500 {object} APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/compliance/config [put]
@@ -299,7 +299,7 @@ func (s *Server) updateComplianceConfig(c *gin.Context) {
 // @Param        org_id path string true "Organization ID"
 // @Success      200 {object} ComplianceDataResponse{data=[]compliance.TokenPrice}
 // @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "not readable with the operator token"
+// @Failure      403 {object} APIError "source address not on the private network, org outside the caller's scope, or operator token (tenant data not readable)"
 // @Failure      500 {object} APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/compliance/tokens [get]
@@ -332,7 +332,7 @@ func (s *Server) listTokenPrices(c *gin.Context) {
 // @Success      200 {object} compliance.TokenPrice
 // @Failure      400 {object} APIError "invalid body, address, coingecko_id, currency, price, decimals, or symbol"
 // @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "per-org token prices are not mutable with the operator/super-admin token"
+// @Failure      403 {object} APIError "source address not on the private network, org outside the caller's scope (read-only admins cannot mutate), or operator token (per-org management is the org admin's job)"
 // @Failure      500 {object} APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/compliance/tokens/{token_address} [put]
@@ -485,7 +485,7 @@ func (s *Server) upsertTokenPrice(c *gin.Context) {
 // @Param        token_address path string true "Token contract address (0x-prefixed) or 'native'"
 // @Success      200 {object} APIMessage "token price deleted"
 // @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "per-org token prices are not mutable with the operator/super-admin token"
+// @Failure      403 {object} APIError "source address not on the private network, org outside the caller's scope (read-only admins cannot mutate), or operator token (per-org management is the org admin's job)"
 // @Failure      404 {object} APIError "token price not found"
 // @Failure      500 {object} APIError
 // @Security     AdminToken
@@ -594,7 +594,7 @@ func (s *Server) listSystemTokenPrices(c *gin.Context) {
 // @Success      201 {object} compliance.TravelRuleRecord
 // @Failure      400 {object} APIError "invalid body, amount, transfer_type, address, or no configured token price"
 // @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "per-org records are not writable with the operator/super-admin token"
+// @Failure      403 {object} APIError "source address not on the private network, org outside the caller's scope (read-only admins cannot mutate), or operator token (per-org management is the org admin's job)"
 // @Failure      500 {object} APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/compliance/travel-rule-records [post]
@@ -748,7 +748,7 @@ func (s *Server) createTravelRuleRecord(c *gin.Context) {
 // @Param        offset query int false "Rows to skip (default 0)"
 // @Success      200 {object} ComplianceListResponse{data=[]compliance.TravelRuleRecord}
 // @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "not readable with the operator token"
+// @Failure      403 {object} APIError "source address not on the private network, org outside the caller's scope, or operator token (tenant data not readable)"
 // @Failure      500 {object} APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/compliance/travel-rule-records [get]
@@ -780,7 +780,7 @@ func (s *Server) listTravelRuleRecords(c *gin.Context) {
 // @Success      204 "record deleted"
 // @Failure      400 {object} APIError "invalid record id format"
 // @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "per-org records are not deletable with the operator/super-admin token"
+// @Failure      403 {object} APIError "source address not on the private network, org outside the caller's scope (read-only admins cannot mutate), or operator token (per-org management is the org admin's job)"
 // @Failure      404 {object} APIError "travel rule record not found"
 // @Failure      409 {object} APIError "cannot delete a used travel rule record"
 // @Failure      500 {object} APIError
@@ -836,7 +836,7 @@ func (s *Server) deleteTravelRuleRecord(c *gin.Context) {
 // @Success      200 {object} ComplianceListResponse{data=[]compliance.SanctionedAddress}
 // @Failure      400 {object} APIError "org_id query parameter is required (tier-2 org-admin JWT)"
 // @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "org out of scope, or a per-org read attempted with the operator token"
+// @Failure      403 {object} APIError "source address not on the private network, org out of scope, or a per-org read attempted with the operator token"
 // @Failure      500 {object} APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/compliance/sanctions [get]
@@ -895,7 +895,7 @@ func (s *Server) listSanctionedAddresses(c *gin.Context) {
 // @Success      201 {object} compliance.SanctionedAddress
 // @Failure      400 {object} APIError "invalid body, address, or reason too long"
 // @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "global requires super-admin; per-org must be in scope and is not addable with the operator token"
+// @Failure      403 {object} APIError "source address not on the private network, global requires super-admin, or per-org must be in scope and is not addable with the operator token"
 // @Failure      500 {object} APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/compliance/sanctions [post]
@@ -984,7 +984,7 @@ func (s *Server) addSanctionedAddress(c *gin.Context) {
 // @Param        id path string true "Sanction row ID (UUID)"
 // @Success      200 {object} APIMessage "sanctioned address removed"
 // @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "row not found, out of scope, global requires super-admin, or per-org not removable with the operator token"
+// @Failure      403 {object} APIError "source address not on the private network, row not found, out of scope, global requires super-admin, or per-org not removable with the operator token"
 // @Failure      500 {object} APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/compliance/sanctions/{id} [delete]
@@ -1051,7 +1051,7 @@ func (s *Server) removeSanctionedAddress(c *gin.Context) {
 // @Param        offset query int false "Rows to skip (default 0)"
 // @Success      200 {object} ComplianceListResponse{data=[]compliance.AddressThresholdOverride}
 // @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "not readable with the operator token"
+// @Failure      403 {object} APIError "source address not on the private network, org outside the caller's scope, or operator token (tenant data not readable)"
 // @Failure      500 {object} APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/compliance/address-thresholds [get]
@@ -1085,7 +1085,7 @@ func (s *Server) listAddressThresholdOverrides(c *gin.Context) {
 // @Success      200 {object} compliance.AddressThresholdOverride
 // @Failure      400 {object} APIError "invalid address, body, negative threshold, or note too long"
 // @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "per-org overrides are not mutable with the operator/super-admin token"
+// @Failure      403 {object} APIError "source address not on the private network, org outside the caller's scope (read-only admins cannot mutate), or operator token (per-org management is the org admin's job)"
 // @Failure      500 {object} APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/compliance/address-thresholds/{address} [put]
@@ -1158,7 +1158,7 @@ func (s *Server) upsertAddressThresholdOverride(c *gin.Context) {
 // @Param        address path string true "Address (0x-prefixed hex) the override applies to"
 // @Success      200 {object} APIMessage "address threshold override deleted"
 // @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "per-org overrides are not mutable with the operator/super-admin token"
+// @Failure      403 {object} APIError "source address not on the private network, org outside the caller's scope (read-only admins cannot mutate), or operator token (per-org management is the org admin's job)"
 // @Failure      404 {object} APIError "address threshold override not found"
 // @Failure      500 {object} APIError
 // @Security     AdminToken
@@ -1205,7 +1205,7 @@ func (s *Server) deleteAddressThresholdOverride(c *gin.Context) {
 // @Param        transfer_type query string false "Filter by transfer type" Enums(eth, erc20)
 // @Success      200 {object} ComplianceListResponse{data=[]compliance.ComplianceLog}
 // @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "not readable with the operator token"
+// @Failure      403 {object} APIError "source address not on the private network, org outside the caller's scope, or operator token (tenant data not readable)"
 // @Failure      500 {object} APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/compliance/logs [get]
@@ -1379,7 +1379,7 @@ func (s *Server) getBaseCurrency(c *gin.Context) {
 // @Success      200 {object} ComplianceSetBaseCurrencyResponse
 // @Failure      400 {object} APIError "invalid body or unsupported currency"
 // @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "super-admin token required"
+// @Failure      403 {object} APIError "source address not on the private network, or super-admin token required"
 // @Failure      409 {object} ComplianceCurrencyConflictResponse "manual token prices missing for the target currency; set force=true"
 // @Failure      500 {object} APIError
 // @Security     AdminToken

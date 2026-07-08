@@ -105,8 +105,9 @@ type MyOrganizationsResponse struct {
 // authenticated user has org-admin (tier-2) or read-only-admin privileges,
 // and in which organizations. Contract admins (tier-3, "admin" claim only)
 // get is_admin=false — they have no admin-dashboard access. Emitted via
-// gin.H. admin_org_ids / readonly_admin_org_ids are always present (empty
-// arrays, never null).
+// gin.H. On the normal path admin_org_ids / readonly_admin_org_ids are
+// always present as arrays (never null); the degenerate "user not in DB yet"
+// path returns only {is_admin:false, admin_org_ids:[]}.
 type MyAdminStatusResponse struct {
 	IsAdmin             bool     `json:"is_admin" example:"true"`
 	AdminOrgIDs         []string `json:"admin_org_ids"`

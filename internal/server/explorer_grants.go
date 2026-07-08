@@ -194,6 +194,7 @@ func (s *Server) getDisclosedAddressesForViewer(ctx context.Context, viewerDID s
 // @Param        address_id path string true "Opaque address identifier from viewable-addresses"
 // @Success      200 {object} ResolveAddressResponse
 // @Failure      400 {object} APIError "grant_id and address_id are required"
+// @Failure      401 {object} APIError "authentication required"
 // @Failure      403 {object} APIError "grant has been revoked or has expired"
 // @Failure      404 {object} APIError "grant or address not found for this grant"
 // @Failure      500 {object} APIError "lookup failed"
@@ -389,6 +390,7 @@ func filterTxsByGrantScope(txs []explorer.Transaction, scope disclosure.Scope) [
 // @Param        before query int false "Return rows strictly older than this block number (pagination cursor)"
 // @Success      200 {object} GrantTransactionsResponse
 // @Failure      400 {object} APIError "grant_id and address_id are required"
+// @Failure      401 {object} APIError "authentication required"
 // @Failure      403 {object} APIError "grant has been revoked or has expired"
 // @Failure      404 {object} APIError "grant or address not found for this grant"
 // @Failure      500 {object} APIError "explorer store not configured or lookup failed"

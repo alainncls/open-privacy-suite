@@ -675,7 +675,7 @@ type SessionStatusResponse struct {
 // Frontend polls this after displaying QR code to check if wallet has completed auth
 //
 // @Summary      Poll a Privado ID auth session for completion
-// @Description  The frontend polls this after showing the QR code to learn whether the wallet has completed authentication. While pending it returns `completed:false`; once complete it returns the issued tokens (and mirrors the access JWT into an HttpOnly cookie). Rate-limited.
+// @Description  The frontend polls this after showing the QR code to learn whether the wallet has completed authentication. While pending it returns `completed:false`; once complete it returns the issued tokens (and mirrors the access JWT into an HttpOnly cookie). Deliberately not rate-limited: it is read-only polling during the login flow.
 // @Tags         Auth
 // @Produce      json
 // @Param        id path string true "auth session ID"

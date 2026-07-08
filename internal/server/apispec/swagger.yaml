@@ -35,7 +35,7 @@ components:
     internal_server.APIMessage:
       properties:
         message:
-          example: address unlinked successfully
+          example: operation completed
           type: string
       type: object
     internal_server.AdminLogsResponse:
@@ -524,7 +524,10 @@ components:
     internal_server.DisclosureStatusResponse:
       properties:
         status:
-          example: revoked
+          enum:
+          - deleted
+          - revoked
+          - rejected
           type: string
       type: object
     internal_server.EthAddressListResponse:
@@ -3836,7 +3839,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/internal_server.APIError'
-          description: super-admin token required
+          description: source address not on the private network, or super-admin token
+            required
         "409":
           content:
             application/json:
@@ -3917,8 +3921,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/internal_server.APIError'
-          description: org out of scope, or a per-org read attempted with the operator
-            token
+          description: source address not on the private network, org out of scope,
+            or a per-org read attempted with the operator token
         "500":
           content:
             application/json:
@@ -3971,8 +3975,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/internal_server.APIError'
-          description: global requires super-admin; per-org must be in scope and is
-            not addable with the operator token
+          description: source address not on the private network, global requires
+            super-admin, or per-org must be in scope and is not addable with the operator
+            token
         "500":
           content:
             application/json:
@@ -4016,8 +4021,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/internal_server.APIError'
-          description: row not found, out of scope, global requires super-admin, or
-            per-org not removable with the operator token
+          description: source address not on the private network, row not found, out
+            of scope, global requires super-admin, or per-org not removable with the
+            operator token
         "500":
           content:
             application/json:
@@ -5387,7 +5393,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/internal_server.APIError'
-          description: not readable with the operator token
+          description: source address not on the private network, org outside the
+            caller's scope, or operator token (tenant data not readable)
         "500":
           content:
             application/json:
@@ -5435,8 +5442,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/internal_server.APIError'
-          description: per-org overrides are not mutable with the operator/super-admin
-            token
+          description: source address not on the private network, org outside the
+            caller's scope (read-only admins cannot mutate), or operator token (per-org
+            management is the org admin's job)
         "404":
           content:
             application/json:
@@ -5507,8 +5515,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/internal_server.APIError'
-          description: per-org overrides are not mutable with the operator/super-admin
-            token
+          description: source address not on the private network, org outside the
+            caller's scope (read-only admins cannot mutate), or operator token (per-org
+            management is the org admin's job)
         "500":
           content:
             application/json:
@@ -5552,7 +5561,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/internal_server.APIError'
-          description: not readable with the operator token
+          description: source address not on the private network, org outside the
+            caller's scope, or operator token (tenant data not readable)
         "500":
           content:
             application/json:
@@ -5614,8 +5624,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/internal_server.APIError'
-          description: per-org config is not mutable with the operator/super-admin
-            token
+          description: source address not on the private network, org outside the
+            caller's scope (read-only admins cannot mutate), or operator token (per-org
+            management is the org admin's job)
         "500":
           content:
             application/json:
@@ -5704,7 +5715,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/internal_server.APIError'
-          description: not readable with the operator token
+          description: source address not on the private network, org outside the
+            caller's scope, or operator token (tenant data not readable)
         "500":
           content:
             application/json:
@@ -5753,7 +5765,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/internal_server.APIError'
-          description: not readable with the operator token
+          description: source address not on the private network, org outside the
+            caller's scope, or operator token (tenant data not readable)
         "500":
           content:
             application/json:
@@ -5801,8 +5814,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/internal_server.APIError'
-          description: per-org token prices are not mutable with the operator/super-admin
-            token
+          description: source address not on the private network, org outside the
+            caller's scope (read-only admins cannot mutate), or operator token (per-org
+            management is the org admin's job)
         "404":
           content:
             application/json:
@@ -5875,8 +5889,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/internal_server.APIError'
-          description: per-org token prices are not mutable with the operator/super-admin
-            token
+          description: source address not on the private network, org outside the
+            caller's scope (read-only admins cannot mutate), or operator token (per-org
+            management is the org admin's job)
         "500":
           content:
             application/json:
@@ -5944,7 +5959,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/internal_server.APIError'
-          description: not readable with the operator token
+          description: source address not on the private network, org outside the
+            caller's scope, or operator token (tenant data not readable)
         "500":
           content:
             application/json:
@@ -6008,8 +6024,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/internal_server.APIError'
-          description: per-org records are not writable with the operator/super-admin
-            token
+          description: source address not on the private network, org outside the
+            caller's scope (read-only admins cannot mutate), or operator token (per-org
+            management is the org admin's job)
         "500":
           content:
             application/json:
@@ -6059,8 +6076,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/internal_server.APIError'
-          description: per-org records are not deletable with the operator/super-admin
-            token
+          description: source address not on the private network, org outside the
+            caller's scope (read-only admins cannot mutate), or operator token (per-org
+            management is the org admin's job)
         "404":
           content:
             application/json:
@@ -7077,9 +7095,9 @@ paths:
       - 'Admin: RBAC'
   /api/v1/admin/orgs/{org_id}/contracts/grant-summary:
     get:
-      description: Returns the grant count and assigned group names aggregated across
-        the organization's contracts. Scoped to {org_id}; a tier-2 admin can only
-        read their own org.
+      description: Returns, keyed by contract ID, the grant count and assigned group
+        names for each of the organization's contracts that has at least one grant.
+        Scoped to {org_id}; a tier-2 admin can only read their own org.
       parameters:
       - description: Organization ID
         in: path
@@ -7092,8 +7110,10 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/privacy-proxy_internal_rbac.ContractGrantSummary'
-          description: OK
+                additionalProperties:
+                  $ref: '#/components/schemas/privacy-proxy_internal_rbac.ContractGrantSummary'
+                type: object
+          description: grant summary keyed by contract ID
         "401":
           content:
             application/json:
@@ -9410,10 +9430,11 @@ paths:
       - Auth
   /api/v1/auth/session/{id}/status:
     get:
-      description: The frontend polls this after showing the QR code to learn whether
+      description: 'The frontend polls this after showing the QR code to learn whether
         the wallet has completed authentication. While pending it returns `completed:false`;
         once complete it returns the issued tokens (and mirrors the access JWT into
-        an HttpOnly cookie). Rate-limited.
+        an HttpOnly cookie). Deliberately not rate-limited: it is read-only polling
+        during the login flow.'
       parameters:
       - description: auth session ID
         in: path
@@ -10662,6 +10683,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/internal_server.APIError'
           description: grant_id and address_id are required
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_server.APIError'
+          description: authentication required
         "403":
           content:
             application/json:
@@ -10789,6 +10816,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/internal_server.APIError'
           description: grant_id and address_id are required
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_server.APIError'
+          description: authentication required
         "403":
           content:
             application/json:
@@ -12674,6 +12707,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/internal_server.APIError'
           description: unreadable body, malformed/batch JSON-RPC, or invalid visibleTo
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_server.APIError'
+          description: identity required but unresolved on a trace method (debug_traceCall
+            / debug_traceTransaction)
         "403":
           content:
             application/json:
@@ -12756,6 +12796,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/internal_server.APIError'
           description: unreadable body, malformed/batch JSON-RPC, or invalid visibleTo
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_server.APIError'
+          description: identity required but unresolved on a trace method (debug_traceCall
+            / debug_traceTransaction)
         "403":
           content:
             application/json:

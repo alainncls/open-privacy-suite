@@ -72,11 +72,10 @@ func main() {
 	for m := range methodTotals {
 		methods = append(methods, m)
 	}
-	// Sort by count descending, then method name ascending. The name tiebreaker
-	// is required for determinism: without it, equal-count methods come out in
-	// map-iteration order (randomized per run), so `make api-spec` produced a
-	// different ordering each time and the CI drift gate was latently flaky.
 	sort.Slice(methods, func(i, j int) bool {
+		// Tie-break by name: several methods share a count (the .Any()
+		// mounts), and without this the order is map-iteration randomness —
+		// which the CI drift check (regenerate + git diff) rightly rejects.
 		if methodTotals[methods[i]] != methodTotals[methods[j]] {
 			return methodTotals[methods[i]] > methodTotals[methods[j]]
 		}

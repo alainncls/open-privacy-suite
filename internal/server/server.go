@@ -1280,6 +1280,7 @@ const MaxRequestBodySize = 1 << 20 // 1MB
 // @Param        request body JSONRPCRequestEnvelope true "JSON-RPC 2.0 request"
 // @Success      200 {object} JSONRPCResponseEnvelope "JSON-RPC response; may carry a JSON-RPC-level error member"
 // @Failure      400 {object} APIError "unreadable body, malformed/batch JSON-RPC, or invalid visibleTo"
+// @Failure      401 {object} APIError "identity required but unresolved on a trace method (debug_traceCall / debug_traceTransaction)"
 // @Failure      403 {object} APIError "runtime-trace or compliance denial"
 // @Failure      404 {object} APIError "method not allowed for the caller (denials are masked as method not found)"
 // @Failure      413 {object} APIError "request body too large"
