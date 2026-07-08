@@ -397,151 +397,35 @@ func NewAccessControllerWithCache(store Store, cacheTTL time.Duration, cache Per
 }
 
 // CheckAccess validates if a request should be allowed based on RBAC.
+//
+// The check proceeds in sequential phases, each factored into a private helper
+// on *AccessController. A helper that returns (result *AccessCheckResult,
+// handled bool, err error) short-circuits the whole check when handled is true:
+// CheckAccess returns (result, err) immediately. When handled is false the
+// helper's result is ignored and evaluation falls through to the next phase.
+// The decomposition is a pure structural refactor of the original monolithic
+// method — the order of checks, every condition, reason string, error, and
+// AccessCheckResult field are preserved exactly.
 func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequest) (*AccessCheckResult, error) {
-	// Check global blocklist FIRST - before any RBAC evaluation
-	if IsMethodBlocked(req.Method) {
-		return &AccessCheckResult{
-			Allowed: false,
-			Reason:  fmt.Sprintf("method %s is globally blocked for security reasons", req.Method),
-		}, nil
-	}
-
-	// Check for Multicall bypass attempts
-	if isMulticall, reason := DetectMulticall(req.Method, req.Params); isMulticall {
-		return &AccessCheckResult{
-			Allowed: false,
-			Reason:  reason,
-		}, nil
+	// Global blocklist + Multicall bypass detection — before any RBAC evaluation.
+	if res, handled := c.checkGlobalBlocks(req); handled {
+		return res, nil
 	}
 
 	// Handle anonymous access (no JWT provided).
-	//
-	// Anonymous permissions live in the `anonymous` group's group_access row
-	// (seeded by migration 044, RD-870). Edits restricted to super admin
-	// (X-Admin-Token) so the auditable rules are explicit and configurable
-	// rather than hardcoded here.
 	if req.UserExternalID == "" {
-		// Block historical state queries up-front. These reveal point-in-time
-		// state and aren't safe to expose anonymously even if the method name
-		// is on the allowlist. Authenticated users skip this check because
-		// per-address visibility filters take over.
-		if isHistorical, reason := IsHistoricalStateQuery(req.Method, req.Params); isHistorical {
-			return &AccessCheckResult{
-				Allowed: false,
-				Reason:  reason,
-			}, nil
-		}
-
-		anonAccess, err := c.getAnonymousAccessCached(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load anonymous group access: %w", err)
-		}
-		if anonAccess == nil {
-			// Migration not run, row deleted, or DB inconsistency. Fail closed.
-			return &AccessCheckResult{
-				Allowed:      false,
-				AuthRequired: true,
-				Reason:       "anonymous access not configured",
-			}, nil
-		}
-
-		methodLower := strings.ToLower(strings.TrimSpace(req.Method))
-		methodAllowed := false
-		for _, allowed := range anonAccess.AllowedMethods {
-			if strings.ToLower(allowed) == methodLower {
-				methodAllowed = true
-				break
-			}
-		}
-		if !methodAllowed {
-			return &AccessCheckResult{
-				Allowed:      false,
-				AuthRequired: true,
-				Reason:       "authentication required for this operation",
-			}, nil
-		}
-
-		// Defense in depth: deployment payloads always require an authenticated
-		// principal with the deploy claim. The anonymous group has empty Claims
-		// by default; even if a super admin allowlists eth_sendTransaction, a
-		// CREATE-shaped payload still requires auth.
-		if IsContractDeployment(req.Method, req.Params) {
-			return &AccessCheckResult{
-				Allowed:      false,
-				AuthRequired: true,
-				Reason:       "deployment requires authentication",
-			}, nil
-		}
-
-		return &AccessCheckResult{Allowed: true}, nil
+		return c.checkAnonymousAccess(ctx, req)
 	}
 
-	// Get user by external ID
-	user, err := c.store.GetUserByExternalID(ctx, req.UserExternalID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get user: %w", err)
+	// Get user by external ID and enforce user-level gates (existence, ban, KYC).
+	user, res, handled, err := c.resolveAndValidateUser(ctx, req)
+	if handled {
+		return res, err
 	}
 
-	// If user doesn't exist in RBAC, deny access
-	if user == nil {
-		slog.Debug("access denied: user not found", "external_id", req.UserExternalID)
-		return &AccessCheckResult{
-			Allowed: false,
-			Reason:  "access denied",
-		}, nil
-	}
-
-	// Check if user is banned
-	if user.Banned {
-		return &AccessCheckResult{
-			Allowed: false,
-			Reason:  "user is banned",
-		}, nil
-	}
-
-	// Check KYC requirement
-	if !user.KYC {
-		return &AccessCheckResult{
-			Allowed: false,
-			Reason:  "KYC verification required",
-		}, nil
-	}
-
-	// M9 (security audit): historical-state queries can probe a
-	// contract's state at a past block when ownership may have been
-	// different. The pre-fix IsHistoricalStateQuery guard only ran for
-	// anonymous viewers. Authenticated non-admin viewers are now also
-	// denied historical queries — the per-address visibility resolver
-	// uses CURRENT ownership, so a contract that was owned by another
-	// org at block N could leak past state to today's owner.
-	//
-	// Admin viewers (is_org_admin or admin claim on a specific
-	// contract) are exempted by checking the user's group memberships
-	// via the optional OrgAdminChecker extension on the store
-	// interface. When the extension is not implemented (test fixtures
-	// using a minimal mock store) we err on the side of allowing
-	// historical queries — those fixtures don't model multi-tenant
-	// ownership changes, so the leak isn't reproducible there.
-	// The production store (*db.DB) is guaranteed to implement
-	// OrgAdminChecker at compile time (see the `var _ rbac.OrgAdminChecker`
-	// assertion in internal/db, RD-1164 #14), so this fail-open branch is
-	// unreachable in production and cannot be silently disabled by a
-	// dropped method.
-	if isHistorical, reason := IsHistoricalStateQuery(req.Method, req.Params); isHistorical {
-		allow := true
-		if adminChk, ok := c.store.(OrgAdminChecker); ok {
-			isAdmin, _, adminErr := adminChk.IsOrgAdmin(ctx, user.ID)
-			if adminErr != nil {
-				return nil, fmt.Errorf("failed to check admin status for historical query: %w", adminErr)
-			}
-			allow = isAdmin
-		}
-		if !allow {
-			return &AccessCheckResult{
-				Allowed: false,
-				Reason:  reason,
-			}, nil
-		}
+	// Authenticated historical-state query guard (M9 security audit).
+	if res, handled, err := c.checkHistoricalStateQuery(ctx, req, user); handled {
+		return res, err
 	}
 
 	// Org-free metadata methods (same set as anonymous allowlist) require no org context.
@@ -550,24 +434,260 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		return &AccessCheckResult{Allowed: true, UserID: user.ID}, nil
 	}
 
+	// Resolve the org context and the org to evaluate permissions against.
+	org, orgCtx, res, handled, err := c.resolveOrgContextForRequest(ctx, req, user)
+	if handled {
+		return res, err
+	}
+
+	// Resolve effective permissions (in-memory cache, DB cache, or compute).
+	perms, err := c.resolvePermissionsForRequest(ctx, req, user, org)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check method permission.
+	if res, handled := c.checkMethodAllowed(req, perms); handled {
+		return res, nil
+	}
+
+	// Handle eth_getLogs specially - needs multi-address validation.
+	if res, handled := c.checkEthGetLogsAccess(ctx, req, user, org, orgCtx, perms); handled {
+		return res, nil
+	}
+
+	// Determine required claim based on the operation
+	requiredClaim := ClassifyOperation(req.EffectiveMethod(), req.Params)
+
+	// Simple value transfers (no calldata) to unregistered addresses carve-out.
+	if res, handled, err := c.classifyValueTransferCarveout(ctx, req, user, org, orgCtx, perms, requiredClaim); handled {
+		return res, err
+	}
+
+	// Basic state queries (balance, nonce) on unregistered addresses carve-out.
+	if res, handled, err := c.classifyBasicAddressQueryCarveout(ctx, req, user, org, orgCtx, perms); handled {
+		return res, err
+	}
+
+	// Check contract access if target address is specified.
+	if req.TargetAddress != "" {
+		if res, handled, err := c.validateContractAccess(ctx, req, user, org, orgCtx, perms, requiredClaim); handled {
+			return res, err
+		}
+	} else if requiredClaim == ClaimDeploy {
+		if res, handled, err := c.validateDeploymentWithoutTarget(req, user, org, perms, requiredClaim); handled {
+			return res, err
+		}
+	}
+
+	// Check additional required claims from the request.
+	if res, handled := c.checkAdditionalRequiredClaims(req, perms); handled {
+		return res, nil
+	}
+
+	// Collect all claims the user has (from all contracts + defaults)
+	allClaims := collectAllClaims(perms)
+
+	return &AccessCheckResult{
+		Allowed:   true,
+		OrgID:     org.ID,
+		UserID:    user.ID,
+		RPCAPIKey: perms.RPCAPIKey,
+		Claims:    allClaims,
+	}, nil
+}
+
+// checkGlobalBlocks enforces the global method blocklist and the Multicall
+// bypass detector. These run before any RBAC evaluation. Returns handled=true
+// with a deny result when either check fires.
+func (c *AccessController) checkGlobalBlocks(req *AccessCheckRequest) (*AccessCheckResult, bool) {
+	// Check global blocklist FIRST - before any RBAC evaluation
+	if IsMethodBlocked(req.Method) {
+		return &AccessCheckResult{
+			Allowed: false,
+			Reason:  fmt.Sprintf("method %s is globally blocked for security reasons", req.Method),
+		}, true
+	}
+
+	// Check for Multicall bypass attempts
+	if isMulticall, reason := DetectMulticall(req.Method, req.Params); isMulticall {
+		return &AccessCheckResult{
+			Allowed: false,
+			Reason:  reason,
+		}, true
+	}
+
+	return nil, false
+}
+
+// checkAnonymousAccess evaluates access for requests with no authenticated
+// principal (req.UserExternalID == ""). This phase always terminates the
+// check — the caller returns its result directly.
+//
+// Anonymous permissions live in the `anonymous` group's group_access row
+// (seeded by migration 044, RD-870). Edits restricted to super admin
+// (X-Admin-Token) so the auditable rules are explicit and configurable
+// rather than hardcoded here.
+func (c *AccessController) checkAnonymousAccess(ctx context.Context, req *AccessCheckRequest) (*AccessCheckResult, error) {
+	// Block historical state queries up-front. These reveal point-in-time
+	// state and aren't safe to expose anonymously even if the method name
+	// is on the allowlist. Authenticated users skip this check because
+	// per-address visibility filters take over.
+	if isHistorical, reason := IsHistoricalStateQuery(req.Method, req.Params); isHistorical {
+		return &AccessCheckResult{
+			Allowed: false,
+			Reason:  reason,
+		}, nil
+	}
+
+	anonAccess, err := c.getAnonymousAccessCached(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load anonymous group access: %w", err)
+	}
+	if anonAccess == nil {
+		// Migration not run, row deleted, or DB inconsistency. Fail closed.
+		return &AccessCheckResult{
+			Allowed:      false,
+			AuthRequired: true,
+			Reason:       "anonymous access not configured",
+		}, nil
+	}
+
+	methodLower := strings.ToLower(strings.TrimSpace(req.Method))
+	methodAllowed := false
+	for _, allowed := range anonAccess.AllowedMethods {
+		if strings.ToLower(allowed) == methodLower {
+			methodAllowed = true
+			break
+		}
+	}
+	if !methodAllowed {
+		return &AccessCheckResult{
+			Allowed:      false,
+			AuthRequired: true,
+			Reason:       "authentication required for this operation",
+		}, nil
+	}
+
+	// Defense in depth: deployment payloads always require an authenticated
+	// principal with the deploy claim. The anonymous group has empty Claims
+	// by default; even if a super admin allowlists eth_sendTransaction, a
+	// CREATE-shaped payload still requires auth.
+	if IsContractDeployment(req.Method, req.Params) {
+		return &AccessCheckResult{
+			Allowed:      false,
+			AuthRequired: true,
+			Reason:       "deployment requires authentication",
+		}, nil
+	}
+
+	return &AccessCheckResult{Allowed: true}, nil
+}
+
+// resolveAndValidateUser loads the authenticated user and enforces the
+// user-level gates (existence, ban, KYC). Returns the user for downstream
+// phases. handled=true means the check terminated (either a deny result or a
+// lookup error); the user return is only valid when handled=false.
+func (c *AccessController) resolveAndValidateUser(ctx context.Context, req *AccessCheckRequest) (*User, *AccessCheckResult, bool, error) {
+	// Get user by external ID
+	user, err := c.store.GetUserByExternalID(ctx, req.UserExternalID)
+	if err != nil {
+		return nil, nil, true, fmt.Errorf("failed to get user: %w", err)
+	}
+
+	// If user doesn't exist in RBAC, deny access
+	if user == nil {
+		slog.Debug("access denied: user not found", "external_id", req.UserExternalID)
+		return nil, &AccessCheckResult{
+			Allowed: false,
+			Reason:  "access denied",
+		}, true, nil
+	}
+
+	// Check if user is banned
+	if user.Banned {
+		return nil, &AccessCheckResult{
+			Allowed: false,
+			Reason:  "user is banned",
+		}, true, nil
+	}
+
+	// Check KYC requirement
+	if !user.KYC {
+		return nil, &AccessCheckResult{
+			Allowed: false,
+			Reason:  "KYC verification required",
+		}, true, nil
+	}
+
+	return user, nil, false, nil
+}
+
+// checkHistoricalStateQuery is the authenticated historical-state guard.
+//
+// M9 (security audit): historical-state queries can probe a
+// contract's state at a past block when ownership may have been
+// different. The pre-fix IsHistoricalStateQuery guard only ran for
+// anonymous viewers. Authenticated non-admin viewers are now also
+// denied historical queries — the per-address visibility resolver
+// uses CURRENT ownership, so a contract that was owned by another
+// org at block N could leak past state to today's owner.
+//
+// Admin viewers (is_org_admin or admin claim on a specific
+// contract) are exempted by checking the user's group memberships
+// via the optional OrgAdminChecker extension on the store
+// interface. When the extension is not implemented (test fixtures
+// using a minimal mock store) we err on the side of allowing
+// historical queries — those fixtures don't model multi-tenant
+// ownership changes, so the leak isn't reproducible there.
+// The production store (*db.DB) is guaranteed to implement
+// OrgAdminChecker at compile time (see the `var _ rbac.OrgAdminChecker`
+// assertion in internal/db, RD-1164 #14), so this fail-open branch is
+// unreachable in production and cannot be silently disabled by a
+// dropped method.
+func (c *AccessController) checkHistoricalStateQuery(ctx context.Context, req *AccessCheckRequest, user *User) (*AccessCheckResult, bool, error) {
+	if isHistorical, reason := IsHistoricalStateQuery(req.Method, req.Params); isHistorical {
+		allow := true
+		if adminChk, ok := c.store.(OrgAdminChecker); ok {
+			isAdmin, _, adminErr := adminChk.IsOrgAdmin(ctx, user.ID)
+			if adminErr != nil {
+				return nil, true, fmt.Errorf("failed to check admin status for historical query: %w", adminErr)
+			}
+			allow = isAdmin
+		}
+		if !allow {
+			return &AccessCheckResult{
+				Allowed: false,
+				Reason:  reason,
+			}, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
+// resolveOrgContextForRequest builds the OrgContext (which performs cross-org
+// isolation from the start) and determines which org to evaluate permissions
+// against. handled=true means the check terminated with the returned result/err.
+// When handled=false, both org and orgCtx are valid for downstream phases.
+func (c *AccessController) resolveOrgContextForRequest(ctx context.Context, req *AccessCheckRequest, user *User) (*Organization, *OrgContext, *AccessCheckResult, bool, error) {
 	// Create OrgContext - handles cross-org isolation from the start
 	// This replaces the scattered getUserOrganizationIDs + getOrgContextForTarget calls
 	targetAddr := strings.ToLower(strings.TrimSpace(req.TargetAddress))
 	orgCtx, err := NewOrgContext(ctx, c.store, user, targetAddr)
 	if err != nil {
 		// Cross-org violation detected (e.g., contract belongs to org user is not member of)
-		return &AccessCheckResult{
+		return nil, nil, &AccessCheckResult{
 			Allowed: false,
 			Reason:  ErrContractAccessDenied,
-		}, nil
+		}, true, nil
 	}
 
 	// Ensure user has org membership
 	if len(orgCtx.UserOrgIDs()) == 0 {
-		return &AccessCheckResult{
+		return nil, nil, &AccessCheckResult{
 			Allowed: false,
 			Reason:  "user has no organization membership",
-		}, nil
+		}, true, nil
 	}
 
 	// Determine which org to use for permissions.
@@ -579,43 +699,43 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		// Explicit org ID requested - look it up and verify membership
 		org, err = c.store.GetOrganization(ctx, req.OrgID)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get organization by ID: %w", err)
+			return nil, nil, nil, true, fmt.Errorf("failed to get organization by ID: %w", err)
 		}
 		if org == nil {
 			slog.Debug("access denied: organization not found", "org_id", req.OrgID, "user", req.UserExternalID)
-			return &AccessCheckResult{
+			return nil, nil, &AccessCheckResult{
 				Allowed: false,
 				Reason:  "access denied",
-			}, nil
+			}, true, nil
 		}
 		// Verify user is a member of this org
 		if !orgCtx.UserOrgIDs()[org.ID] {
 			slog.Debug("access denied: user not member of org", "org_id", req.OrgID, "user", req.UserExternalID)
-			return &AccessCheckResult{
+			return nil, nil, &AccessCheckResult{
 				Allowed: false,
 				Reason:  "access denied",
-			}, nil
+			}, true, nil
 		}
 	} else if req.OrgSlug != "" && req.OrgSlug != "default" {
 		// Explicit org slug requested - look it up and verify membership
 		org, err = c.store.GetOrganizationBySlug(ctx, req.OrgSlug)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get organization by slug: %w", err)
+			return nil, nil, nil, true, fmt.Errorf("failed to get organization by slug: %w", err)
 		}
 		if org == nil {
 			slog.Debug("access denied: organization not found", "org_slug", req.OrgSlug, "user", req.UserExternalID)
-			return &AccessCheckResult{
+			return nil, nil, &AccessCheckResult{
 				Allowed: false,
 				Reason:  "access denied",
-			}, nil
+			}, true, nil
 		}
 		// Verify user is a member of this org
 		if !orgCtx.UserOrgIDs()[org.ID] {
 			slog.Debug("access denied: user not member of org", "org_slug", req.OrgSlug, "user", req.UserExternalID)
-			return &AccessCheckResult{
+			return nil, nil, &AccessCheckResult{
 				Allowed: false,
 				Reason:  "access denied",
-			}, nil
+			}, true, nil
 		}
 	} else {
 		// No explicit org - derive from target address ownership first,
@@ -633,30 +753,37 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 				}
 				org, err = c.store.GetOrganization(ctx, singleOrgID)
 				if err != nil {
-					return nil, fmt.Errorf("failed to get organization: %w", err)
+					return nil, nil, nil, true, fmt.Errorf("failed to get organization: %w", err)
 				}
 				if org == nil {
-					return &AccessCheckResult{
+					return nil, nil, &AccessCheckResult{
 						Allowed: false,
 						Reason:  "access denied",
-					}, nil
+					}, true, nil
 				}
 			} else {
 				// 0 orgs: already caught above; 2+ orgs: caller must specify.
-				return &AccessCheckResult{
+				return nil, nil, &AccessCheckResult{
 					Allowed: false,
 					Reason:  "multiple organizations: use /rpc/:org_id to specify which org",
-				}, nil
+				}, true, nil
 			}
 		}
 	}
 
-	// Check in-memory cache first, unless the caller asked for a fresh
-	// resolution. BypassCache is set by the RD-928 impersonation surface
-	// so a tier-2 admin running "View as user X" sees X's current perms,
-	// not a snapshot the cache picked up before X's last group/grant
-	// mutation. We also skip the post-resolve Set so the bypassed call
-	// doesn't pollute the cache for non-impersonated callers.
+	return org, orgCtx, nil, false, nil
+}
+
+// resolvePermissionsForRequest returns the user's effective permissions in the
+// given org.
+//
+// Check in-memory cache first, unless the caller asked for a fresh
+// resolution. BypassCache is set by the RD-928 impersonation surface
+// so a tier-2 admin running "View as user X" sees X's current perms,
+// not a snapshot the cache picked up before X's last group/grant
+// mutation. We also skip the post-resolve Set so the bypassed call
+// doesn't pollute the cache for non-impersonated callers.
+func (c *AccessController) resolvePermissionsForRequest(ctx context.Context, req *AccessCheckRequest, user *User, org *Organization) (*EffectivePermissions, error) {
 	var perms *EffectivePermissions
 	if !req.BypassCache {
 		if cachedPerms := c.cache.Get(user.ID, org.ID); cachedPerms != nil {
@@ -665,34 +792,45 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 	}
 	if perms == nil {
 		// Resolve permissions (checks DB cache, then computes)
-		perms, err = c.resolver.ResolvePermissions(ctx, user.ID, org.ID)
+		resolved, err := c.resolver.ResolvePermissions(ctx, user.ID, org.ID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve permissions: %w", err)
 		}
+		perms = resolved
 
 		if !req.BypassCache {
 			// Store in in-memory cache for the normal hot path.
 			c.cache.Set(perms)
 		}
 	}
+	return perms, nil
+}
 
+// checkMethodAllowed enforces the group method allowlist. Returns handled=true
+// with a deny result when the method is not permitted.
+func (c *AccessController) checkMethodAllowed(req *AccessCheckRequest, perms *EffectivePermissions) (*AccessCheckResult, bool) {
 	// Check method permission
 	if !perms.HasMethod(req.Method) {
 		return &AccessCheckResult{
 			Allowed: false,
 			Reason:  fmt.Sprintf("method %s not allowed", req.Method),
-		}, nil
+		}, true
 	}
+	return nil, false
+}
 
-	// Handle eth_getLogs specially - needs multi-address validation
-	// eth_getLogs can have multiple addresses in the filter, unlike other methods
-	// that target a single contract. We validate ALL addresses in the filter.
+// checkEthGetLogsAccess handles eth_getLogs specially - needs multi-address
+// validation. eth_getLogs can have multiple addresses in the filter, unlike
+// other methods that target a single contract. We validate ALL addresses in
+// the filter. handled=true when the effective method is eth_getLogs (this phase
+// always terminates the check for that method).
+func (c *AccessController) checkEthGetLogsAccess(ctx context.Context, req *AccessCheckRequest, user *User, org *Organization, orgCtx *OrgContext, perms *EffectivePermissions) (*AccessCheckResult, bool) {
 	if req.EffectiveMethod() == "eth_getLogs" {
 		if err := c.validateGetLogsWithOrgContext(ctx, perms, orgCtx, req.Params); err != nil {
 			return &AccessCheckResult{
 				Allowed: false,
 				Reason:  err.Error(),
-			}, nil
+			}, true
 		}
 		// eth_getLogs passed validation - return allowed
 		allClaims := collectAllClaims(perms)
@@ -702,22 +840,24 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 			UserID:    user.ID,
 			RPCAPIKey: perms.RPCAPIKey,
 			Claims:    allClaims,
-		}, nil
+		}, true
 	}
+	return nil, false
+}
 
-	// Determine required claim based on the operation
-	requiredClaim := ClassifyOperation(req.EffectiveMethod(), req.Params)
-
-	// Simple value transfers (no calldata) to unregistered addresses are treated
-	// as EOA transfers. No contract-level access check is needed since EOAs
-	// don't have code to execute; method allowlist already verified the method
-	// is permitted.
-	//
-	// Covers both eth_sendTransaction (actually sending) and eth_estimateGas
-	// (the pre-flight call standard tooling makes before signing — cast send,
-	// hardhat, ethers, viem all hit estimateGas first). Without the
-	// estimateGas carve-out, every mainstream client breaks at the pre-flight
-	// step even though sendTransaction would have been allowed. RD-969.
+// classifyValueTransferCarveout handles simple value transfers.
+//
+// Simple value transfers (no calldata) to unregistered addresses are treated
+// as EOA transfers. No contract-level access check is needed since EOAs
+// don't have code to execute; method allowlist already verified the method
+// is permitted.
+//
+// Covers both eth_sendTransaction (actually sending) and eth_estimateGas
+// (the pre-flight call standard tooling makes before signing — cast send,
+// hardhat, ethers, viem all hit estimateGas first). Without the
+// estimateGas carve-out, every mainstream client breaks at the pre-flight
+// step even though sendTransaction would have been allowed. RD-969.
+func (c *AccessController) classifyValueTransferCarveout(ctx context.Context, req *AccessCheckRequest, user *User, org *Organization, orgCtx *OrgContext, perms *EffectivePermissions, requiredClaim Claim) (*AccessCheckResult, bool, error) {
 	if (req.EffectiveMethod() == "eth_sendTransaction" || req.EffectiveMethod() == "eth_estimateGas") &&
 		req.TargetAddress != "" && isValueTransferParams(req.Params) {
 		addr := strings.ToLower(req.TargetAddress)
@@ -725,7 +865,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		if !perms.IsContractRegistered(addr) {
 			ownerOrgID, err := orgCtx.OwnerOrgID(ctx, addr)
 			if err != nil {
-				return nil, fmt.Errorf("failed to check address ownership: %w", err)
+				return nil, true, fmt.Errorf("failed to check address ownership: %w", err)
 			}
 			if ownerOrgID == "" {
 				// Address is not a known contract — treat as EOA value transfer.
@@ -734,7 +874,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 					return &AccessCheckResult{
 						Allowed: false,
 						Reason:  "access denied",
-					}, nil
+					}, true, nil
 				}
 				allClaims := collectAllClaims(perms)
 				return &AccessCheckResult{
@@ -743,24 +883,30 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 					UserID:    user.ID,
 					RPCAPIKey: perms.RPCAPIKey,
 					Claims:    allClaims,
-				}, nil
+				}, true, nil
 			}
 		}
 	}
+	return nil, false, nil
+}
 
-	// Basic state queries (balance, nonce) on addresses not registered to any org
-	// are allowed if the method is in the user's allowlist. These are needed for:
-	//   - eth_getTransactionCount: nonce lookups for tx building (cast send, wallets)
-	//   - eth_getBalance: wallet balance display
-	// eth_getStorageAt has tiered access (admin=all slots, non-admin=well-known only)
-	// enforced below. eth_getProof needs strict contract-level gating since
-	// both methods access contract-internal state that could leak sensitive data.
+// classifyBasicAddressQueryCarveout handles basic state queries.
+//
+// Basic state queries (balance, nonce) on addresses not registered to any org
+// are allowed if the method is in the user's allowlist. These are needed for:
+//   - eth_getTransactionCount: nonce lookups for tx building (cast send, wallets)
+//   - eth_getBalance: wallet balance display
+//
+// eth_getStorageAt has tiered access (admin=all slots, non-admin=well-known only)
+// enforced below. eth_getProof needs strict contract-level gating since
+// both methods access contract-internal state that could leak sensitive data.
+func (c *AccessController) classifyBasicAddressQueryCarveout(ctx context.Context, req *AccessCheckRequest, user *User, org *Organization, orgCtx *OrgContext, perms *EffectivePermissions) (*AccessCheckResult, bool, error) {
 	if req.TargetAddress != "" && isBasicAddressQuery(req.EffectiveMethod()) {
 		addr := strings.ToLower(req.TargetAddress)
 		if !perms.IsContractRegistered(addr) {
 			ownerOrgID, err := orgCtx.OwnerOrgID(ctx, addr)
 			if err != nil {
-				return nil, fmt.Errorf("failed to check address ownership: %w", err)
+				return nil, true, fmt.Errorf("failed to check address ownership: %w", err)
 			}
 			if ownerOrgID == "" {
 				// Not owned by any org — allow (method allowlist already verified).
@@ -771,313 +917,372 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 					UserID:    user.ID,
 					RPCAPIKey: perms.RPCAPIKey,
 					Claims:    allClaims,
-				}, nil
+				}, true, nil
 			}
 			// Owned by an org — fall through to contract access check
 		}
 	}
+	return nil, false, nil
+}
 
-	// Check contract access if target address is specified
-	if req.TargetAddress != "" {
-		addr := strings.ToLower(req.TargetAddress)
+// validateContractAccess is the dense contract-access gate, run when the
+// request targets a specific address. It resolves the effective ContractAccess
+// (explicit grant, cross-org-filtered default claims, pre-registration, or
+// deployer auto-grant), then enforces the cross-org isolation check, required
+// claim, tiered eth_getStorageAt access, function-selector rules, and proxy
+// upgrade validation. handled=true means the check terminated with the returned
+// result/err; handled=false means all inner gates passed and evaluation falls
+// through to the additional-required-claims phase.
+func (c *AccessController) validateContractAccess(ctx context.Context, req *AccessCheckRequest, user *User, org *Organization, orgCtx *OrgContext, perms *EffectivePermissions, requiredClaim Claim) (*AccessCheckResult, bool, error) {
+	addr := strings.ToLower(req.TargetAddress)
 
-		// Check if user has EXPLICIT access to this contract in their permissions
-		hasExplicitAccess := perms.IsContractRegistered(addr)
+	// Check if user has EXPLICIT access to this contract in their permissions
+	hasExplicitAccess := perms.IsContractRegistered(addr)
 
-		// Get contract access for this address (may return default_claims for unregistered contracts)
-		access := perms.GetContractAccess(addr)
+	// Get contract access for this address (may return default_claims for unregistered contracts)
+	access := perms.GetContractAccess(addr)
 
-		// For non-explicit access (default claims), check ownership to enforce cross-org isolation.
-		// Unregistered addresses (ownerOrgID == "") are public — keep default claims.
-		// Addresses owned by another org are denied — strip access.
-		// Cache the owner lookup so the preregistered-address check below can reuse it.
-		var (
-			ownerOrgID        string
-			ownerOrgIDFetched bool
-		)
-		if access != nil && !hasExplicitAccess {
+	// For non-explicit access (default claims), check ownership to enforce cross-org isolation.
+	// Unregistered addresses (ownerOrgID == "") are public — keep default claims.
+	// Addresses owned by another org are denied — strip access.
+	// Cache the owner lookup so the preregistered-address check below can reuse it.
+	var (
+		ownerOrgID        string
+		ownerOrgIDFetched bool
+	)
+	if access != nil && !hasExplicitAccess {
+		var err error
+		ownerOrgID, err = orgCtx.OwnerOrgID(ctx, addr)
+		if err != nil {
+			return nil, true, fmt.Errorf("failed to check address ownership: %w", err)
+		}
+		ownerOrgIDFetched = true
+		if ownerOrgID != "" && !orgCtx.UserOrgIDs()[ownerOrgID] {
+			// Registered to a different org — deny via default claims.
+			access = nil
+		}
+		// ownerOrgID == "" means unregistered — keep default claims (public).
+		// ownerOrgID in user's orgs — keep default claims (own org).
+	}
+
+	// Preregistered addresses: planned CREATE/CREATE2 deployments that are
+	// expected to land at a deterministic address. The deployer needs access
+	// to the future contract before it's mined. If the address is in
+	// preregistered_addresses for one of the user's orgs, grant access and
+	// treat as explicit (skips the cross-org / 3-tier grant check below).
+	//
+	// Registered contracts (contracts table) without an explicit grant do NOT
+	// fall through here anymore — RD-849 requires an explicit contract_grant
+	// for tier 3 admins to reach a contract, matching the explorer visibility
+	// layer. Tier 2 org admins (is_org_admin) already get all org contracts
+	// materialized as explicit ContractAccess in computeOrgAdminPermissions.
+	if access == nil {
+		if !ownerOrgIDFetched {
 			var err error
 			ownerOrgID, err = orgCtx.OwnerOrgID(ctx, addr)
 			if err != nil {
-				return nil, fmt.Errorf("failed to check address ownership: %w", err)
-			}
-			ownerOrgIDFetched = true
-			if ownerOrgID != "" && !orgCtx.UserOrgIDs()[ownerOrgID] {
-				// Registered to a different org — deny via default claims.
-				access = nil
-			}
-			// ownerOrgID == "" means unregistered — keep default claims (public).
-			// ownerOrgID in user's orgs — keep default claims (own org).
-		}
-
-		// Preregistered addresses: planned CREATE/CREATE2 deployments that are
-		// expected to land at a deterministic address. The deployer needs access
-		// to the future contract before it's mined. If the address is in
-		// preregistered_addresses for one of the user's orgs, grant access and
-		// treat as explicit (skips the cross-org / 3-tier grant check below).
-		//
-		// Registered contracts (contracts table) without an explicit grant do NOT
-		// fall through here anymore — RD-849 requires an explicit contract_grant
-		// for tier 3 admins to reach a contract, matching the explorer visibility
-		// layer. Tier 2 org admins (is_org_admin) already get all org contracts
-		// materialized as explicit ContractAccess in computeOrgAdminPermissions.
-		if access == nil {
-			if !ownerOrgIDFetched {
-				var err error
-				ownerOrgID, err = orgCtx.OwnerOrgID(ctx, addr)
-				if err != nil {
-					return nil, fmt.Errorf("failed to check address ownership: %w", err)
-				}
-			}
-			if ownerOrgID != "" && orgCtx.UserOrgIDs()[ownerOrgID] {
-				preregistered, err := c.store.IsAddressPreregistered(ctx, ownerOrgID, addr)
-				if err != nil {
-					return nil, fmt.Errorf("failed to check preregistered address: %w", err)
-				}
-				// Preserve the prior gate: pre-reg access requires admin or deploy
-				// claim. Pre-registration is a deployment-related operation, so it's
-				// scoped to users with operational claims (plus is_org_admin tier 2
-				// via the hasExplicitAccess fast path, and the actual deployer via
-				// the auto-grant below).
-				if preregistered && (hasClaim(perms.Claims, ClaimDeploy) || hasClaim(perms.Claims, ClaimAdmin)) {
-					access = &ContractAccess{
-						Claims:    []Claim{ClaimDeploy},
-						Functions: nil, // All functions allowed
-					}
-					hasExplicitAccess = true
-				}
+				return nil, true, fmt.Errorf("failed to check address ownership: %w", err)
 			}
 		}
-
-		// Deployer auto-grant: if the user deployed this contract, they get access automatically.
-		// This happens even without explicit grants - the deployer should always be able to interact
-		// with their own contracts. Note: this does NOT grant upgrade/admin claims.
-		if access == nil || (requiredClaim != "" && !containsClaim(access.Claims, requiredClaim)) {
-			deployerID, err := c.store.GetContractDeployerByAddress(ctx, addr)
+		if ownerOrgID != "" && orgCtx.UserOrgIDs()[ownerOrgID] {
+			preregistered, err := c.store.IsAddressPreregistered(ctx, ownerOrgID, addr)
 			if err != nil {
-				return nil, fmt.Errorf("failed to check contract deployer: %w", err)
+				return nil, true, fmt.Errorf("failed to check preregistered address: %w", err)
 			}
-			if deployerID != nil && *deployerID == user.ID {
-				// User is the deployer - grant access (method allowlist controls read/write).
-				deployerClaims := []Claim{}
-				if access == nil {
-					access = &ContractAccess{
-						Claims:    deployerClaims,
-						Functions: nil, // All functions allowed
-					}
-				} else {
-					// Merge deployer claims with existing claims (union)
-					mergedClaims := make(map[Claim]bool)
-					for _, c := range access.Claims {
-						mergedClaims[c] = true
-					}
-					for _, c := range deployerClaims {
-						mergedClaims[c] = true
-					}
-					combined := make([]Claim, 0, len(mergedClaims))
-					for c := range mergedClaims {
-						combined = append(combined, c)
-					}
-					access = &ContractAccess{
-						Claims:    combined,
-						Functions: access.Functions, // Keep existing function restrictions
-					}
+			// Preserve the prior gate: pre-reg access requires admin or deploy
+			// claim. Pre-registration is a deployment-related operation, so it's
+			// scoped to users with operational claims (plus is_org_admin tier 2
+			// via the hasExplicitAccess fast path, and the actual deployer via
+			// the auto-grant below).
+			if preregistered && (hasClaim(perms.Claims, ClaimDeploy) || hasClaim(perms.Claims, ClaimAdmin)) {
+				access = &ContractAccess{
+					Claims:    []Claim{ClaimDeploy},
+					Functions: nil, // All functions allowed
 				}
-				hasExplicitAccess = true // Deployer access counts as explicit for cross-org check
+				hasExplicitAccess = true
 			}
-		}
-
-		// If still no access, deny
-		if access == nil {
-			slog.Debug("access denied: no contract access", "contract", req.TargetAddress, "user", req.UserExternalID, "method", req.Method)
-			return &AccessCheckResult{
-				Allowed: false,
-				Reason:  ErrContractAccessDenied,
-			}, nil
-		}
-
-		// CROSS-ORG ISOLATION CHECK (P0 Security Fix) - now encapsulated in OrgContext
-		// If user doesn't have explicit access but got access via default_claims,
-		// we must verify the contract isn't registered to a DIFFERENT organization.
-		if err := orgCtx.CheckDefaultClaimsAllowed(ctx, addr, hasExplicitAccess); err != nil {
-			slog.Debug("access denied: cross-org isolation", "contract", req.TargetAddress, "user", req.UserExternalID, "detail", err.Error())
-			return &AccessCheckResult{
-				Allowed: false,
-				Reason:  err.Error(),
-			}, nil
-		}
-
-		// Check if user has the required claim on this contract
-		if requiredClaim != "" && !containsClaim(access.Claims, requiredClaim) {
-			slog.Debug("access denied: missing claim on contract", "claim", requiredClaim, "contract", req.TargetAddress, "user", req.UserExternalID)
-			return &AccessCheckResult{
-				Allowed: false,
-				Reason:  ErrContractAccessDenied,
-			}, nil
-		}
-
-		// Tiered eth_getStorageAt access: admin-claim users get all slots,
-		// non-admin users get only well-known infrastructure slots (EIP-1967, EIP-2535).
-		// This runs AFTER the contract access check (so we know the user has access
-		// to the contract) but BEFORE function selector checks (which don't apply
-		// to storage reads).
-		if req.EffectiveMethod() == MethodGetStorageAt {
-			if !containsClaim(access.Claims, ClaimAdmin) {
-				slot := extractStorageSlot(req.Params)
-				if !IsWellKnownStorageSlot(slot) {
-					slog.Debug("access denied: non-admin user accessing non-well-known storage slot",
-						"slot", slot, "contract", req.TargetAddress, "user", req.UserExternalID)
-					return &AccessCheckResult{
-						Allowed: false,
-						Reason:  ErrContractAccessDenied,
-					}, nil
-				}
-			}
-			// Admin users pass through — all slots allowed
-		}
-
-		// Check function selector if specified.
-		// Use the already-retrieved local `access` variable instead of calling
-		// perms.HasFunctionSelector/GetFunctionRule, which would call GetContractAccess
-		// again and could return the deploy default (Functions: nil) instead of the
-		// actual function restrictions from the grant.
-		if req.FunctionSelector != "" {
-			if !accessHasFunctionSelector(access, req.FunctionSelector) {
-				return &AccessCheckResult{
-					Allowed: false,
-					Reason:  fmt.Sprintf("function %s not allowed on contract %s", req.FunctionSelector, req.TargetAddress),
-				}, nil
-			}
-
-			// Check parameter constraints
-			rule := accessGetFunctionRule(access, req.FunctionSelector)
-			if rule != nil && len(rule.ParamRules) > 0 {
-				// Get calldata - from request field or extract from params
-				calldata := req.Calldata
-				if calldata == nil {
-					calldata = extractCalldata(req.EffectiveMethod(), req.Params)
-				}
-				if calldata == nil {
-					return &AccessCheckResult{
-						Allowed: false,
-						Reason:  "calldata required for parameter constraint validation",
-					}, nil
-				}
-
-				// Get user's linked ETH addresses
-				userAddresses, err := c.store.GetLinkedEthAddresses(ctx, req.UserExternalID)
-				if err != nil {
-					return nil, fmt.Errorf("failed to get linked ETH addresses: %w", err)
-				}
-
-				// Get contract ABI
-				contract, err := c.store.GetContractByAddress(ctx, org.ID, addr)
-				if err != nil {
-					return nil, fmt.Errorf("failed to get contract: %w", err)
-				}
-				var contractABI string
-				if contract != nil {
-					contractABI = contract.ABI
-				}
-
-				// Validate parameter constraints
-				if err := ValidateParamRules(rule, calldata, contractABI, userAddresses); err != nil {
-					return &AccessCheckResult{
-						Allowed: false,
-						Reason:  fmt.Sprintf("parameter constraint violation on %s: %s", req.TargetAddress, err.Error()),
-					}, nil
-				}
-			}
-		} else {
-			// No function selector available.
-			// Only eth_call, eth_estimateGas, and eth_sendTransaction use function selectors.
-			// For those methods: deny if the contract has function-level restrictions because
-			// we cannot verify which function is being called.
-			// Other methods (eth_getCode, etc.) never produce a selector — applying this
-			// check to them would make access depend on ABI registration rather than the
-			// intended AllowedMethods + claim gates.
-			methodUsesSelector := req.EffectiveMethod() == "eth_call" || req.EffectiveMethod() == "eth_estimateGas" || req.EffectiveMethod() == "eth_sendTransaction"
-			if methodUsesSelector && access.Functions != nil {
-				return &AccessCheckResult{
-					Allowed: false,
-					Reason:  fmt.Sprintf("function selector required: contract %s has function-level restrictions", req.TargetAddress),
-				}, nil
-			}
-		}
-
-		// Validate proxy upgrades for eth_sendTransaction (not deployments)
-		// This must happen AFTER verifying write access
-		if req.EffectiveMethod() == "eth_sendTransaction" {
-			calldata := extractCalldata(req.EffectiveMethod(), req.Params)
-			if len(calldata) > 0 {
-				// Check upgrade claim BEFORE proxy validation — if the calldata
-				// matches an upgrade selector, the user must have the upgrade claim
-				// regardless of proxy management state.
-				if len(calldata) >= 4 {
-					selector := hex.EncodeToString(calldata[:4])
-					if IsUpgradeSelector(selector) && !containsClaim(access.Claims, ClaimUpgrade) {
-						return &AccessCheckResult{
-							Allowed: false,
-							Reason:  ErrContractAccessDenied,
-						}, nil
-					}
-				}
-
-				upgradeResult, err := c.upgradeValidator.ValidateUpgrade(ctx, org.ID, addr, calldata)
-				if err != nil {
-					return nil, fmt.Errorf("failed to validate upgrade: %w", err)
-				}
-				if !upgradeResult.Allowed {
-					return &AccessCheckResult{
-						Allowed: false,
-						Reason:  fmt.Sprintf("proxy upgrade denied: %s", upgradeResult.Reason),
-					}, nil
-				}
-			}
-		}
-	} else if requiredClaim == ClaimDeploy {
-		// No target address but operation requires 'deploy' claim (contract deployment)
-		// Check if user has the deploy claim via default claims
-		// No claim check for deploy-less methods without a target address;
-		// the method allowlist is the only gate for non-deploy operations.
-		if !containsClaim(perms.Claims, ClaimDeploy) {
-			return &AccessCheckResult{
-				Allowed: false,
-				Reason:  "access denied",
-			}, nil
-		}
-
-		// For contract deployments, runtime tracing
-		// (jsonrpc_processor.validateDeployWithTracing — debug_traceCall
-		// against empty `to`) is the authoritative cross-org isolation
-		// gate. We just confirm the bytecode is present (404 helps the
-		// client distinguish missing-payload from access-denied) and
-		// pass — every executed frame is checked at the trace layer
-		// against userOrgIDs. The pre-M10 static bytecode analyzer
-		// covered only constant CALL targets; the dynamic ones it
-		// claimed to delegate to runtime tracing weren't actually
-		// wired. M10 wired the trace gate and the static analyzer was
-		// removed.
-		if requiredClaim == ClaimDeploy && IsContractDeployment(req.EffectiveMethod(), req.Params) {
-			bytecodeHex := extractDeploymentBytecode(req.EffectiveMethod(), req.Params)
-			if bytecodeHex == "" {
-				return &AccessCheckResult{
-					Allowed: false,
-					Reason:  "contract deployment missing bytecode",
-				}, nil
-			}
-			allClaims := collectAllClaims(perms)
-			return &AccessCheckResult{
-				Allowed:   true,
-				OrgID:     org.ID,
-				UserID:    user.ID,
-				RPCAPIKey: perms.RPCAPIKey,
-				Claims:    allClaims,
-			}, nil
 		}
 	}
 
-	// Check additional required claims from the request
+	// Deployer auto-grant: if the user deployed this contract, they get access automatically.
+	// This happens even without explicit grants - the deployer should always be able to interact
+	// with their own contracts. Note: this does NOT grant upgrade/admin claims.
+	if access == nil || (requiredClaim != "" && !containsClaim(access.Claims, requiredClaim)) {
+		deployerID, err := c.store.GetContractDeployerByAddress(ctx, addr)
+		if err != nil {
+			return nil, true, fmt.Errorf("failed to check contract deployer: %w", err)
+		}
+		if deployerID != nil && *deployerID == user.ID {
+			// User is the deployer - grant access (method allowlist controls read/write).
+			deployerClaims := []Claim{}
+			if access == nil {
+				access = &ContractAccess{
+					Claims:    deployerClaims,
+					Functions: nil, // All functions allowed
+				}
+			} else {
+				// Merge deployer claims with existing claims (union)
+				mergedClaims := make(map[Claim]bool)
+				for _, c := range access.Claims {
+					mergedClaims[c] = true
+				}
+				for _, c := range deployerClaims {
+					mergedClaims[c] = true
+				}
+				combined := make([]Claim, 0, len(mergedClaims))
+				for c := range mergedClaims {
+					combined = append(combined, c)
+				}
+				access = &ContractAccess{
+					Claims:    combined,
+					Functions: access.Functions, // Keep existing function restrictions
+				}
+			}
+			hasExplicitAccess = true // Deployer access counts as explicit for cross-org check
+		}
+	}
+
+	// If still no access, deny
+	if access == nil {
+		slog.Debug("access denied: no contract access", "contract", req.TargetAddress, "user", req.UserExternalID, "method", req.Method)
+		return &AccessCheckResult{
+			Allowed: false,
+			Reason:  ErrContractAccessDenied,
+		}, true, nil
+	}
+
+	// CROSS-ORG ISOLATION CHECK (P0 Security Fix) - now encapsulated in OrgContext
+	// If user doesn't have explicit access but got access via default_claims,
+	// we must verify the contract isn't registered to a DIFFERENT organization.
+	if err := orgCtx.CheckDefaultClaimsAllowed(ctx, addr, hasExplicitAccess); err != nil {
+		slog.Debug("access denied: cross-org isolation", "contract", req.TargetAddress, "user", req.UserExternalID, "detail", err.Error())
+		return &AccessCheckResult{
+			Allowed: false,
+			Reason:  err.Error(),
+		}, true, nil
+	}
+
+	// Check if user has the required claim on this contract
+	if requiredClaim != "" && !containsClaim(access.Claims, requiredClaim) {
+		slog.Debug("access denied: missing claim on contract", "claim", requiredClaim, "contract", req.TargetAddress, "user", req.UserExternalID)
+		return &AccessCheckResult{
+			Allowed: false,
+			Reason:  ErrContractAccessDenied,
+		}, true, nil
+	}
+
+	// Tiered eth_getStorageAt access: admin-claim users get all slots,
+	// non-admin users get only well-known infrastructure slots (EIP-1967, EIP-2535).
+	// This runs AFTER the contract access check (so we know the user has access
+	// to the contract) but BEFORE function selector checks (which don't apply
+	// to storage reads).
+	if req.EffectiveMethod() == MethodGetStorageAt {
+		if res, handled := c.validateStorageSlotAccess(req, access); handled {
+			return res, true, nil
+		}
+		// Admin users pass through — all slots allowed
+	}
+
+	// Check function selector if specified.
+	if res, handled, err := c.validateFunctionSelector(ctx, req, org, access); handled {
+		return res, true, err
+	}
+
+	// Validate proxy upgrades for eth_sendTransaction (not deployments)
+	// This must happen AFTER verifying write access
+	if req.EffectiveMethod() == "eth_sendTransaction" {
+		if res, handled, err := c.validateProxyUpgrade(ctx, req, org, access); handled {
+			return res, true, err
+		}
+	}
+
+	return nil, false, nil
+}
+
+// validateStorageSlotAccess enforces tiered eth_getStorageAt access: admin-claim
+// users get all slots, non-admin users get only well-known infrastructure slots
+// (EIP-1967, EIP-2535). Returns handled=true with a deny result when a non-admin
+// requests a non-well-known slot.
+func (c *AccessController) validateStorageSlotAccess(req *AccessCheckRequest, access *ContractAccess) (*AccessCheckResult, bool) {
+	if !containsClaim(access.Claims, ClaimAdmin) {
+		slot := extractStorageSlot(req.Params)
+		if !IsWellKnownStorageSlot(slot) {
+			slog.Debug("access denied: non-admin user accessing non-well-known storage slot",
+				"slot", slot, "contract", req.TargetAddress, "user", req.UserExternalID)
+			return &AccessCheckResult{
+				Allowed: false,
+				Reason:  ErrContractAccessDenied,
+			}, true
+		}
+	}
+	return nil, false
+}
+
+// validateFunctionSelector checks the function selector against the contract's
+// function rules and parameter constraints.
+//
+// Uses the already-retrieved local `access` variable instead of calling
+// perms.HasFunctionSelector/GetFunctionRule, which would call GetContractAccess
+// again and could return the deploy default (Functions: nil) instead of the
+// actual function restrictions from the grant.
+//
+// handled=true means the check terminated with the returned result/err.
+func (c *AccessController) validateFunctionSelector(ctx context.Context, req *AccessCheckRequest, org *Organization, access *ContractAccess) (*AccessCheckResult, bool, error) {
+	if req.FunctionSelector != "" {
+		if !accessHasFunctionSelector(access, req.FunctionSelector) {
+			return &AccessCheckResult{
+				Allowed: false,
+				Reason:  fmt.Sprintf("function %s not allowed on contract %s", req.FunctionSelector, req.TargetAddress),
+			}, true, nil
+		}
+
+		// Check parameter constraints
+		rule := accessGetFunctionRule(access, req.FunctionSelector)
+		if rule != nil && len(rule.ParamRules) > 0 {
+			// Get calldata - from request field or extract from params
+			calldata := req.Calldata
+			if calldata == nil {
+				calldata = extractCalldata(req.EffectiveMethod(), req.Params)
+			}
+			if calldata == nil {
+				return &AccessCheckResult{
+					Allowed: false,
+					Reason:  "calldata required for parameter constraint validation",
+				}, true, nil
+			}
+
+			// Get user's linked ETH addresses
+			userAddresses, err := c.store.GetLinkedEthAddresses(ctx, req.UserExternalID)
+			if err != nil {
+				return nil, true, fmt.Errorf("failed to get linked ETH addresses: %w", err)
+			}
+
+			// Get contract ABI
+			contract, err := c.store.GetContractByAddress(ctx, org.ID, strings.ToLower(req.TargetAddress))
+			if err != nil {
+				return nil, true, fmt.Errorf("failed to get contract: %w", err)
+			}
+			var contractABI string
+			if contract != nil {
+				contractABI = contract.ABI
+			}
+
+			// Validate parameter constraints
+			if err := ValidateParamRules(rule, calldata, contractABI, userAddresses); err != nil {
+				return &AccessCheckResult{
+					Allowed: false,
+					Reason:  fmt.Sprintf("parameter constraint violation on %s: %s", req.TargetAddress, err.Error()),
+				}, true, nil
+			}
+		}
+	} else {
+		// No function selector available.
+		// Only eth_call, eth_estimateGas, and eth_sendTransaction use function selectors.
+		// For those methods: deny if the contract has function-level restrictions because
+		// we cannot verify which function is being called.
+		// Other methods (eth_getCode, etc.) never produce a selector — applying this
+		// check to them would make access depend on ABI registration rather than the
+		// intended AllowedMethods + claim gates.
+		methodUsesSelector := req.EffectiveMethod() == "eth_call" || req.EffectiveMethod() == "eth_estimateGas" || req.EffectiveMethod() == "eth_sendTransaction"
+		if methodUsesSelector && access.Functions != nil {
+			return &AccessCheckResult{
+				Allowed: false,
+				Reason:  fmt.Sprintf("function selector required: contract %s has function-level restrictions", req.TargetAddress),
+			}, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
+// validateProxyUpgrade validates proxy upgrades for eth_sendTransaction (not
+// deployments). This must happen AFTER verifying write access. handled=true
+// means the check terminated with the returned result/err.
+func (c *AccessController) validateProxyUpgrade(ctx context.Context, req *AccessCheckRequest, org *Organization, access *ContractAccess) (*AccessCheckResult, bool, error) {
+	addr := strings.ToLower(req.TargetAddress)
+	calldata := extractCalldata(req.EffectiveMethod(), req.Params)
+	if len(calldata) > 0 {
+		// Check upgrade claim BEFORE proxy validation — if the calldata
+		// matches an upgrade selector, the user must have the upgrade claim
+		// regardless of proxy management state.
+		if len(calldata) >= 4 {
+			selector := hex.EncodeToString(calldata[:4])
+			if IsUpgradeSelector(selector) && !containsClaim(access.Claims, ClaimUpgrade) {
+				return &AccessCheckResult{
+					Allowed: false,
+					Reason:  ErrContractAccessDenied,
+				}, true, nil
+			}
+		}
+
+		upgradeResult, err := c.upgradeValidator.ValidateUpgrade(ctx, org.ID, addr, calldata)
+		if err != nil {
+			return nil, true, fmt.Errorf("failed to validate upgrade: %w", err)
+		}
+		if !upgradeResult.Allowed {
+			return &AccessCheckResult{
+				Allowed: false,
+				Reason:  fmt.Sprintf("proxy upgrade denied: %s", upgradeResult.Reason),
+			}, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
+// validateDeploymentWithoutTarget handles a request with no target address that
+// requires the 'deploy' claim (contract deployment).
+//
+// No claim check for deploy-less methods without a target address;
+// the method allowlist is the only gate for non-deploy operations.
+//
+// handled=true means the check terminated with the returned result/err;
+// handled=false falls through to the additional-required-claims phase (the
+// deploy-claim gate passed but the request is not a contract deployment).
+func (c *AccessController) validateDeploymentWithoutTarget(req *AccessCheckRequest, user *User, org *Organization, perms *EffectivePermissions, requiredClaim Claim) (*AccessCheckResult, bool, error) {
+	// No target address but operation requires 'deploy' claim (contract deployment)
+	// Check if user has the deploy claim via default claims
+	if !containsClaim(perms.Claims, ClaimDeploy) {
+		return &AccessCheckResult{
+			Allowed: false,
+			Reason:  "access denied",
+		}, true, nil
+	}
+
+	// For contract deployments, runtime tracing
+	// (jsonrpc_processor.validateDeployWithTracing — debug_traceCall
+	// against empty `to`) is the authoritative cross-org isolation
+	// gate. We just confirm the bytecode is present (404 helps the
+	// client distinguish missing-payload from access-denied) and
+	// pass — every executed frame is checked at the trace layer
+	// against userOrgIDs. The pre-M10 static bytecode analyzer
+	// covered only constant CALL targets; the dynamic ones it
+	// claimed to delegate to runtime tracing weren't actually
+	// wired. M10 wired the trace gate and the static analyzer was
+	// removed.
+	if requiredClaim == ClaimDeploy && IsContractDeployment(req.EffectiveMethod(), req.Params) {
+		bytecodeHex := extractDeploymentBytecode(req.EffectiveMethod(), req.Params)
+		if bytecodeHex == "" {
+			return &AccessCheckResult{
+				Allowed: false,
+				Reason:  "contract deployment missing bytecode",
+			}, true, nil
+		}
+		allClaims := collectAllClaims(perms)
+		return &AccessCheckResult{
+			Allowed:   true,
+			OrgID:     org.ID,
+			UserID:    user.ID,
+			RPCAPIKey: perms.RPCAPIKey,
+			Claims:    allClaims,
+		}, true, nil
+	}
+	return nil, false, nil
+}
+
+// checkAdditionalRequiredClaims enforces the request's explicit RequiredClaims.
+// For each required claim the user must have it on any registered contract or
+// via default claims. Returns handled=true with a deny result when any required
+// claim is missing.
+func (c *AccessController) checkAdditionalRequiredClaims(req *AccessCheckRequest, perms *EffectivePermissions) (*AccessCheckResult, bool) {
 	for _, claim := range req.RequiredClaims {
 		// For required claims, check if user has it on any registered contract or via default claims
 		hasClaimOnAnyContract := false
@@ -1091,20 +1296,10 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 			return &AccessCheckResult{
 				Allowed: false,
 				Reason:  "access denied",
-			}, nil
+			}, true
 		}
 	}
-
-	// Collect all claims the user has (from all contracts + defaults)
-	allClaims := collectAllClaims(perms)
-
-	return &AccessCheckResult{
-		Allowed:   true,
-		OrgID:     org.ID,
-		UserID:    user.ID,
-		RPCAPIKey: perms.RPCAPIKey,
-		Claims:    allClaims,
-	}, nil
+	return nil, false
 }
 
 // collectAllClaims returns the union of all claims from all contracts and default claims.
