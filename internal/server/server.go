@@ -495,6 +495,9 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		database.Close()
 		return nil, fmt.Errorf("failed to create JWT service: %w", err)
 	}
+	// Rotation window: previous secrets validate (never sign) so a secret can be
+	// rotated without logging every session out (RD-1164 #15).
+	jwtService.SetValidationSecrets(cfg.JWTSecretPrevious, cfg.JWTRefreshSecretPrevious)
 
 	// Upstream node connection-pool sizing (RD-1112), shared by the forwarder
 	// and the runtime tracer (both talk to the single node host).

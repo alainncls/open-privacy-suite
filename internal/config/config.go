@@ -278,6 +278,10 @@ type Config struct {
 	IPFSGateway            string
 	JWTSecret              string
 	JWTRefreshSecret       string
+	// Previous JWT secrets accepted for validation only (never signing), for
+	// hitless secret rotation (RD-1164 #15). Comma-separated; empty = no window.
+	JWTSecretPrevious        []string // JWT_SECRET_PREVIOUS
+	JWTRefreshSecretPrevious []string // JWT_REFRESH_SECRET_PREVIOUS
 	VerifierID             string // DID or identifier of the verifier
 	BaseURL                string // Base URL for callback (e.g., https://api.example.com)
 	Port                   string // Server port (e.g., "8080")
@@ -766,6 +770,8 @@ func Load() *Config {
 		IPFSGateway:                         getEnv("IPFS_GATEWAY", "https://ipfs-proxy-cache.privado.id"), // IPFS gateway for schema resolution
 		JWTSecret:                           getEnv("JWT_SECRET", ""),                                      // If empty, will be auto-generated (dev only)
 		JWTRefreshSecret:                    getEnv("JWT_REFRESH_SECRET", ""),                              // If empty, will be auto-generated (dev only)
+		JWTSecretPrevious:                   getSliceEnv("JWT_SECRET_PREVIOUS", ","),
+		JWTRefreshSecretPrevious:            getSliceEnv("JWT_REFRESH_SECRET_PREVIOUS", ","),
 		VerifierID:                          getEnv("VERIFIER_ID", ""),                                     // Required in production
 		BaseURL:                             getEnv("BASE_URL", "http://localhost:8080"),                   // Base URL for callback
 		Port:                                getEnv("PORT", "8080"),                                        // Server port

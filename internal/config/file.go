@@ -48,6 +48,8 @@ var fileConfigErr error
 var secretKeys = map[string]bool{
 	"JWT_SECRET":                 true,
 	"JWT_REFRESH_SECRET":         true,
+	"JWT_SECRET_PREVIOUS":        true, // rotation-window validation secrets (RD-1164 #15)
+	"JWT_REFRESH_SECRET_PREVIOUS": true,
 	"ADMIN_API_TOKEN":            true,
 	"OPERATOR_API_TOKEN":         true, // restricted admin bearer token (X-Admin-Token); grants org create + org-admin minting (RD-1132)
 	"AZURE_AD_CLIENT_SECRET":     true,
