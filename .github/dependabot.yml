@@ -4,3 +4,15 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+
+  # Go module dependencies. Previously only github-actions were tracked, so
+  # module CVEs (e.g. golang-jwt CVE-2025-30204) sat unnoticed. Grouped to keep
+  # PR volume manageable; the CI vuln job gates on reachable vulnerabilities.
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      go-dependencies:
+        patterns:
+          - "*"

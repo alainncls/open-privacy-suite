@@ -1,14 +1,14 @@
 module privacy-proxy
 
-go 1.25.0
+go 1.25.11
 
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/cockroachdb/pebble v1.1.5
 	github.com/coreos/go-oidc/v3 v3.17.0
-	github.com/ethereum/go-ethereum v1.16.8
+	github.com/ethereum/go-ethereum v1.17.0
 	github.com/gin-gonic/gin v1.9.1
-	github.com/go-jose/go-jose/v4 v4.1.3
+	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/google/uuid v1.6.0
 	github.com/iden3/go-iden3-auth/v2 v2.7.8
@@ -61,7 +61,6 @@ require (
 	github.com/cpuguy83/dockercfg v0.3.2 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.5 // indirect
 	github.com/crate-crypto/go-eth-kzg v1.4.0 // indirect
-	github.com/crate-crypto/go-ipa v0.0.0-20240724233137-53bbb0ceb27a // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dchest/blake512 v1.0.0 // indirect
 	github.com/deckarep/golang-set/v2 v2.8.0 // indirect
@@ -73,7 +72,6 @@ require (
 	github.com/dustinxie/ecc v0.0.0-20210511000915-959544187564 // indirect
 	github.com/ebitengine/purego v0.10.0 // indirect
 	github.com/ethereum/c-kzg-4844/v2 v2.1.5 // indirect
-	github.com/ethereum/go-verkle v0.2.2 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.2 // indirect
