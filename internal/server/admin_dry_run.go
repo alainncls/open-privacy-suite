@@ -77,6 +77,19 @@ type dryRunResponse struct {
 	LogsVisibleToUser []json.RawMessage `json:"logs_visible_to_user,omitempty"`
 }
 
+// dryRunResponseDoc is the OpenAPI mirror of dryRunResponse (RD-1166):
+// swag cannot schema json.RawMessage, so the spec documents those
+// pass-through fields as free-form JSON values. Wire shape is identical.
+// Spec-only; never constructed at runtime.
+type dryRunResponseDoc struct {
+	Decision          string `json:"decision" example:"allow"`
+	Reason            string `json:"reason,omitempty"`
+	Response          any    `json:"response,omitempty"`
+	Trace             any    `json:"trace,omitempty"`
+	LogsEmitted       []any  `json:"logs_emitted,omitempty"`
+	LogsVisibleToUser []any  `json:"logs_visible_to_user,omitempty"`
+}
+
 // supported method allowlist for Phase 1. Read methods pass through
 // unchanged; write methods are translated to debug_traceCall. Anything
 // outside this set returns 400 — clearer than silently no-op'ing,
@@ -98,6 +111,23 @@ var dryRunTraceMethods = map[string]bool{
 }
 
 // handleDryRun handles POST /api/orgs/:org_id/dry-run.
+//
+// @Summary      Dry-run an RPC call as a user
+// @Description  Evaluates "what would this user see if they made this RPC call?" in the path org, without mutating chain state. Read methods are forwarded and redacted as the impersonated user; write methods (eth_sendTransaction / eth_sendRawTransaction) are translated to debug_traceCall so the RBAC verdict and the events the tx would emit (and the subset visible to the user) can be inspected. Requires a tier-2 org-admin JWT of the path org: X-Admin-Token credentials (both the full super-admin token and the operator token) are explicitly rejected, since impersonation reads tenant data as the user. The impersonated user must exist and be a member of the path org, else an opaque 404 (no cross-org existence leak). Every evaluation is written to the impersonation audit log fail-closed. Supported methods: eth_call, eth_getLogs, eth_getTransactionReceipt, eth_getTransactionByHash, eth_getBalance, eth_getCode, eth_getStorageAt, eth_blockNumber, eth_chainId, eth_sendTransaction, eth_sendRawTransaction.
+// @Tags         Admin: RBAC
+// @Accept       json
+// @Produce      json
+// @Param        org_id path string true "Organization ID (UUID)"
+// @Param        request body dryRunRequest true "impersonation request (user_did and rpc.method/params)"
+// @Success      200 {object} dryRunResponseDoc
+// @Failure      400 {object} APIError "invalid body, unsupported method, self-dry-run, or missing user_did/rpc.method"
+// @Failure      401 {object} APIError "missing admin authentication (no admin_subject)"
+// @Failure      403 {object} APIError "source address not on the private network, or X-Admin-Token/operator credentials used (dry-run requires a tier-2 admin JWT)"
+// @Failure      404 {object} APIError "impersonated user not found or not a member of the path org (opaque)"
+// @Failure      500 {object} APIError "internal error (includes audit-log write failure — response withheld)"
+// @Failure      502 {object} APIError "upstream node error or trace failure"
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/dry-run [post]
 func (s *Server) handleDryRun(c *gin.Context) {
 	ctx := c.Request.Context()
 	orgID := c.Param("org_id")

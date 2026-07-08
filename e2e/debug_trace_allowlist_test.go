@@ -73,7 +73,9 @@ func TestDebugTrace_DeployClaimButMethodNotAllowlisted_Denied(t *testing.T) {
 
 	token := getJWTTokenForCreate2(t, env.serverURL, userDID)
 
-	status, body := jsonRPCCallRaw(t, env.serverURL, token, "debug_traceCall",
+	// did:test: users skip the dev-admin auto-grant, so they belong to exactly
+	// one org and the bare "/" endpoint (empty orgID) resolves unambiguously.
+	status, body := jsonRPCCallRaw(t, env.serverURL, "", token, "debug_traceCall",
 		traceCallParams(anvilAccount0, anvilAccount1))
 
 	// Denied: the deploy claim does NOT bypass the method allowlist anymore.
@@ -107,7 +109,7 @@ func TestDebugTrace_AllowlistedWithoutDeployClaim_Reaches(t *testing.T) {
 	// A trace of a simple value transfer between the caller's own linked EOA and
 	// an unregistered EOA target. No registered cross-org contract is touched,
 	// so ValidateTrace allows it and the upstream node returns a trace.
-	status, body := jsonRPCCallRaw(t, env.serverURL, token, "debug_traceCall",
+	status, body := jsonRPCCallRaw(t, env.serverURL, "", token, "debug_traceCall",
 		traceCallParams(anvilAccount0, anvilAccount1))
 
 	// The allowlist gate did NOT block: the response is NOT the uniform 404
@@ -156,7 +158,7 @@ func TestDebugTrace_CrossOrgStillDeniedByValidateTrace(t *testing.T) {
 	// org-b tries to debug_traceCall INTO org-a's registered contract.
 	// Allowlist gate passes (debug_traceCall is allowlisted for org-b), but the
 	// trace touches a cross-org-owned contract → ValidateTrace denies it.
-	status, body := jsonRPCCallRaw(t, env.serverURL, tracerToken, "debug_traceCall",
+	status, body := jsonRPCCallRaw(t, env.serverURL, "", tracerToken, "debug_traceCall",
 		traceCallParams(anvilAccount1, orgAContract))
 
 	// Denied, and NOT by the allowlist gate (org-b allowlists debug_traceCall):

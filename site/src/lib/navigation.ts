@@ -45,7 +45,10 @@ export const navigation: NavGroup[] = [
   },
   {
     title: "API Reference",
-    items: [{ title: "API Reference", href: "/docs/api" }],
+    items: [
+      { title: "API Overview", href: "/docs/api" },
+      { title: "Interactive Reference", href: "/api-reference" },
+    ],
   },
   {
     title: "Operations",

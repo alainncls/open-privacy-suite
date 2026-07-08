@@ -69,10 +69,12 @@ func TestExplorerByHash_DisclosureGrant_AllLevelsReturn200(t *testing.T) {
 			wantAuditEntry:    true,
 		},
 		{
-			name:              "PseudonymousGrant_BothLensed",
-			level:             disclosure.DisclosurePseudonymous,
-			wantGrantedRender: explorer.GeneratePseudonym,
-			wantCounterRender: explorer.GeneratePseudonym,
+			name:  "PseudonymousGrant_BothLensed",
+			level: disclosure.DisclosurePseudonymous,
+			// nil key mirrors the test server's config (ExplorerPseudonymKey
+			// unset) so the expected pseudonym matches the redactor's output.
+			wantGrantedRender: func(a string) string { return explorer.GeneratePseudonym(a, nil) },
+			wantCounterRender: func(a string) string { return explorer.GeneratePseudonym(a, nil) },
 			wantAuditEntry:    false,
 		},
 		{

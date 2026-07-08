@@ -47,7 +47,7 @@ func expectedGrantedRender(level VisibilityLevel) string {
 	case VisibilityFull:
 		return grantedAddr
 	case VisibilityPseudonymous:
-		return GeneratePseudonym(grantedAddr)
+		return GeneratePseudonym(grantedAddr, nil)
 	case VisibilityRedacted:
 		return "[PRIVATE]"
 	default:
@@ -64,7 +64,7 @@ func expectedCounterpartyRender(level VisibilityLevel) string {
 	case VisibilityFull:
 		return privateCounterAddr
 	case VisibilityPseudonymous:
-		return GeneratePseudonym(privateCounterAddr)
+		return GeneratePseudonym(privateCounterAddr, nil)
 	case VisibilityRedacted:
 		return "[PRIVATE]"
 	default:
@@ -138,7 +138,7 @@ func TestRedactTransactions_PseudonymousGrant_RowSurvives_CounterpartyDemoted(t 
 		t.Fatalf("Pseudonymous grant must keep the row, got %d", len(result))
 	}
 	if result[0].From != expectedGrantedRender(VisibilityPseudonymous) {
-		t.Errorf("granted target From: expected %q, got %q", GeneratePseudonym(grantedAddr), result[0].From)
+		t.Errorf("granted target From: expected %q, got %q", GeneratePseudonym(grantedAddr, nil), result[0].From)
 	}
 	if result[0].To == nil || *result[0].To != expectedCounterpartyRender(VisibilityPseudonymous) {
 		t.Errorf("counterparty under pseudonymous lens must render as Address-XXXX; got %v (PR #282 regression?)", result[0].To)
@@ -229,10 +229,10 @@ func TestRedactTransfers_PseudonymousGrant_RowSurvives_CounterpartyDemoted(t *te
 	if len(result) != 1 {
 		t.Fatalf("Pseudonymous-grant transfer must keep the row, got %d", len(result))
 	}
-	if result[0].From != GeneratePseudonym(grantedAddr) {
+	if result[0].From != GeneratePseudonym(grantedAddr, nil) {
 		t.Errorf("granted target: expected pseudonym, got %q", result[0].From)
 	}
-	if result[0].To != GeneratePseudonym(privateCounterAddr) {
+	if result[0].To != GeneratePseudonym(privateCounterAddr, nil) {
 		t.Errorf("counterparty must render as Address-XXXX under pseudonymous lens (PR #282 regression?); got %q", result[0].To)
 	}
 }
@@ -303,10 +303,10 @@ func TestRedactInternalTransactions_PseudonymousGrant_RowSurvives_CounterpartyDe
 	if len(result) != 1 {
 		t.Fatalf("Pseudonymous-grant internal tx must keep the row, got %d", len(result))
 	}
-	if result[0].From != GeneratePseudonym(grantedAddr) {
+	if result[0].From != GeneratePseudonym(grantedAddr, nil) {
 		t.Errorf("expected granted target pseudonym, got %q", result[0].From)
 	}
-	if result[0].To == nil || *result[0].To != GeneratePseudonym(privateCounterAddr) {
+	if result[0].To == nil || *result[0].To != GeneratePseudonym(privateCounterAddr, nil) {
 		t.Errorf("internal-tx counterparty must render as Address-XXXX under pseudonymous lens (PR #282 regression?); got %v", result[0].To)
 	}
 }
@@ -409,7 +409,7 @@ func TestRedactTransactions_PseudonymousGrant_ParticipantOverrideWins_NoDemotion
 	}
 	// Counterparty stays at its own pseudonym (grant lens doesn't apply
 	// since viewer is a direct participant — they know who Bob is).
-	if result[0].To == nil || *result[0].To != GeneratePseudonym(grantedAddr) {
+	if result[0].To == nil || *result[0].To != GeneratePseudonym(grantedAddr, nil) {
 		t.Errorf("granted counterparty stays at its own pseudonym, got %v", result[0].To)
 	}
 }
@@ -483,8 +483,8 @@ func matrixCells() []matrixCell {
 			name:        "PseudonymousGrant_RowSurvives_CounterpartyDemoted",
 			grantLevel:  VisibilityPseudonymous,
 			wantSurvive: true,
-			wantFrom:    GeneratePseudonym(grantedAddr),
-			wantTo:      GeneratePseudonym(privateCounterAddr),
+			wantFrom:    GeneratePseudonym(grantedAddr, nil),
+			wantTo:      GeneratePseudonym(privateCounterAddr, nil),
 			wantReveals: 0,
 		},
 		{
@@ -578,4 +578,3 @@ func TestRedactor_DisclosureGrantMatrixConformance(t *testing.T) {
 		})
 	}
 }
-

@@ -341,6 +341,12 @@ type Config struct {
 	// (eth_sendTransaction / eth_sendRawTransaction / deploy).
 	RuntimeTracingIntraOrgGrantsEnabled bool
 
+	// EthCallDenyWithoutABI sets the RD-1144 posture for eth_call return data
+	// from contracts with no resolvable ABI. false (default) passes the raw
+	// return through; true blanks it (fail-closed). Address-typed returns of
+	// ABI-registered contracts are field-level redacted regardless of this flag.
+	EthCallDenyWithoutABI bool
+
 	// Travel rule compliance configuration
 	EnableTravelRule   bool          // If true, enable travel rule enforcement (default: false)
 	TravelRecordExpiry time.Duration // How long travel rule records stay valid (default: 24h)
@@ -421,6 +427,7 @@ type Config struct {
 	RPCAPIKey              string // RPC_API_KEY — global fallback when no group-specific key is set
 	RPCAPIKeyHeader        string // RPC_API_KEY_HEADER — header name used to send the RPC API key (default "Authorization", which sends "Bearer <key>"); any other value sends the raw key under that header
 	RPCAPIKeyEncryptionKey []byte // RPC_API_KEY_ENCRYPTION_KEY — 32-byte hex key for AES-256 encryption of RPC API keys at rest
+	ExplorerPseudonymKey   []byte // EXPLORER_PSEUDONYM_KEY — HMAC key for explorer address pseudonyms (non-reversible, non-enumerable). Optional; set in production.
 	MaxConcurrentRequests  int    // MAX_CONCURRENT_REQUESTS — per-user concurrency cap (default: 50)
 
 	// Azure AD / Microsoft Entra ID authentication
@@ -531,6 +538,13 @@ func Load() *Config {
 	// operators opt in when they want grants to gate composition within an
 	// org too. Cross-org isolation is unaffected either way.
 	intraOrgGrantsTracingEnabled := getEnv("RUNTIME_TRACING_INTRA_ORG_GRANTS_ENABLED", "false") == "true"
+	// RD-1144: eth_call return-data redaction posture for contracts with NO
+	// resolvable ABI. Default false = passthrough (current behaviour; the
+	// address-typed return of an ABI-registered contract is still redacted
+	// regardless of this flag). true = fail-closed blank of every no-ABI
+	// eth_call return — safest, but breaks reads of unregistered contracts.
+	// A privacy-vs-usability operator decision (see docs/security/response-filtering).
+	ethCallDenyWithoutABI := getEnv("ETH_CALL_DENY_WITHOUT_ABI", "false") == "true"
 	ethCallTraceTimeout := 5 * time.Second
 	if t := getEnv("ETH_CALL_TRACE_TIMEOUT", ""); t != "" {
 		if d, err := time.ParseDuration(t); err == nil {
@@ -657,13 +671,35 @@ func Load() *Config {
 		}
 	}
 
-	// RPC API key encryption key (hex-encoded 32 bytes for AES-256)
+	// RPC API key encryption key (hex-encoded 32 bytes for AES-256).
+	// RD-1164 #2: fail fast on a set-but-invalid key. Previously an invalid value
+	// was silently ignored, leaving the key nil — which disables encryption and
+	// stores RPC API keys in plaintext at rest while the operator believes
+	// encryption is on. A misconfigured prod must not boot silently.
 	var rpcAPIKeyEncKey []byte
 	if hexKey := getEnv("RPC_API_KEY_ENCRYPTION_KEY", ""); hexKey != "" {
 		decoded, err := hex.DecodeString(hexKey)
-		if err == nil && len(decoded) == 32 {
-			rpcAPIKeyEncKey = decoded
+		if err != nil {
+			panic(fmt.Sprintf("RPC_API_KEY_ENCRYPTION_KEY: invalid hex: %v", err))
 		}
+		if len(decoded) != 32 {
+			panic(fmt.Sprintf("RPC_API_KEY_ENCRYPTION_KEY: must decode to 32 bytes (AES-256), got %d", len(decoded)))
+		}
+		rpcAPIKeyEncKey = decoded
+	}
+
+	// Explorer pseudonym HMAC key (hex-encoded, any length). Keys the address
+	// pseudonyms shown to viewers so they are non-reversible and non-enumerable
+	// (RD-1164 #8). Optional: when unset, pseudonyms are still HMAC-derived (never
+	// the old reversible scheme) but, without a secret, can be recomputed from a
+	// candidate address — set this in production. Fail fast on invalid hex.
+	var pseudonymKey []byte
+	if hexKey := getEnv("EXPLORER_PSEUDONYM_KEY", ""); hexKey != "" {
+		decoded, err := hex.DecodeString(hexKey)
+		if err != nil {
+			panic(fmt.Sprintf("EXPLORER_PSEUDONYM_KEY: invalid hex: %v", err))
+		}
+		pseudonymKey = decoded
 	}
 
 	// RPC API key header name. Default "Authorization" preserves Bearer token
@@ -745,6 +781,7 @@ func Load() *Config {
 		RuntimeTracingEthCallEnabled:        ethCallTracingEnabled,
 		EthCallTraceTimeout:                 ethCallTraceTimeout,
 		RuntimeTracingIntraOrgGrantsEnabled: intraOrgGrantsTracingEnabled,
+		EthCallDenyWithoutABI:               ethCallDenyWithoutABI,
 		EnableTravelRule:                    enableTravelRule,
 		TravelRecordExpiry:                  travelRecordExpiry,
 		ComplianceDefaultMode:               complianceDefaultMode,
@@ -781,6 +818,7 @@ func Load() *Config {
 		RPCAPIKey:                           getEnv("RPC_API_KEY", ""),
 		RPCAPIKeyHeader:                     rpcAPIKeyHeader,
 		RPCAPIKeyEncryptionKey:              rpcAPIKeyEncKey,
+		ExplorerPseudonymKey:                pseudonymKey,
 		MaxConcurrentRequests:               maxConcurrentRequests,
 		AzureADClientID:                     getEnv("AZURE_AD_CLIENT_ID", ""),
 		AzureADClientSecret:                 getEnv("AZURE_AD_CLIENT_SECRET", ""),

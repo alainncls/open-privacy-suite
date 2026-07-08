@@ -20,6 +20,15 @@ type TestIdentity struct {
 
 // handleGetTestIdentities returns test identities (users with did:test: prefix) for the dev identity picker.
 // Only available in mockauth builds when AllowMockLogin is enabled.
+//
+// @Summary      List dev test identities
+// @Description  Available only in non-production builds with mock login enabled. Returns the pre-configured test users (DIDs with the did:test: prefix), with their linked ETH addresses and org names, to populate the dev identity picker.
+// @Tags         Auth
+// @Produce      json
+// @Success      200 {object} testIdentitiesResponse
+// @Failure      403 {object} APIError "not available"
+// @Failure      500 {object} APIError "failed to list users"
+// @Router       /api/v1/dev/test-identities [get]
 func (s *Server) handleGetTestIdentities(c *gin.Context) {
 	if s.config.IsProduction() || !s.config.AllowMockLogin {
 		c.JSON(http.StatusForbidden, gin.H{"error": "not available"})

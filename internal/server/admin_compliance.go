@@ -104,6 +104,19 @@ func (s *Server) orgCurrency(ctx context.Context, orgID string) string {
 	return "usd"
 }
 
+// getComplianceConfig returns an org's compliance configuration.
+//
+// @Summary      Get an org's compliance configuration
+// @Description  Returns the organization's travel-rule compliance settings (enabled flag, fiat threshold, per-org currency, unknown-price policy, and enforcement mode). If the org has no config row yet, a default (disabled, cluster-default enforcement mode) is returned. Tenant-confidential: not readable with the operator token — use a tier-2 org-admin JWT.
+// @Tags         Admin: compliance
+// @Produce      json
+// @Param        org_id path string true "Organization ID"
+// @Success      200 {object} compliance.ComplianceConfig
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, org outside the caller's scope, or operator token (tenant data not readable)"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/compliance/config [get]
 func (s *Server) getComplianceConfig(c *gin.Context) {
 	// RD-1132: tenant-confidential read — not readable with the operator token.
 	if denyOperatorTenantRead(c) {
@@ -133,6 +146,22 @@ func (s *Server) getComplianceConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, config)
 }
 
+// updateComplianceConfig creates or updates an org's compliance configuration.
+//
+// @Summary      Update an org's compliance configuration
+// @Description  Creates or updates the organization's compliance settings (enabled flag, fiat threshold, per-org currency, unknown-price policy, enforce/monitor mode). A partial update — only the fields present in the body are changed. Per-org management is the org admin's job; the operator/super-admin token cannot mutate per-org config (RD-1107). RD-1158 made currency a per-org setting owned here (the global base currency stays super-admin only). The change is written to the RBAC audit log.
+// @Tags         Admin: compliance
+// @Accept       json
+// @Produce      json
+// @Param        org_id path string true "Organization ID"
+// @Param        request body ComplianceConfigUpdateRequest true "compliance config fields to change"
+// @Success      200 {object} compliance.ComplianceConfig
+// @Failure      400 {object} APIError "invalid body, negative threshold, or unsupported policy/mode/currency"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, org outside the caller's scope (read-only admins cannot mutate), or operator token (per-org management is the org admin's job)"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/compliance/config [put]
 func (s *Server) updateComplianceConfig(c *gin.Context) {
 	// RD-1107: per-org compliance management is the org admin's job; the
 	// super-admin token is platform/bootstrap only.
@@ -261,6 +290,19 @@ func (s *Server) updateComplianceConfig(c *gin.Context) {
 
 // Token Price handlers
 
+// listTokenPrices returns an org's configured token prices.
+//
+// @Summary      List an org's token prices
+// @Description  Returns the fiat token prices configured for the organization, used to value transfers for the travel-rule threshold. Tenant-confidential: not readable with the operator token — use a tier-2 org-admin JWT.
+// @Tags         Admin: compliance
+// @Produce      json
+// @Param        org_id path string true "Organization ID"
+// @Success      200 {object} ComplianceDataResponse{data=[]compliance.TokenPrice}
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, org outside the caller's scope, or operator token (tenant data not readable)"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/compliance/tokens [get]
 func (s *Server) listTokenPrices(c *gin.Context) {
 	// RD-1132: tenant-confidential read — not readable with the operator token.
 	if denyOperatorTenantRead(c) {
@@ -277,6 +319,23 @@ func (s *Server) listTokenPrices(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": prices})
 }
 
+// upsertTokenPrice creates or updates a token price for an org.
+//
+// @Summary      Set a token price for an org
+// @Description  Creates or updates the fiat price of a token for the organization. token_address is "native" (for the chain's native coin) or a 0x-prefixed contract address. Supply coingecko_id to source the price from the system cache, or a manual prices map keyed by currency code. Per-org management is the org admin's job (RD-1107). The change is written to the RBAC audit log.
+// @Tags         Admin: compliance
+// @Accept       json
+// @Produce      json
+// @Param        org_id path string true "Organization ID"
+// @Param        token_address path string true "Token contract address (0x-prefixed) or 'native'"
+// @Param        request body ComplianceTokenPriceUpsertRequest true "token price fields"
+// @Success      200 {object} compliance.TokenPrice
+// @Failure      400 {object} APIError "invalid body, address, coingecko_id, currency, price, decimals, or symbol"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, org outside the caller's scope (read-only admins cannot mutate), or operator token (per-org management is the org admin's job)"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/compliance/tokens/{token_address} [put]
 func (s *Server) upsertTokenPrice(c *gin.Context) {
 	// RD-1107: per-org compliance management is the org admin's job.
 	if denyOperatorOrgScoped(c) {
@@ -416,6 +475,21 @@ func (s *Server) upsertTokenPrice(c *gin.Context) {
 	c.JSON(http.StatusOK, price)
 }
 
+// deleteTokenPrice removes a token price for an org.
+//
+// @Summary      Delete a token price for an org
+// @Description  Removes the configured fiat price for a token in the organization. token_address is "native" or a 0x-prefixed contract address. Per-org management is the org admin's job (RD-1107).
+// @Tags         Admin: compliance
+// @Produce      json
+// @Param        org_id path string true "Organization ID"
+// @Param        token_address path string true "Token contract address (0x-prefixed) or 'native'"
+// @Success      200 {object} APIMessage "token price deleted"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, org outside the caller's scope (read-only admins cannot mutate), or operator token (per-org management is the org admin's job)"
+// @Failure      404 {object} APIError "token price not found"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/compliance/tokens/{token_address} [delete]
 func (s *Server) deleteTokenPrice(c *gin.Context) {
 	// RD-1107: per-org compliance management is the org admin's job.
 	if denyOperatorOrgScoped(c) {
@@ -444,6 +518,18 @@ func (s *Server) deleteTokenPrice(c *gin.Context) {
 
 // System Token Price handlers
 
+// listSystemTokenPrices returns the global CoinGecko-sourced price cache.
+//
+// @Summary      List system token prices
+// @Description  Returns the fleet-wide system token price cache (populated by the CoinGecko poller) plus the active global base currency. Each entry carries an is_stale flag when its last update is older than the configured staleness threshold. Read-only; any admin token.
+// @Tags         Admin: compliance
+// @Produce      json
+// @Success      200 {object} ComplianceSystemTokenPriceListResponse
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/compliance/system-token-prices [get]
 func (s *Server) listSystemTokenPrices(c *gin.Context) {
 	ctx := c.Request.Context()
 	prices, err := s.db.ListSystemTokenPrices(ctx)
@@ -496,6 +582,22 @@ func (s *Server) listSystemTokenPrices(c *gin.Context) {
 // only from localhost. Rate limiting is out of scope for PoC but should be added
 // before production deployment.
 
+// createTravelRuleRecord creates a pre-transfer travel-rule record for an org.
+//
+// @Summary      Create a travel-rule record
+// @Description  Creates an IVMS101 travel-rule record (originator/beneficiary data) that satisfies the compliance check for a subsequent transfer above the threshold. The fiat amount is computed server-side from amount_wei and the configured token price — it is never taken from the request. transfer_type is "eth" or "erc20" (token_address required for erc20); the originator must be a member of the org. The response includes an advisory warning when the amount is below the applicable threshold (the record may never be used). Per-org management is the org admin's job (RD-1107).
+// @Tags         Admin: compliance
+// @Accept       json
+// @Produce      json
+// @Param        org_id path string true "Organization ID"
+// @Param        request body ComplianceTravelRuleRecordCreateRequest true "travel-rule record fields"
+// @Success      201 {object} compliance.TravelRuleRecord
+// @Failure      400 {object} APIError "invalid body, amount, transfer_type, address, or no configured token price"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, org outside the caller's scope (read-only admins cannot mutate), or operator token (per-org management is the org admin's job)"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/compliance/travel-rule-records [post]
 func (s *Server) createTravelRuleRecord(c *gin.Context) {
 	// RD-1107: per-org compliance management is the org admin's job.
 	if denyOperatorOrgScoped(c) {
@@ -635,6 +737,21 @@ func (s *Server) createTravelRuleRecord(c *gin.Context) {
 	c.JSON(http.StatusCreated, record)
 }
 
+// listTravelRuleRecords returns an org's travel-rule records (paginated).
+//
+// @Summary      List travel-rule records
+// @Description  Returns the organization's travel-rule records, most recent first, with pagination. Tenant-confidential: not readable with the operator token — use a tier-2 org-admin JWT.
+// @Tags         Admin: compliance
+// @Produce      json
+// @Param        org_id path string true "Organization ID"
+// @Param        limit query int false "Max rows to return (default 50, capped at 1000)"
+// @Param        offset query int false "Rows to skip (default 0)"
+// @Success      200 {object} ComplianceListResponse{data=[]compliance.TravelRuleRecord}
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, org outside the caller's scope, or operator token (tenant data not readable)"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/compliance/travel-rule-records [get]
 func (s *Server) listTravelRuleRecords(c *gin.Context) {
 	// RD-1132: tenant-confidential read — not readable with the operator token.
 	if denyOperatorTenantRead(c) {
@@ -652,6 +769,23 @@ func (s *Server) listTravelRuleRecords(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": records, "total": total, "limit": limit, "offset": offset})
 }
 
+// deleteTravelRuleRecord deletes an unused travel-rule record.
+//
+// @Summary      Delete a travel-rule record
+// @Description  Deletes a travel-rule record by ID. A record that has already been consumed by a transfer cannot be deleted (409). Per-org management is the org admin's job (RD-1107).
+// @Tags         Admin: compliance
+// @Produce      json
+// @Param        org_id path string true "Organization ID"
+// @Param        id path string true "Travel-rule record ID (UUID)"
+// @Success      204 "record deleted"
+// @Failure      400 {object} APIError "invalid record id format"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, org outside the caller's scope (read-only admins cannot mutate), or operator token (per-org management is the org admin's job)"
+// @Failure      404 {object} APIError "travel rule record not found"
+// @Failure      409 {object} APIError "cannot delete a used travel rule record"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/compliance/travel-rule-records/{id} [delete]
 func (s *Server) deleteTravelRuleRecord(c *gin.Context) {
 	// RD-1107: per-org compliance management is the org admin's job.
 	if denyOperatorOrgScoped(c) {
@@ -691,6 +825,21 @@ func (s *Server) deleteTravelRuleRecord(c *gin.Context) {
 // tier-2 admin could enumerate every other org's blocklist. JWT
 // admins are now restricted to their own scope (and to global rows
 // for super-admin only).
+//
+// @Summary      List sanctioned addresses
+// @Description  Returns blocklisted addresses (global or per-org), paginated. Scope is enforced by caller type: super-admin sees any scope; a tier-2 org-admin JWT must pass an in-scope org_id (global rows are super-admin only); the operator token may read the global list but not a specific org's blocklist.
+// @Tags         Admin: compliance
+// @Produce      json
+// @Param        org_id query string false "Restrict to one org's blocklist (required for tier-2 org-admin JWTs; omit for the global list)"
+// @Param        limit query int false "Max rows to return (default 50, capped at 1000)"
+// @Param        offset query int false "Rows to skip (default 0)"
+// @Success      200 {object} ComplianceListResponse{data=[]compliance.SanctionedAddress}
+// @Failure      400 {object} APIError "org_id query parameter is required (tier-2 org-admin JWT)"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, org out of scope, or a per-org read attempted with the operator token"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/compliance/sanctions [get]
 func (s *Server) listSanctionedAddresses(c *gin.Context) {
 	limit, offset := compliancePaginationParams(c, 50)
 
@@ -736,6 +885,20 @@ func (s *Server) listSanctionedAddresses(c *gin.Context) {
 // inject sanctions into Org B's blocklist or create a tenant-wide
 // global sanction. Now the org_id must be in caller's scope; global
 // (nil) requires super-admin.
+//
+// @Summary      Add a sanctioned address
+// @Description  Adds an address to the compliance blocklist. Omit org_id for a GLOBAL sanction (super-admin only); set it for a per-org sanction (the org admin's job — the operator/super-admin token cannot add per-org rows). Tier-2 org-admin JWTs must scope to an org they fully administer. The address is normalized to lowercase and the action is written to the RBAC audit log.
+// @Tags         Admin: compliance
+// @Accept       json
+// @Produce      json
+// @Param        request body ComplianceSanctionAddRequest true "sanction fields"
+// @Success      201 {object} compliance.SanctionedAddress
+// @Failure      400 {object} APIError "invalid body, address, or reason too long"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, global requires super-admin, or per-org must be in scope and is not addable with the operator token"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/compliance/sanctions [post]
 func (s *Server) addSanctionedAddress(c *gin.Context) {
 	var input struct {
 		OrgID   *string `json:"org_id"`
@@ -813,6 +976,18 @@ func (s *Server) addSanctionedAddress(c *gin.Context) {
 // any other tenant's blocklist. Now the loaded row's org_id must be
 // in caller's full-admin scope; deletion of global rows requires
 // super-admin.
+//
+// @Summary      Remove a sanctioned address
+// @Description  Removes a sanction from the blocklist by ID. Removing a global row requires super-admin; removing a per-org row is the org admin's job (in scope) and is not permitted with the operator/super-admin token. To avoid a cross-org existence oracle, an unknown ID and an out-of-scope row both return the same opaque 403. The action is written to the RBAC audit log.
+// @Tags         Admin: compliance
+// @Produce      json
+// @Param        id path string true "Sanction row ID (UUID)"
+// @Success      200 {object} APIMessage "sanctioned address removed"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, row not found, out of scope, global requires super-admin, or per-org not removable with the operator token"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/compliance/sanctions/{id} [delete]
 func (s *Server) removeSanctionedAddress(c *gin.Context) {
 	id := c.Param("id")
 
@@ -865,6 +1040,21 @@ func (s *Server) removeSanctionedAddress(c *gin.Context) {
 
 // Address Threshold Override handlers
 
+// listAddressThresholdOverrides returns an org's per-address threshold overrides.
+//
+// @Summary      List address threshold overrides
+// @Description  Returns the organization's per-address travel-rule threshold overrides (paginated). An override takes precedence over the org-level threshold for that address. Tenant-confidential: not readable with the operator token — use a tier-2 org-admin JWT.
+// @Tags         Admin: compliance
+// @Produce      json
+// @Param        org_id path string true "Organization ID"
+// @Param        limit query int false "Max rows to return (default 50, capped at 1000)"
+// @Param        offset query int false "Rows to skip (default 0)"
+// @Success      200 {object} ComplianceListResponse{data=[]compliance.AddressThresholdOverride}
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, org outside the caller's scope, or operator token (tenant data not readable)"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/compliance/address-thresholds [get]
 func (s *Server) listAddressThresholdOverrides(c *gin.Context) {
 	// RD-1132: tenant-confidential read — not readable with the operator token.
 	if denyOperatorTenantRead(c) {
@@ -882,6 +1072,23 @@ func (s *Server) listAddressThresholdOverrides(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": overrides, "total": total, "limit": limit, "offset": offset})
 }
 
+// upsertAddressThresholdOverride creates or updates a per-address threshold override.
+//
+// @Summary      Set an address threshold override
+// @Description  Creates or updates a per-address travel-rule threshold override for the organization. The override replaces the org-level threshold when valuing transfers involving that address. Per-org management is the org admin's job (RD-1107).
+// @Tags         Admin: compliance
+// @Accept       json
+// @Produce      json
+// @Param        org_id path string true "Organization ID"
+// @Param        address path string true "Address (0x-prefixed hex) the override applies to"
+// @Param        request body ComplianceThresholdOverrideUpsertRequest true "override fields"
+// @Success      200 {object} compliance.AddressThresholdOverride
+// @Failure      400 {object} APIError "invalid address, body, negative threshold, or note too long"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, org outside the caller's scope (read-only admins cannot mutate), or operator token (per-org management is the org admin's job)"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/compliance/address-thresholds/{address} [put]
 func (s *Server) upsertAddressThresholdOverride(c *gin.Context) {
 	// RD-1107: per-org compliance management is the org admin's job.
 	if denyOperatorOrgScoped(c) {
@@ -941,6 +1148,21 @@ func (s *Server) upsertAddressThresholdOverride(c *gin.Context) {
 	c.JSON(http.StatusOK, override)
 }
 
+// deleteAddressThresholdOverride removes a per-address threshold override.
+//
+// @Summary      Delete an address threshold override
+// @Description  Removes a per-address threshold override for the organization; the org-level threshold then applies to that address again. Per-org management is the org admin's job (RD-1107).
+// @Tags         Admin: compliance
+// @Produce      json
+// @Param        org_id path string true "Organization ID"
+// @Param        address path string true "Address (0x-prefixed hex) the override applies to"
+// @Success      200 {object} APIMessage "address threshold override deleted"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, org outside the caller's scope (read-only admins cannot mutate), or operator token (per-org management is the org admin's job)"
+// @Failure      404 {object} APIError "address threshold override not found"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/compliance/address-thresholds/{address} [delete]
 func (s *Server) deleteAddressThresholdOverride(c *gin.Context) {
 	// RD-1107: per-org compliance management is the org admin's job.
 	if denyOperatorOrgScoped(c) {
@@ -969,6 +1191,24 @@ func (s *Server) deleteAddressThresholdOverride(c *gin.Context) {
 
 // Compliance Log handlers
 
+// listComplianceLogs returns an org's compliance decision log (paginated).
+//
+// @Summary      List compliance decision logs
+// @Description  Returns the organization's immutable compliance decision log (each allowed/denied transfer decision), paginated and filterable. Tenant-confidential: not readable with the operator token — use a tier-2 org-admin JWT.
+// @Tags         Admin: compliance
+// @Produce      json
+// @Param        org_id path string true "Organization ID"
+// @Param        limit query int false "Max rows to return (default 50, capped at 1000)"
+// @Param        offset query int false "Rows to skip (default 0)"
+// @Param        user_search query string false "Filter by originating user (substring match)"
+// @Param        decision query string false "Filter by decision" Enums(allowed, denied)
+// @Param        transfer_type query string false "Filter by transfer type" Enums(eth, erc20)
+// @Success      200 {object} ComplianceListResponse{data=[]compliance.ComplianceLog}
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, org outside the caller's scope, or operator token (tenant data not readable)"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/compliance/logs [get]
 func (s *Server) listComplianceLogs(c *gin.Context) {
 	// RD-1132: tenant-confidential read — not readable with the operator token.
 	if denyOperatorTenantRead(c) {
@@ -1078,6 +1318,18 @@ func lowercasePtr(s *string) *string {
 
 // Currency admin endpoints
 
+// getBaseCurrency returns the global base currency and supported currencies.
+//
+// @Summary      Get the global base currency
+// @Description  Returns the fleet-wide default (base) currency, the full list of supported fiat currencies, and whether CoinGecko price polling is enabled. This is the platform-wide fallback; each org can override it with its own per-org currency (RD-1158). Read-only; any admin token.
+// @Tags         Admin: compliance
+// @Produce      json
+// @Success      200 {object} ComplianceBaseCurrencyResponse
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/compliance/currency [get]
 func (s *Server) getBaseCurrency(c *gin.Context) {
 	currency, err := s.db.GetSystemSetting(c.Request.Context(), "base_currency")
 	if err != nil {
@@ -1117,6 +1369,21 @@ func (s *Server) getBaseCurrency(c *gin.Context) {
 // other org's value transfers by switching to a currency whose
 // prices they don't have. Restrict to super-admin (X-Admin-Token);
 // it's a platform-wide setting that affects every tenant.
+//
+// @Summary      Set the global base currency
+// @Description  Switches the fleet-wide base currency and re-values the cached system and manual token prices from their stored multi-currency prices. Super-admin only — it is a platform-wide setting affecting every tenant. If manual token prices are missing for the target currency, the switch is refused with 409 and the affected tokens unless force=true is set (those tokens then block transfers until priced). The change is written to the RBAC audit log.
+// @Tags         Admin: compliance
+// @Accept       json
+// @Produce      json
+// @Param        request body ComplianceSetBaseCurrencyRequest true "target currency and force flag"
+// @Success      200 {object} ComplianceSetBaseCurrencyResponse
+// @Failure      400 {object} APIError "invalid body or unsupported currency"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, or super-admin token required"
+// @Failure      409 {object} ComplianceCurrencyConflictResponse "manual token prices missing for the target currency; set force=true"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/compliance/currency [put]
 func (s *Server) setBaseCurrency(c *gin.Context) {
 	if !requireSuperAdmin(c) {
 		return

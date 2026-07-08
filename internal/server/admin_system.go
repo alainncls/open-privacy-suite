@@ -30,6 +30,16 @@ type systemVersionResponse struct {
 // build identity is operational data for ops/support, so it lives behind the
 // admin surface (plus the startup log line and the Prometheus build_info
 // label).
+//
+// @Summary      Build version of the running proxy
+// @Description  Build identity (version, commit, build time) of the running binary. Read-only; any admin token. Deliberately not exposed on /health or web3_clientVersion.
+// @Tags         Admin: system
+// @Produce      json
+// @Success      200 {object} systemVersionResponse
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network"
+// @Security     AdminToken
+// @Router       /api/v1/admin/system/version [get]
 func (s *Server) handleGetVersion(c *gin.Context) {
 	c.JSON(http.StatusOK, systemVersionResponse{
 		Version:   version.Version,
@@ -100,6 +110,17 @@ func snapshotToResponse(s runtimeToggleState) systemToggleResponse {
 // cross-org tracing knob. Available to any caller the admin middleware
 // chain admits (super-admin token OR tier-2 admin JWT) — the read is
 // harmless and ops dashboards may want it.
+//
+// @Summary      Get eth_call cross-org tracing state
+// @Description  Current effective state of the eth_call cross-org tracing control, plus its env default and change metadata. Read-only; any admin the middleware admits.
+// @Tags         Admin: system
+// @Produce      json
+// @Success      200 {object} systemToggleResponse
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network"
+// @Failure      503 {object} APIError "request processor not initialised"
+// @Security     AdminToken
+// @Router       /api/v1/admin/system/eth-call-tracing [get]
 func (s *Server) handleGetEthCallTracing(c *gin.Context) {
 	if s.jsonrpcProcessor == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "processor not initialised"})
@@ -113,6 +134,20 @@ func (s *Server) handleGetEthCallTracing(c *gin.Context) {
 // tracing knob. Super-admin (admin_token) only. Audit-logged. The
 // effect is **not persisted** — the next restart re-installs the env
 // value, which is the durable control.
+//
+// @Summary      Toggle eth_call cross-org tracing
+// @Description  Sets the in-memory eth_call cross-org tracing control. Super-admin token only (tier-2 admin JWTs get 403). A non-empty reason is required and audit-logged. The change is not persisted — a restart re-installs the env default.
+// @Tags         Admin: system
+// @Accept       json
+// @Produce      json
+// @Param        request body systemToggleRequest true "enabled flag and audit reason"
+// @Success      200 {object} systemToggleResponse
+// @Failure      400 {object} APIError "missing enabled flag, missing reason, or reason too long"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "not a super-admin token, or source address not on the private network"
+// @Failure      503 {object} APIError "request processor not initialised"
+// @Security     AdminToken
+// @Router       /api/v1/admin/system/eth-call-tracing [post]
 func (s *Server) handlePostEthCallTracing(c *gin.Context) {
 	if s.jsonrpcProcessor == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "processor not initialised"})
@@ -205,6 +240,17 @@ func (s *Server) handlePostEthCallTracing(c *gin.Context) {
 // handleGetIntraOrgGrantTracing returns the current state of the RD-1053
 // intra-org contract-grant scoping knob. Same read-access posture as the
 // eth_call tracing GET (any admin the middleware admits).
+//
+// @Summary      Get intra-org grant tracing state
+// @Description  Current effective state of the RD-1053 intra-org contract-grant scoping control, plus its env default and change metadata. Read-only; any admin the middleware admits.
+// @Tags         Admin: system
+// @Produce      json
+// @Success      200 {object} systemToggleResponse
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network"
+// @Failure      503 {object} APIError "request processor not initialised"
+// @Security     AdminToken
+// @Router       /api/v1/admin/system/intra-org-grant-tracing [get]
 func (s *Server) handleGetIntraOrgGrantTracing(c *gin.Context) {
 	if s.jsonrpcProcessor == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "processor not initialised"})
@@ -222,6 +268,20 @@ func (s *Server) handleGetIntraOrgGrantTracing(c *gin.Context) {
 // directions are NOT symmetric in blast radius — turning this knob OFF
 // *widens* read/send access within an org (back to org-ownership-only
 // frames), so the audit row matters most on a disable.
+//
+// @Summary      Toggle intra-org grant tracing
+// @Description  Sets the in-memory RD-1053 intra-org contract-grant scoping control. Super-admin token only (tier-2 admin JWTs get 403). A non-empty reason is required and audit-logged. The change is not persisted — a restart re-installs the env default. Disabling this control widens intra-org read/send access, so the audit trail matters most on a disable.
+// @Tags         Admin: system
+// @Accept       json
+// @Produce      json
+// @Param        request body systemToggleRequest true "enabled flag and audit reason"
+// @Success      200 {object} systemToggleResponse
+// @Failure      400 {object} APIError "missing enabled flag, missing reason, or reason too long"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "not a super-admin token, or source address not on the private network"
+// @Failure      503 {object} APIError "request processor not initialised"
+// @Security     AdminToken
+// @Router       /api/v1/admin/system/intra-org-grant-tracing [post]
 func (s *Server) handlePostIntraOrgGrantTracing(c *gin.Context) {
 	if s.jsonrpcProcessor == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "processor not initialised"})

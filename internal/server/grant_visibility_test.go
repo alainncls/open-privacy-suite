@@ -79,7 +79,7 @@ func TestGrantVisibility(t *testing.T) {
 		seedExplorerTransaction(t, conn, block3, "0xtx_alice_to_dave", addrAlice, addrDave)
 
 		addressID := explorer.GenerateAddressID(addrDave, pseudoGrantID)
-		disclosedPseudonym := explorer.GeneratePseudonym(addrDave)
+		disclosedPseudonym := explorer.GeneratePseudonym(addrDave, nil)
 
 		t.Run("Pseudonymous_ViewerOwnAddrShowsAsYou", func(t *testing.T) {
 			// Alice views Dave's grant transactions. The tx from Alice → Dave should

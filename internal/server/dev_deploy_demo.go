@@ -78,6 +78,21 @@ type DeployDemoERC20Response struct {
 
 // handleDeployDemoERC20 deploys a DemoERC20 token contract in dev mode.
 // Optionally registers it to an organization if org_id is provided.
+//
+// @Summary      Deploy a demo ERC-20 token (dev only)
+// @Description  Deploys a DemoToken (DEMO) ERC-20 contract via the configured node and returns its address and transaction hash. Self-gated to non-production builds: returns 403 when running in production. Optionally registers the deployed contract to an organization (and grants it to the deployer's group) when org_id is supplied. Requires an admin token and a private-network source address.
+// @Tags         Admin: ops
+// @Accept       json
+// @Produce      json
+// @Param        request body DeployDemoERC20Request false "optional org to register the contract to, and contract name"
+// @Success      200 {object} DeployDemoERC20Response
+// @Failure      400 {object} APIError "invalid request body"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "not available in production, or source address not on the private network"
+// @Failure      404 {object} APIError "organization not found"
+// @Failure      500 {object} APIError "deployment failed"
+// @Security     AdminToken
+// @Router       /api/v1/admin/dev/deploy-demo-erc20 [post]
 func (s *Server) handleDeployDemoERC20(c *gin.Context) {
 	// Only allow in non-production
 	if s.config.IsProduction() {

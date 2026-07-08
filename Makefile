@@ -123,6 +123,25 @@ test-unit:
 verify-audit-buffer:
 	@bash scripts/verify-audit-buffer-volume.sh
 
+# RD-1166: regenerate the OpenAPI document from the swaggo handler annotations
+# (swag v2 is pinned as a go.mod tool), refresh the docs-site copy, and rebuild
+# the endpoint inventory from the live route table. All outputs are committed;
+# CI regenerates and fails on drift. The route↔spec coverage gate lives in
+# internal/server/openapi_coverage_test.go (runs with test-unit).
+SWAG_EXCLUDES = ./site,./frontend,./e2e,./mcp,./contracts,./scripts,./monitoring,./demos,./docs
+.PHONY: api-spec
+api-spec:
+	go tool swag init --v3.1 -q -g internal/server/openapi_general_info.go -d ./ \
+		--exclude $(SWAG_EXCLUDES) -o internal/server/apispec --ot json,yaml \
+		--parseInternal --parseDependencyLevel 1
+	cp internal/server/apispec/swagger.json site/public/openapi.json
+	go run ./cmd/api-inventory
+
+# RD-1166: regenerate only API_ENDPOINTS.md (method/path/auth inventory).
+.PHONY: api-inventory
+api-inventory:
+	go run ./cmd/api-inventory
+
 # Minimum coverage threshold (percentage) - start at 45%, increase over time
 MIN_COVERAGE ?= 45
 

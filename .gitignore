@@ -39,6 +39,10 @@ node_modules/
 rpc-namespaces.json
 !rpc-namespaces.example.json
 
+# Local dev compose overrides (keep examples). Auto-included by privacy-dev-up.sh.
+docker-compose.*.override.yml
+!docker-compose.*.override.yml.example
+
 # IDE
 .vscode/
 .idea/
@@ -88,7 +92,9 @@ DEV.local.md
 .env.deploy.local
 
 # Claude Code settings (machine-specific)
-.claude/
+.claude/*
+# ...but share team skills through the repo (keep the rest of .claude local).
+!.claude/skills/
 
 # TypeScript build info (build artifact)
 *.tsbuildinfo

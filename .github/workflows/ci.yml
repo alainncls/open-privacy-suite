@@ -43,6 +43,14 @@ jobs:
       - name: Check err.Error leaks in HTTP responses (RD-934)
         run: bash tools/check-err-leak.sh
 
+      # RD-1166: the OpenAPI document and endpoint inventory are generated
+      # from handler annotations and committed; regenerate and fail on drift
+      # so the published spec can never fall behind the code.
+      - name: Check generated API spec is current (RD-1166)
+        run: |
+          make api-spec
+          git diff --exit-code -- internal/server/apispec site/public/openapi.json API_ENDPOINTS.md
+
   test-go:
     name: Go Tests
     runs-on: ubuntu-latest

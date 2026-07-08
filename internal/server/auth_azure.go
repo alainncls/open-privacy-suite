@@ -134,6 +134,16 @@ type ProvidersResponse struct {
 
 // handleAzureAuthURL handles GET /api/v1/auth/azure/url.
 // Returns the Microsoft authorization URL and a CSRF state token.
+//
+// @Summary      Get the Azure AD authorization URL
+// @Description  Returns the Microsoft Entra ID authorization URL to redirect the user to, plus a single-use CSRF state token to replay at the callback. The `redirect_uri` must be on the server's allowlist. Available only when Azure AD is configured. Rate-limited.
+// @Tags         Auth
+// @Produce      json
+// @Param        redirect_uri query string true "post-login redirect URI (must be allowlisted)"
+// @Success      200 {object} AzureURLResponse
+// @Failure      400 {object} APIError "redirect_uri missing or not allowed"
+// @Failure      404 {object} APIError "Azure AD authentication not configured"
+// @Router       /api/v1/auth/azure/url [get]
 func (s *Server) handleAzureAuthURL(c *gin.Context) {
 	if s.azureAuthenticator == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Azure AD authentication not configured"})
@@ -158,6 +168,20 @@ func (s *Server) handleAzureAuthURL(c *gin.Context) {
 
 // handleAzureCallback handles POST /api/v1/auth/azure/callback.
 // Validates CSRF state, exchanges the authorization code, and issues our JWT tokens.
+//
+// @Summary      Complete Azure AD interactive login
+// @Description  Validates the single-use CSRF state, exchanges the Azure AD authorization code, enforces the tenant allowlist, provisions the RBAC user, and issues our access + refresh tokens. Available only when Azure AD is configured. Rate-limited.
+// @Tags         Auth
+// @Accept       json
+// @Produce      json
+// @Param        request body AzureCallbackRequest true "authorization code, CSRF state, and redirect URI"
+// @Success      200 {object} AuthResponse
+// @Failure      400 {object} APIError "invalid request, redirect_uri not allowed, or invalid/expired state token"
+// @Failure      401 {object} APIError "Azure AD authentication failed or invalid tenant ID in token"
+// @Failure      403 {object} APIError "tenant not authorized, auto-provisioning disabled, tenant mismatch, or account banned"
+// @Failure      404 {object} APIError "Azure AD authentication not configured"
+// @Failure      500 {object} APIError "failed to check tenant authorization, provision user, or issue tokens"
+// @Router       /api/v1/auth/azure/callback [post]
 func (s *Server) handleAzureCallback(c *gin.Context) {
 	if s.azureAuthenticator == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Azure AD authentication not configured"})
@@ -368,6 +392,20 @@ type AzureServicePrincipalRequest struct {
 // expiry, audience), then run the same tenant-allowlist + provisioning +
 // token-issuance flow as the interactive path so the SP can call /rpc with our
 // standard Bearer access token.
+//
+// @Summary      Azure AD service-principal (M2M) login
+// @Description  Machine-to-machine login for Azure AD service principals. The client obtains an Azure AD access token out-of-band via the client-credentials grant and posts it here; the proxy verifies it (signature/JWKS, expiry, audience), enforces the tenant allowlist, provisions the RBAC user, and issues our access + refresh tokens. Available only when Azure AD is configured. Rate-limited.
+// @Tags         Auth
+// @Accept       json
+// @Produce      json
+// @Param        request body AzureServicePrincipalRequest true "Azure AD access token from the client-credentials grant"
+// @Success      200 {object} AuthResponse
+// @Failure      400 {object} APIError "invalid request format"
+// @Failure      401 {object} APIError "Azure AD authentication failed or invalid tenant ID in token"
+// @Failure      403 {object} APIError "tenant not authorized, auto-provisioning disabled, tenant mismatch, or account banned"
+// @Failure      404 {object} APIError "Azure AD authentication not configured"
+// @Failure      500 {object} APIError "failed to check tenant authorization, provision user, or issue tokens"
+// @Router       /api/v1/auth/azure/service-principal [post]
 func (s *Server) handleAzureServicePrincipal(c *gin.Context) {
 	if s.azureAuthenticator == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Azure AD authentication not configured"})
@@ -395,6 +433,13 @@ func (s *Server) handleAzureServicePrincipal(c *gin.Context) {
 
 // handleAuthProviders handles GET /api/v1/auth/providers.
 // Returns the list of configured authentication provider identifiers.
+//
+// @Summary      List configured auth providers
+// @Description  Returns the identifiers of the authentication providers this deployment has configured (always includes "privado"; adds "azuread" when Azure AD is enabled), so the login UI can render the right options. Public.
+// @Tags         Auth
+// @Produce      json
+// @Success      200 {object} ProvidersResponse
+// @Router       /api/v1/auth/providers [get]
 func (s *Server) handleAuthProviders(c *gin.Context) {
 	providers := []string{"privado"}
 	if s.azureAuthenticator != nil {

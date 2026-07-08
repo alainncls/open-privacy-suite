@@ -20,6 +20,25 @@ import (
 
 // Contract handlers
 
+// listContracts returns a paginated, optionally filtered list of the
+// organization's registered contracts.
+//
+// @Summary      List contracts
+// @Description  Lists the contracts registered to the organization, most recent first, with an optional case-insensitive search over name/address and a created-at date window. Scoped to {org_id}; a tier-2 admin only sees their own org's contracts.
+// @Tags         Admin: RBAC
+// @Produce      json
+// @Param        org_id path string true "Organization ID"
+// @Param        limit query int false "Max rows to return (default 50)"
+// @Param        offset query int false "Rows to skip for pagination (default 0)"
+// @Param        search query string false "Case-insensitive filter over contract name or address"
+// @Param        created_after query string false "Only contracts created on or after this ISO 8601 date"
+// @Param        created_before query string false "Only contracts created before this ISO 8601 date"
+// @Success      200 {object} contractListResponse
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "operator token cannot read tenant data, or caller is out of org scope"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/contracts [get]
 func (s *Server) listContracts(c *gin.Context) {
 	// RD-1132: tenant-confidential read — not readable with the operator token.
 	if denyOperatorTenantRead(c) {
@@ -43,6 +62,23 @@ func (s *Server) listContracts(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": contracts, "total": total, "limit": limit, "offset": offset})
 }
 
+// createContract registers a new contract in the organization.
+//
+// @Summary      Create a contract
+// @Description  Registers a contract (address plus optional name and metadata) in the organization. The address is validated and stored lowercase. Scoped to {org_id}; the restricted operator token is rejected because per-org contract management is the org admin's job.
+// @Tags         Admin: RBAC
+// @Accept       json
+// @Produce      json
+// @Param        org_id path string true "Organization ID"
+// @Param        request body contractCreateRequest true "contract to create"
+// @Success      201 {object} rbac.Contract
+// @Failure      400 {object} APIError "invalid body or invalid Ethereum address format"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "operator token cannot manage per-org contracts, or caller is out of org scope"
+// @Failure      409 {object} APIError "a contract with this address already exists in the organization"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/contracts [post]
 func (s *Server) createContract(c *gin.Context) {
 	// RD-1107: per-org contract management is the org admin's job; the
 	// super-admin token is platform/bootstrap only.
@@ -94,6 +130,21 @@ func (s *Server) createContract(c *gin.Context) {
 	c.JSON(http.StatusCreated, contract)
 }
 
+// getContract returns a single contract by address within the organization.
+//
+// @Summary      Get a contract
+// @Description  Returns one contract by its address within the organization. Scoped to {org_id}; a tier-2 admin can only read their own org's contracts.
+// @Tags         Admin: RBAC
+// @Produce      json
+// @Param        org_id path string true "Organization ID"
+// @Param        address path string true "Contract address (0x-prefixed hex)"
+// @Success      200 {object} rbac.Contract
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "operator token cannot read tenant data, or caller is out of org scope"
+// @Failure      404 {object} APIError "contract not found"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/contracts/{address} [get]
 func (s *Server) getContract(c *gin.Context) {
 	// RD-1132: tenant-confidential read — not readable with the operator token.
 	if denyOperatorTenantRead(c) {
@@ -116,6 +167,24 @@ func (s *Server) getContract(c *gin.Context) {
 	c.JSON(http.StatusOK, contract)
 }
 
+// updateContract updates a contract's name and/or metadata.
+//
+// @Summary      Update a contract
+// @Description  Updates the name and/or metadata of a contract; omitted fields are left unchanged. Scoped to {org_id}; the restricted operator token is rejected.
+// @Tags         Admin: RBAC
+// @Accept       json
+// @Produce      json
+// @Param        org_id path string true "Organization ID"
+// @Param        address path string true "Contract address (0x-prefixed hex)"
+// @Param        request body contractUpdateRequest true "fields to update"
+// @Success      200 {object} rbac.Contract
+// @Failure      400 {object} APIError "invalid request body"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "operator token cannot manage per-org contracts, or caller is out of org scope"
+// @Failure      404 {object} APIError "contract not found"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/contracts/{address} [put]
 func (s *Server) updateContract(c *gin.Context) {
 	// RD-1107: per-org contract management is the org admin's job.
 	if denyOperatorOrgScoped(c) {
@@ -164,6 +233,21 @@ func (s *Server) updateContract(c *gin.Context) {
 	c.JSON(http.StatusOK, contract)
 }
 
+// deleteContract removes a contract and invalidates the org's RBAC cache.
+//
+// @Summary      Delete a contract
+// @Description  Deletes a contract from the organization and invalidates the org's permission cache (its grants may affect many groups). Scoped to {org_id}; the restricted operator token is rejected.
+// @Tags         Admin: RBAC
+// @Produce      json
+// @Param        org_id path string true "Organization ID"
+// @Param        address path string true "Contract address (0x-prefixed hex)"
+// @Success      200 {object} APIMessage "contract deleted"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "operator token cannot manage per-org contracts, or caller is out of org scope"
+// @Failure      404 {object} APIError "contract not found"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/contracts/{address} [delete]
 func (s *Server) deleteContract(c *gin.Context) {
 	// RD-1107: per-org contract management is the org admin's job.
 	if denyOperatorOrgScoped(c) {
@@ -199,6 +283,23 @@ func (s *Server) deleteContract(c *gin.Context) {
 
 // updateContractABI updates the ABI for a contract.
 // PUT /orgs/:org_id/contracts/:address/abi
+//
+// @Summary      Set a contract's ABI
+// @Description  Stores the contract's ABI (used for function-level access control and event redaction). The ABI must be a valid JSON array. Scoped to {org_id}; the restricted operator token is rejected.
+// @Tags         Admin: RBAC
+// @Accept       json
+// @Produce      json
+// @Param        org_id path string true "Organization ID"
+// @Param        address path string true "Contract address (0x-prefixed hex)"
+// @Param        request body contractABIUpdateRequest true "ABI JSON array"
+// @Success      200 {object} rbac.Contract
+// @Failure      400 {object} APIError "invalid body, or ABI is not a valid JSON array"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "operator token cannot manage per-org contracts, or caller is out of org scope"
+// @Failure      404 {object} APIError "contract not found"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/contracts/{address}/abi [put]
 func (s *Server) updateContractABI(c *gin.Context) {
 	// RD-1107: per-org contract management is the org admin's job.
 	if denyOperatorOrgScoped(c) {
@@ -273,6 +374,23 @@ func (s *Server) updateContractABI(c *gin.Context) {
 // for the full bypass surface (event_rules, param_rules,
 // deny-when-no-ABI gate are all bypassed for unlocked viewers on the
 // matching tx). Operators should review their grants before flipping.
+//
+// @Summary      Toggle a contract's visibleTo-unlock flag
+// @Description  Enables or disables the RD-874 per-contract opt-in that lets a tx sender grant per-event visibility to DIDs listed in the transaction's visibleTo. Enabling it widens who can see events on this contract, so review grants first. Scoped to {org_id}; the restricted operator token is rejected.
+// @Tags         Admin: RBAC
+// @Accept       json
+// @Produce      json
+// @Param        org_id path string true "Organization ID"
+// @Param        address path string true "Contract address (0x-prefixed hex)"
+// @Param        request body contractVisibleToUnlockRequest true "flag value"
+// @Success      200 {object} rbac.Contract
+// @Failure      400 {object} APIError "invalid body, or allow_visibleto_unlock is missing"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "operator token cannot manage per-org contracts, or caller is out of org scope"
+// @Failure      404 {object} APIError "contract not found"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/contracts/{address}/visibleto-unlock [put]
 func (s *Server) updateContractAllowVisibleToUnlock(c *gin.Context) {
 	// RD-1107: per-org contract management is the org admin's job.
 	if denyOperatorOrgScoped(c) {
@@ -353,6 +471,23 @@ func (s *Server) updateContractAllowVisibleToUnlock(c *gin.Context) {
 //
 // Audit-logged at ResourceTypeContract; the entry stores the before
 // and after state so ISO 27001 A.8.16 evidence is complete.
+//
+// @Summary      Toggle a contract's dynamic-payload event flag
+// @Description  Enables or disables the M15 opt-out that lets events with dynamic non-indexed payloads pass through to non-Full viewers without scanning for embedded foreign-org addresses. Default false (close-by-default). Super-admin token only — tier-2/3 org admins cannot flip it; the change is audit-logged with before/after state.
+// @Tags         Admin: RBAC
+// @Accept       json
+// @Produce      json
+// @Param        org_id path string true "Organization ID"
+// @Param        address path string true "Contract address (0x-prefixed hex)"
+// @Param        request body contractEventsAllowDynamicPayloadRequest true "flag value"
+// @Success      200 {object} rbac.Contract
+// @Failure      400 {object} APIError "invalid address, invalid body, or events_allow_dynamic_payload is missing"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "super-admin token required"
+// @Failure      404 {object} APIError "contract not found"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/contracts/{address}/events-allow-dynamic-payload [put]
 func (s *Server) updateContractEventsAllowDynamicPayload(c *gin.Context) {
 	if !requireSuperAdmin(c) {
 		return
@@ -421,6 +556,21 @@ func (s *Server) updateContractEventsAllowDynamicPayload(c *gin.Context) {
 // their topic0 hashes and parameter info. Used by the UI to show a human-readable
 // event picker for configuring event rules.
 // GET /orgs/:org_id/contracts/:address/events
+//
+// @Summary      List a contract's events
+// @Description  Parses the contract's resolved ABI and returns its events with topic0 hashes and parameter info, for building event-rule configurations. Returns an empty list with a message when no ABI is registered. Scoped to {org_id}; a tier-2 admin can only read their own org's contracts.
+// @Tags         Admin: RBAC
+// @Produce      json
+// @Param        org_id path string true "Organization ID"
+// @Param        address path string true "Contract address (0x-prefixed hex)"
+// @Success      200 {object} contractEventsResponse
+// @Failure      400 {object} APIError "the stored ABI could not be parsed"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "operator token cannot read tenant data, or caller is out of org scope"
+// @Failure      404 {object} APIError "contract not found"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/contracts/{address}/events [get]
 func (s *Server) listContractEvents(c *gin.Context) {
 	// RD-1132: tenant-confidential read — not readable with the operator token.
 	if denyOperatorTenantRead(c) {
@@ -469,6 +619,18 @@ type ContractSyncStatus struct {
 
 // checkContractsOnChain checks all contracts against the chain and returns their status.
 // POST /orgs/:org_id/contracts/sync-check
+//
+// @Summary      Check contracts against the chain
+// @Description  Runs eth_getCode for every registered contract in the organization and buckets them as existing, missing, or errored (RPC failure). Read-only reconciliation helper. Scoped to {org_id}.
+// @Tags         Admin: RBAC
+// @Produce      json
+// @Param        org_id path string true "Organization ID"
+// @Success      200 {object} contractSyncCheckResponse
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "caller is out of org scope"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/contracts/sync-check [post]
 func (s *Server) checkContractsOnChain(c *gin.Context) {
 	orgID := c.Param("org_id")
 
@@ -530,6 +692,21 @@ func (s *Server) checkContractsOnChain(c *gin.Context) {
 
 // deleteStaleContracts deletes contracts that are confirmed to be missing on-chain.
 // POST /orgs/:org_id/contracts/sync-delete
+//
+// @Summary      Delete stale (missing) contracts
+// @Description  Deletes the given contracts only after re-verifying each still belongs to the organization and is still absent on-chain; contracts that now exist, belong elsewhere, or error are skipped with a reason. Scoped to {org_id}; the restricted operator token is rejected.
+// @Tags         Admin: RBAC
+// @Accept       json
+// @Produce      json
+// @Param        org_id path string true "Organization ID"
+// @Param        request body contractSyncDeleteRequest true "contract IDs to delete"
+// @Success      200 {object} contractSyncDeleteResponse
+// @Failure      400 {object} APIError "invalid body, or no contract IDs provided"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "operator token cannot manage per-org contracts, or caller is out of org scope"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/contracts/sync-delete [post]
 func (s *Server) deleteStaleContracts(c *gin.Context) {
 	// RD-1107: per-org contract management is the org admin's job.
 	if denyOperatorOrgScoped(c) {
@@ -975,6 +1152,21 @@ func autoAddSelfConstraints(rules []rbac.EventRule, abiJSON string) []rbac.Event
 
 // Contract Grant handlers
 
+// listContractGrants lists all grants attached to a contract.
+//
+// @Summary      List contract grants
+// @Description  Lists the group grants attached to a contract (each links a group to the contract with optional function and event-rule restrictions). Scoped to {org_id}; a tier-2 admin can only read their own org's contracts.
+// @Tags         Admin: RBAC
+// @Produce      json
+// @Param        org_id path string true "Organization ID"
+// @Param        address path string true "Contract address (0x-prefixed hex)"
+// @Success      200 {array} rbac.ContractGrant
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "operator token cannot read tenant data, or caller is out of org scope"
+// @Failure      404 {object} APIError "contract not found"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/contracts/{address}/grants [get]
 func (s *Server) listContractGrants(c *gin.Context) {
 	// RD-1132: tenant-confidential read — not readable with the operator token.
 	if denyOperatorTenantRead(c) {
@@ -1005,6 +1197,24 @@ func (s *Server) listContractGrants(c *gin.Context) {
 	c.JSON(http.StatusOK, grants)
 }
 
+// createContractGrant grants a group access to a contract.
+//
+// @Summary      Create a contract grant
+// @Description  Grants a group access to the contract, optionally restricting functions and event visibility. Non-deny event_rules require a resolvable ABI, and any custom hex address in an address-typed param rule must belong to this organization (cross-org references are rejected). Scoped to {org_id}; the restricted operator token is rejected.
+// @Tags         Admin: RBAC
+// @Accept       json
+// @Produce      json
+// @Param        org_id path string true "Organization ID"
+// @Param        address path string true "Contract address (0x-prefixed hex)"
+// @Param        request body contractGrantCreateRequest true "grant to create"
+// @Success      201 {object} rbac.ContractGrant
+// @Failure      400 {object} APIError "invalid body, invalid event rules, or event_rules set without a resolvable ABI"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "operator token cannot manage per-org grants, caller is out of org scope, or a param rule references a cross-org / unregistered address"
+// @Failure      404 {object} APIError "contract not found"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/contracts/{address}/grants [post]
 func (s *Server) createContractGrant(c *gin.Context) {
 	// RD-1107: granting per-org contract access is the org admin's job; the
 	// super-admin token is platform/bootstrap only.
@@ -1116,6 +1326,25 @@ func (s *Server) createContractGrant(c *gin.Context) {
 	c.JSON(http.StatusCreated, grant)
 }
 
+// updateContractGrant updates the function and/or event rules of a grant.
+//
+// @Summary      Update a contract grant
+// @Description  Updates a grant's function and/or event rules. An absent key means no change; an explicit null clears it; event_rules also accepts "*" (all events). Non-deny event_rules require a resolvable ABI, and custom hex address param rules must stay within this organization. Scoped to {org_id}; the restricted operator token is rejected.
+// @Tags         Admin: RBAC
+// @Accept       json
+// @Produce      json
+// @Param        org_id path string true "Organization ID"
+// @Param        address path string true "Contract address (0x-prefixed hex)"
+// @Param        group_id path string true "Group ID the grant belongs to"
+// @Param        request body contractGrantUpdateRequest true "fields to update"
+// @Success      200 {object} rbac.ContractGrant
+// @Failure      400 {object} APIError "invalid body, invalid functions/event_rules, or event_rules set without a resolvable ABI"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "operator token cannot manage per-org grants, caller is out of org scope, or a param rule references a cross-org / unregistered address"
+// @Failure      404 {object} APIError "contract or grant not found"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/contracts/{address}/grants/{group_id} [put]
 func (s *Server) updateContractGrant(c *gin.Context) {
 	// RD-1107: per-org contract grants are the org admin's job.
 	if denyOperatorOrgScoped(c) {
@@ -1265,6 +1494,19 @@ func (s *Server) updateContractGrant(c *gin.Context) {
 // scope. Super-admin and JWT admins of the owning org receive the
 // full payload.
 // GET /contracts/by-address/:address
+//
+// @Summary      Look up a contract by address (cross-org)
+// @Description  Resolves a contract by address across all organizations, for the claim-unregistered-contract flow. The super-admin and a JWT admin of the owning org receive the full contract, organization, and grant topology; a JWT admin outside the owning org's scope receives only {address, registered} (audit H2). Not readable with the restricted operator token.
+// @Tags         Admin: RBAC
+// @Produce      json
+// @Param        address path string true "Contract address (0x-prefixed hex)"
+// @Success      200 {object} contractLookupFullResponse "full payload for super-admin / owning-org admin; out-of-scope JWT admins receive contractLookupMinimalResponse instead"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "operator token cannot read tenant data"
+// @Failure      404 {object} APIError "contract not found"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/contracts/by-address/{address} [get]
 func (s *Server) lookupContractByAddress(c *gin.Context) {
 	// RD-1132: tenant-confidential read — not readable with the operator token.
 	if denyOperatorTenantRead(c) {
@@ -1342,6 +1584,18 @@ func (s *Server) lookupContractByAddress(c *gin.Context) {
 
 // getContractGrantSummary returns grant counts and group names for all contracts in an org.
 // GET /orgs/:org_id/contracts/grant-summary
+//
+// @Summary      Get contract grant summary
+// @Description  Returns, keyed by contract ID, the grant count and assigned group names for each of the organization's contracts that has at least one grant. Scoped to {org_id}; a tier-2 admin can only read their own org.
+// @Tags         Admin: RBAC
+// @Produce      json
+// @Param        org_id path string true "Organization ID"
+// @Success      200 {object} map[string]rbac.ContractGrantSummary "grant summary keyed by contract ID"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "operator token cannot read tenant data, or caller is out of org scope"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/contracts/grant-summary [get]
 func (s *Server) getContractGrantSummary(c *gin.Context) {
 	// RD-1132: tenant-confidential read — not readable with the operator token.
 	if denyOperatorTenantRead(c) {
@@ -1358,6 +1612,22 @@ func (s *Server) getContractGrantSummary(c *gin.Context) {
 	c.JSON(http.StatusOK, summary)
 }
 
+// deleteContractGrant removes a group's grant on a contract.
+//
+// @Summary      Delete a contract grant
+// @Description  Removes a group's grant on the contract and invalidates that group's permission cache. Scoped to {org_id}; the restricted operator token is rejected.
+// @Tags         Admin: RBAC
+// @Produce      json
+// @Param        org_id path string true "Organization ID"
+// @Param        address path string true "Contract address (0x-prefixed hex)"
+// @Param        group_id path string true "Group ID the grant belongs to"
+// @Success      200 {object} APIMessage "grant deleted"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "operator token cannot manage per-org grants, or caller is out of org scope"
+// @Failure      404 {object} APIError "contract or grant not found"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/contracts/{address}/grants/{group_id} [delete]
 func (s *Server) deleteContractGrant(c *gin.Context) {
 	// RD-1107: per-org contract grants are the org admin's job.
 	if denyOperatorOrgScoped(c) {
@@ -1422,6 +1692,21 @@ func validateEventRules(rules []rbac.EventRule) string {
 
 // batchMoveContracts moves contracts from auto-created groups to a target group.
 // POST /orgs/:org_id/contracts/batch-move
+//
+// @Summary      Batch-move contracts to a group
+// @Description  Moves up to 200 contracts to an existing group or a newly created one (grant them to the target, drop their grants to auto-created source groups, optionally delete emptied source groups). All contracts must belong to the organization. Scoped to {org_id}; the restricted operator token is rejected.
+// @Tags         Admin: RBAC
+// @Accept       json
+// @Produce      json
+// @Param        org_id path string true "Organization ID"
+// @Param        request body contractBatchMoveRequest true "move request (provide exactly one of target_group_id or new_group)"
+// @Success      200 {object} contractBatchMoveResponse
+// @Failure      400 {object} APIError "invalid body, too many contract IDs, missing/ambiguous target, or a contract/group not in this org"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "operator token cannot manage per-org contracts, or caller is out of org scope"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/contracts/batch-move [post]
 func (s *Server) batchMoveContracts(c *gin.Context) {
 	// RD-1107: per-org contract management is the org admin's job.
 	if denyOperatorOrgScoped(c) {

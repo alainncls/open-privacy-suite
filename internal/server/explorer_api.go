@@ -203,10 +203,22 @@ func (s *Server) bindExplorerEndpoints(rg *gin.RouterGroup) {
 	rg.POST("/index/block/:number", s.indexExplorerBlock)
 }
 
-// getViewableAddresses returns all addresses the wallet owner can view
-// GET /api/v1/explorer/viewable-addresses?wallet=0x1234...&did=did:example:123
-// Either wallet or did (or both) can be provided. If did is provided, it is used directly.
-// If only wallet is provided, the DID is looked up from the wallet address.
+// getViewableAddresses returns all addresses the authenticated viewer can view.
+// GET /api/v1/explorer/viewable-addresses
+// SECURITY (RD-1164 #7): the viewer identity comes ONLY from the validated JWT
+// (or the impersonation override) via getViewerDIDFromRequest — never from a
+// ?wallet= lookup, which would be a deanonymization oracle. A ?wallet= value is
+// only echoed back for display; with no JWT the response is the empty set.
+//
+// @Summary      Addresses viewable by the resolved viewer
+// @Description  Lists the viewer's own linked addresses plus addresses disclosed to them via active disclosure grants. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: the viewer DID comes from a validated JWT (or the impersonation override) — never from a query param — and for non-full grants the disclosed address is a pseudonym or "[PRIVATE]", never the real address. Fail-closed: with no resolvable viewer, only empty lists are returned.
+// @Tags         Explorer
+// @Produce      json
+// @Param        wallet query string false "Viewer wallet address (0x-prefixed hex), echoed back for display only. The viewer identity is resolved solely from the JWT — a wallet value never resolves a DID (RD-1164 #7)." example(0x0000000000000000000000000000000000000001)
+// @Success      200 {object} ViewableAddressesResponse
+// @Failure      400 {object} APIError "neither a wallet nor JWT authentication was supplied"
+// @Failure      500 {object} APIError "lookup failed"
+// @Router       /api/v1/explorer/viewable-addresses [get]
 func (s *Server) getViewableAddresses(c *gin.Context) {
 	wallet := c.Query("wallet")
 
@@ -231,22 +243,15 @@ func (s *Server) getViewableAddresses(c *gin.Context) {
 		DisclosedAddresses: []DisclosedAddress{},
 	}
 
-	var err error
-
-	// If no DID from JWT, look up from wallet
-	if viewerDID == "" && wallet != "" {
-		viewerDID, err = s.db.GetDIDByEthAddress(ctx, wallet)
-		if err != nil {
-			respondInternalErrorAndLog(c, "failed to look up DID",
-				"explorer: GetDIDByEthAddress failed",
-				"wallet", wallet, "err", err)
-			return
-		}
-	}
-
+	// RD-1164 #7: identity is resolved ONLY from the validated JWT
+	// (getViewerDIDFromRequest, above). The previous ?wallet= →
+	// GetDIDByEthAddress fallback let an unauthenticated caller resolve any
+	// wallet's DID and enumerate every address linked to that identity — a
+	// deanonymization/clustering oracle. The equivalent wallet-viewer path was
+	// already removed from the other explorer handlers (see the getViewerIdentity
+	// removal note below); this closes it here too. A caller with no valid JWT
+	// gets the anonymous empty response regardless of any ?wallet= value.
 	if viewerDID == "" {
-		// Viewer is anonymous - no DID linked to this wallet
-		// Return empty lists
 		c.JSON(http.StatusOK, response)
 		return
 	}
@@ -345,7 +350,7 @@ func (s *Server) getDisclosedAddressesForViewer(ctx context.Context, viewerDID s
 				disclosed.Address = addr.EthAddress
 				disclosed.ENSName = addr.ENSName
 			case "pseudonymous":
-				disclosed.Address = explorer.GeneratePseudonym(addr.EthAddress)
+				disclosed.Address = s.pseudonym(addr.EthAddress)
 				// Don't include ENS name - it could reveal identity
 			case "redacted":
 				disclosed.Address = "[PRIVATE]"
@@ -367,6 +372,20 @@ func (s *Server) getDisclosedAddressesForViewer(ctx context.Context, viewerDID s
 // This is an internal API for the explorer backend to fetch data for disclosed addresses.
 // SECURITY: This endpoint is localhost-only and returns the real address for backend use.
 // The explorer backend must apply appropriate redaction before sending to the frontend.
+//
+// @Summary      Resolve a grant-scoped address_id
+// @Description  Resolves an opaque address_id (issued by viewable-addresses) back to grant-scoped disclosure data for the explorer backend. Private network only (serves the explorer backend); not reachable through the public ingress. The response is scoped to the grant's disclosure level: the real address is returned ONLY for a "full" grant; a "pseudonymous" grant returns a stable pseudonym and no real address; other levels return neither. Fail-closed: a revoked or expired grant, or an address_id that does not belong to the grant, yields 403/404.
+// @Tags         Explorer
+// @Produce      json
+// @Param        grant_id path string true "Disclosure grant ID"
+// @Param        address_id path string true "Opaque address identifier from viewable-addresses"
+// @Success      200 {object} ResolveAddressResponse
+// @Failure      400 {object} APIError "grant_id and address_id are required"
+// @Failure      401 {object} APIError "authentication required"
+// @Failure      403 {object} APIError "grant has been revoked or has expired"
+// @Failure      404 {object} APIError "grant or address not found for this grant"
+// @Failure      500 {object} APIError "lookup failed"
+// @Router       /api/v1/explorer/grant/{grant_id}/resolve/{address_id} [get]
 func (s *Server) resolveAddressID(c *gin.Context) {
 	grantID := c.Param("grant_id")
 	addressID := c.Param("address_id")
@@ -384,6 +403,21 @@ func (s *Server) resolveAddressID(c *gin.Context) {
 	}
 
 	grant := grantWithRequest.Grant
+	request := grantWithRequest.Request
+
+	// SECURITY (RD-1164 #10): grantee verification — the viewer's DID must match
+	// the grant's requester_did. Without it, any caller who knows a grant_id +
+	// address_id could resolve the real address of a `full` grant they do not
+	// hold. Mirrors getGrantActivityLogs; uniform 404 avoids grant enumeration.
+	viewerDID := s.getViewerDIDFromRequest(c)
+	if viewerDID == "" {
+		respondUnauthorized(c, "authentication required")
+		return
+	}
+	if request.RequesterDID != viewerDID {
+		respondNotFound(c, "grant not found")
+		return
+	}
 
 	// Check grant is still valid
 	if grant.RevokedAt != nil {
@@ -396,7 +430,6 @@ func (s *Server) resolveAddressID(c *gin.Context) {
 	}
 
 	// Get target DID from the request
-	request := grantWithRequest.Request
 	targetUser, err := s.db.GetUser(c.Request.Context(), request.TargetUserID)
 	if err != nil || targetUser == nil {
 		respondInternalError(c, "failed to get target user")
@@ -447,7 +480,7 @@ func (s *Server) resolveAddressID(c *gin.Context) {
 
 	// Include pseudonym for pseudonymous disclosures
 	if disclosureLevel == "pseudonymous" {
-		response.Pseudonym = explorer.GeneratePseudonym(realAddress)
+		response.Pseudonym = s.pseudonym(realAddress)
 	}
 
 	c.JSON(http.StatusOK, response)
@@ -465,11 +498,90 @@ func generateExternalPseudonym(address, grantID string) string {
 	return fmt.Sprintf("External-%X", sum[:2])
 }
 
+// pseudonym returns the keyed, non-reversible display pseudonym for an address
+// (RD-1164 #8), keyed by EXPLORER_PSEUDONYM_KEY when configured. All explorer
+// handlers use this rather than calling explorer.GeneratePseudonym directly so
+// the key is applied uniformly.
+func (s *Server) pseudonym(address string) string {
+	var key []byte
+	if s.config != nil {
+		key = s.config.ExplorerPseudonymKey
+	}
+	return explorer.GeneratePseudonym(address, key)
+}
+
+// filterTxsByGrantScope drops disclosed transactions that fall outside the
+// grant's own scope (RD-1164 #9): a grant scoped to a DateRange or a set of
+// contract addresses must not disclose transactions beyond it. An unset scope
+// dimension imposes no restriction. Filtering is applied to the already-fetched
+// page, so has_more reflects the post-filter page — conservative (it may
+// under-report additional in-scope rows on later pages, but never
+// over-discloses). Proper server-side time/keyset bounds are tracked in RD-1149.
+func filterTxsByGrantScope(txs []explorer.Transaction, scope disclosure.Scope) []explorer.Transaction {
+	if scope.DateRange == nil && len(scope.Addresses) == 0 {
+		return txs
+	}
+
+	var scopeAddrs map[string]bool
+	if len(scope.Addresses) > 0 {
+		scopeAddrs = make(map[string]bool, len(scope.Addresses))
+		for _, a := range scope.Addresses {
+			scopeAddrs[strings.ToLower(a)] = true
+		}
+	}
+
+	var start, end int64
+	if scope.DateRange != nil {
+		start = scope.DateRange.Start.Unix()
+		end = scope.DateRange.End.Unix()
+	}
+
+	out := make([]explorer.Transaction, 0, len(txs))
+	for _, tx := range txs {
+		if scope.DateRange != nil {
+			// Fail closed: a tx with a missing (0) or out-of-range block
+			// timestamp is excluded rather than disclosed.
+			ts := int64(tx.BlockTimestamp)
+			if ts == 0 || ts < start || ts > end {
+				continue
+			}
+		}
+		if scopeAddrs != nil {
+			from := strings.ToLower(tx.From)
+			to := ""
+			if tx.To != nil {
+				to = strings.ToLower(*tx.To)
+			}
+			if !scopeAddrs[from] && !scopeAddrs[to] {
+				continue
+			}
+		}
+		out = append(out, tx)
+	}
+	return out
+}
+
 // getGrantTransactions returns transactions for a disclosed address, pseudonymized
 // according to the grant's disclosure level.
 // GET /api/v1/explorer/grant/:grant_id/:address_id/transactions
 // SECURITY: This endpoint never exposes real addresses for non-full grants.
 // The explorer backend receives pre-pseudonymized data and cannot reverse it.
+//
+// @Summary      Grant-scoped transactions for a disclosed address
+// @Description  Returns transactions for a disclosed address, rendered at the grant's disclosure level. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the grant: "full" reveals real addresses, hashes and values; "pseudonymous" replaces addresses with stable pseudonyms and hides values and hashes; "redacted" (or any unknown level) shows only direction, gas, status and timing with "[PRIVATE]" counterparties. Fail-closed: a revoked or expired grant, or an address_id that does not belong to the grant, yields 403/404.
+// @Tags         Explorer
+// @Produce      json
+// @Param        grant_id path string true "Disclosure grant ID"
+// @Param        address_id path string true "Opaque address identifier from viewable-addresses"
+// @Param        limit query int false "Max rows to return (1-100)" default(25)
+// @Param        before query int false "Return rows strictly older than this block number (pagination cursor)"
+// @Success      200 {object} GrantTransactionsResponse
+// @Failure      400 {object} APIError "grant_id and address_id are required"
+// @Failure      401 {object} APIError "authentication required"
+// @Failure      403 {object} APIError "grant has been revoked or has expired"
+// @Failure      404 {object} APIError "grant or address not found for this grant"
+// @Failure      500 {object} APIError "explorer store not configured or lookup failed"
+// @Router       /api/v1/explorer/grant/{grant_id}/{address_id}/transactions [get]
 func (s *Server) getGrantTransactions(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondInternalError(c, "explorer store not configured")
@@ -492,6 +604,22 @@ func (s *Server) getGrantTransactions(c *gin.Context) {
 	}
 
 	grant := grantWithRequest.Grant
+	request := grantWithRequest.Request
+
+	// SECURITY (RD-1164 #10): grantee verification FIRST — the viewer's DID must
+	// match the grant's requester_did, else any caller with a grant_id +
+	// address_id could read a `full` grant's real transactions. Checked before
+	// revoked/expired so grant state is never revealed to a non-grantee. Mirrors
+	// getGrantActivityLogs.
+	viewerDID := s.getViewerDIDFromRequest(c)
+	if viewerDID == "" {
+		respondUnauthorized(c, "authentication required")
+		return
+	}
+	if request.RequesterDID != viewerDID {
+		respondNotFound(c, "grant not found")
+		return
+	}
 
 	// Check grant is still valid
 	if grant.RevokedAt != nil {
@@ -510,7 +638,6 @@ func (s *Server) getGrantTransactions(c *gin.Context) {
 	}
 
 	// Get target user and their addresses
-	request := grantWithRequest.Request
 	targetUser, err := s.db.GetUser(c.Request.Context(), request.TargetUserID)
 	if err != nil || targetUser == nil {
 		respondInternalError(c, "failed to get target user")
@@ -561,6 +688,10 @@ func (s *Server) getGrantTransactions(c *gin.Context) {
 		return
 	}
 
+	// RD-1164 #9: enforce the grant's own scope (date range / contract
+	// addresses) on the disclosed transactions before pagination.
+	txs = filterTxsByGrantScope(txs, grant.Scope)
+
 	hasMore := len(txs) > limit
 	if hasMore {
 		txs = txs[:limit]
@@ -569,9 +700,9 @@ func (s *Server) getGrantTransactions(c *gin.Context) {
 	realAddrLower := strings.ToLower(realAddress)
 	labels := make(map[string]string)
 
-	// Resolve viewer's own addresses so we can label them "mine" on the grant page
+	// Resolve viewer's own addresses so we can label them "mine" on the grant page.
+	// viewerDID was resolved and grantee-verified above (RD-1164 #10).
 	viewerAddrs := make(map[string]bool)
-	viewerDID := s.getViewerDIDFromRequest(c)
 	if viewerDID != "" {
 		linked, err := s.db.GetLinkedAddresses(c.Request.Context(), viewerDID)
 		if err == nil {
@@ -618,7 +749,7 @@ func (s *Server) getGrantTransactions(c *gin.Context) {
 			gt.Value = string(tx.Value)
 
 		case "pseudonymous":
-			disclosedPseudonym := explorer.GeneratePseudonym(realAddress)
+			disclosedPseudonym := s.pseudonym(realAddress)
 			labels[disclosedPseudonym] = "disclosed"
 
 			if fromIsDisclosed {
@@ -704,6 +835,21 @@ type GrantActivityLogEntry struct {
 //   - Time-bounded: only logs within the grant's validity period are returned.
 //   - Stripped response: only method, status_code, and timestamp are returned.
 //   - Uniform 404 for "not found" and "not your grant" to prevent enumeration.
+//
+// @Summary      Grant-scoped activity logs
+// @Description  Returns activity-log entries (method, status code, timestamp only) for a disclosure grant the caller holds. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered: a valid JWT is required, the viewer DID must match the grant's requester, the grant scope must include activity_logs or full_disclosure, and only entries inside the grant's validity window are returned. Fail-closed: anonymous callers are rejected, and "grant missing"/"not your grant"/"expired" all return the same 404 to prevent enumeration.
+// @Tags         Explorer
+// @Produce      json
+// @Param        grant_id path string true "Disclosure grant ID"
+// @Param        limit query int false "Max rows to return (1-100)" default(25)
+// @Param        offset query int false "Rows to skip (pagination)" default(0)
+// @Success      200 {object} GrantActivityLogsResponse
+// @Failure      400 {object} APIError "grant_id is required"
+// @Failure      401 {object} APIError "authentication required"
+// @Failure      403 {object} APIError "grant scope does not include activity_logs"
+// @Failure      404 {object} APIError "grant not found (also returned for a grant that is not yours or has expired)"
+// @Failure      500 {object} APIError "lookup failed"
+// @Router       /api/v1/explorer/grant/{grant_id}/activity [get]
 func (s *Server) getGrantActivityLogs(c *gin.Context) {
 	grantID := c.Param("grant_id")
 	if grantID == "" {
@@ -806,33 +952,6 @@ func (s *Server) getGrantActivityLogs(c *gin.Context) {
 // override. The ?wallet= viewer path it carried was also a viewer-impersonation
 // oracle and is gone with it.
 
-// resolveViewerDID resolves the viewer's DID from an explicit DID or wallet address.
-// Returns empty string if neither is provided or the wallet has no linked DID.
-func (s *Server) resolveViewerDID(ctx context.Context, wallet, did string) string {
-	if did != "" {
-		return did
-	}
-	if wallet != "" {
-		viewerDID, err := s.db.GetDIDByEthAddress(ctx, wallet)
-		if err != nil {
-			return ""
-		}
-		return viewerDID
-	}
-	return ""
-}
-
-// calculateAddressVisibility determines the visibility of a target address for a wallet-based viewer.
-// Delegates to GetBatchVisibilityDetailed so the visibility decision is made by the same
-// code path that the RedactionEngine uses (via GetBatchVisibility).
-func (s *Server) calculateAddressVisibility(ctx context.Context, viewerWallet, targetAddress string) AddressVisibility {
-	return s.calculateAddressVisibilityWithDID(ctx, viewerWallet, "", targetAddress)
-}
-
-// calculateAddressVisibilityWithDID determines the visibility of a single address.
-// It delegates to GetBatchVisibilityDetailed (single-element batch) so that the
-// visibility level decision matches the RedactionEngine's GetBatchVisibility.
-
 // maskAsPublic returns a visibility response identical to a genuinely public
 // (unregistered) address. This eliminates the 1-bit oracle: an attacker cannot
 // distinguish "registered but hidden" from "not registered at all."
@@ -845,8 +964,13 @@ func maskAsPublic(address string) AddressVisibility {
 	}
 }
 
-func (s *Server) calculateAddressVisibilityWithDID(ctx context.Context, viewerWallet, did, targetAddress string) AddressVisibility {
-	viewerDID := s.resolveViewerDID(ctx, viewerWallet, did)
+// calculateAddressVisibilityWithDID determines the visibility of a single address
+// for the given viewer DID. It delegates to GetBatchVisibilityDetailed (single-
+// element batch) so the level matches the RedactionEngine's GetBatchVisibility.
+// Viewer identity is always a DID resolved from the JWT / impersonation override
+// (RD-1164 #7: the wallet-based resolveViewerDID path was removed — an
+// unauthenticated ?wallet= lookup was a deanonymization oracle).
+func (s *Server) calculateAddressVisibilityWithDID(ctx context.Context, viewerDID, targetAddress string) AddressVisibility {
 	results, err := s.db.GetBatchVisibilityDetailed(ctx, viewerDID, []string{targetAddress})
 	if err != nil {
 		return AddressVisibility{
@@ -892,7 +1016,7 @@ func (s *Server) addressVisibleOrFullGrant(ctx context.Context, viewerDID, addre
 	// RD-1028: no wallet parameter. Viewer identity is the resolved DID from
 	// getViewerDIDFromRequest (which honours the impersonation override); the
 	// removed ?wallet= path was a viewer-impersonation oracle.
-	visibility := s.calculateAddressVisibilityWithDID(ctx, "", viewerDID, address)
+	visibility := s.calculateAddressVisibilityWithDID(ctx, viewerDID, address)
 	if visibility.Level != VisibilityHidden && visibility.Level != VisibilityRedacted {
 		return true
 	}
@@ -1118,11 +1242,29 @@ func (s *Server) isViewerAdmin(ctx context.Context, viewerDID string) bool {
 	return isOrgAdmin
 }
 
+// getExplorerChainID returns the chain ID reported to the explorer backend.
+//
+// @Summary      Chain ID
+// @Description  Returns the chain ID for the explorer backend. Private network only (serves the explorer backend); not reachable through the public ingress.
+// @Tags         Explorer
+// @Produce      json
+// @Success      200 {object} ExplorerChainIDResponse
+// @Router       /api/v1/explorer/chain-id [get]
 func (s *Server) getExplorerChainID(c *gin.Context) {
 	// Approximation: return 1 or get from proxy if needed
 	c.JSON(http.StatusOK, gin.H{"chain_id": 1})
 }
 
+// getExplorerStats returns chain-wide aggregate statistics.
+//
+// @Summary      Chain statistics
+// @Description  Returns chain-wide aggregate counts (blocks, transactions, addresses, tokens). Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: totals reflect only rows the viewer may see, so a restricted viewer sees smaller counts than the raw chain totals.
+// @Tags         Explorer
+// @Produce      json
+// @Success      200 {object} explorer.ChainStats
+// @Failure      500 {object} APIError "lookup failed"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/stats [get]
 func (s *Server) getExplorerStats(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -1140,6 +1282,18 @@ func (s *Server) getExplorerStats(c *gin.Context) {
 	c.JSON(http.StatusOK, stats)
 }
 
+// getExplorerBlocks returns a page of recent blocks, newest first.
+//
+// @Summary      List recent blocks
+// @Description  Returns a page of blocks, newest first. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: each block's transactionCount reflects only transactions the viewer may see.
+// @Tags         Explorer
+// @Produce      json
+// @Param        limit query int false "Max blocks to return" default(25)
+// @Param        before query int false "Return blocks strictly older than this block number (pagination cursor)"
+// @Success      200 {array} explorer.Block
+// @Failure      500 {object} APIError "lookup failed"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/blocks [get]
 func (s *Server) getExplorerBlocks(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -1166,6 +1320,19 @@ func (s *Server) getExplorerBlocks(c *gin.Context) {
 	c.JSON(http.StatusOK, blocks)
 }
 
+// getExplorerBlock returns a single block by its number.
+//
+// @Summary      Get block by number
+// @Description  Returns a single block by number. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: the block's transactionCount reflects only transactions the viewer may see.
+// @Tags         Explorer
+// @Produce      json
+// @Param        number path int true "Block number"
+// @Success      200 {object} explorer.Block
+// @Failure      400 {object} APIError "invalid block number"
+// @Failure      404 {object} APIError "block not found"
+// @Failure      500 {object} APIError "lookup failed"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/blocks/{number} [get]
 func (s *Server) getExplorerBlock(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -1199,6 +1366,18 @@ func (s *Server) getExplorerBlock(c *gin.Context) {
 	c.JSON(http.StatusOK, block)
 }
 
+// getExplorerBlockByHash returns a single block by its hash.
+//
+// @Summary      Get block by hash
+// @Description  Returns a single block by its hash. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: the block's transactionCount reflects only transactions the viewer may see.
+// @Tags         Explorer
+// @Produce      json
+// @Param        hash path string true "Block hash (0x-prefixed)"
+// @Success      200 {object} explorer.Block
+// @Failure      404 {object} APIError "block not found"
+// @Failure      500 {object} APIError "lookup failed"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/blocks/hash/{hash} [get]
 func (s *Server) getExplorerBlockByHash(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -1417,6 +1596,19 @@ func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string) *e
 	return filter
 }
 
+// getExplorerTransactions returns a page of recent transactions, newest first.
+//
+// @Summary      List recent transactions
+// @Description  Returns a page of transactions, newest first. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: transactions where every participant is hidden are dropped, and surviving rows have addresses and values redacted per the viewer's visibility.
+// @Tags         Explorer
+// @Produce      json
+// @Param        limit query int false "Max rows to return (1-100)" default(25)
+// @Param        before query int false "Return rows strictly older than this block number (pagination cursor)"
+// @Param        with_categories query bool false "Include transaction category tags" default(false)
+// @Success      200 {array} explorer.Transaction
+// @Failure      500 {object} APIError "lookup or redaction failed"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/transactions [get]
 func (s *Server) getExplorerTransactions(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -1474,6 +1666,19 @@ func (s *Server) getExplorerTransactions(c *gin.Context) {
 	c.JSON(http.StatusOK, redacted)
 }
 
+// getExplorerTransaction returns a single transaction by hash.
+//
+// @Summary      Get transaction by hash
+// @Description  Returns a single transaction by hash. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: addresses and values are redacted per the viewer's visibility. Fail-closed: a transaction the viewer cannot see at all returns 404 (indistinguishable from a truly missing hash).
+// @Tags         Explorer
+// @Produce      json
+// @Param        hash path string true "Transaction hash (0x-prefixed)"
+// @Param        with_categories query bool false "Include transaction category tags" default(false)
+// @Success      200 {object} explorer.Transaction
+// @Failure      404 {object} APIError "transaction not found (also returned when the transaction is fully hidden from the viewer)"
+// @Failure      500 {object} APIError "lookup or redaction failed"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/transactions/{hash} [get]
 func (s *Server) getExplorerTransaction(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -1761,6 +1966,18 @@ func visibleCountOrZero(count int, err error, surface, address string) int {
 	return count
 }
 
+// getExplorerAddressStats returns per-address aggregate statistics.
+//
+// @Summary      Address statistics
+// @Description  Returns per-address aggregate counts (transactions, internal transactions, token transfers) plus first/last-seen. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: access requires visibility of the address (else 404), and each count is recomputed as the number of rows the viewer can actually see (never the raw total). Fail-closed: a counting error yields 0 for that badge, never the raw aggregate.
+// @Tags         Explorer
+// @Produce      json
+// @Param        address path string true "Account address (0x-prefixed hex)"
+// @Success      200 {object} explorer.AddressStats
+// @Failure      404 {object} APIError "address not found (also returned when the address is hidden from the viewer)"
+// @Failure      500 {object} APIError "lookup failed"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/addresses/{address}/stats [get]
 func (s *Server) getExplorerAddressStats(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -1811,6 +2028,20 @@ func (s *Server) getExplorerAddressStats(c *gin.Context) {
 	c.JSON(http.StatusOK, stats)
 }
 
+// getExplorerAddressTransactions returns a page of an address's transactions.
+//
+// @Summary      Transactions for an address
+// @Description  Returns a page of transactions involving an address, newest first. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: access requires visibility of the address (else 404), and surviving rows are redacted per the viewer's visibility.
+// @Tags         Explorer
+// @Produce      json
+// @Param        address path string true "Account address (0x-prefixed hex)"
+// @Param        limit query int false "Max rows to return" default(25)
+// @Param        before query int false "Return rows strictly older than this block number (pagination cursor)"
+// @Success      200 {array} explorer.Transaction
+// @Failure      404 {object} APIError "address not found (also returned when the address is hidden from the viewer)"
+// @Failure      500 {object} APIError "lookup or redaction failed"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/addresses/{address}/transactions [get]
 func (s *Server) getExplorerAddressTransactions(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -1853,6 +2084,16 @@ func (s *Server) getExplorerAddressTransactions(c *gin.Context) {
 	c.JSON(http.StatusOK, redactedTxs)
 }
 
+// getExplorerSyncStatus returns the indexer sync status.
+//
+// @Summary      Sync status
+// @Description  Returns the last indexed block and whether indexing is in progress. Private network only (serves the explorer backend); not reachable through the public ingress.
+// @Tags         Explorer
+// @Produce      json
+// @Success      200 {object} explorer.SyncStatus
+// @Failure      500 {object} APIError "lookup failed"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/sync/status [get]
 func (s *Server) getExplorerSyncStatus(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -1868,6 +2109,15 @@ func (s *Server) getExplorerSyncStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, status)
 }
 
+// indexExplorerBlock is a placeholder for manual block indexing.
+//
+// @Summary      Trigger indexing of a block (not implemented)
+// @Description  Placeholder for manual block indexing. Private network only (serves the explorer backend); not reachable through the public ingress. The proxy has no indexer of its own, so this always responds 500 (not implemented).
+// @Tags         Explorer
+// @Produce      json
+// @Param        number path int true "Block number"
+// @Failure      500 {object} APIError "manual indexing through proxy not yet implemented"
+// @Router       /api/v1/explorer/index/block/{number} [post]
 func (s *Server) indexExplorerBlock(c *gin.Context) {
 	// Proxy to indexer or return not implemented for now
 	respondInternalError(c, "manual indexing through proxy not yet implemented")
@@ -1875,6 +2125,18 @@ func (s *Server) indexExplorerBlock(c *gin.Context) {
 
 // --- Block sub-endpoints ---
 
+// getExplorerBlockTransactions returns the transactions in a block.
+//
+// @Summary      Transactions in a block
+// @Description  Returns the transactions contained in a block. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: transactions fully hidden from the viewer are dropped and surviving rows are redacted per the viewer's visibility.
+// @Tags         Explorer
+// @Produce      json
+// @Param        number path int true "Block number"
+// @Success      200 {array} explorer.Transaction
+// @Failure      400 {object} APIError "invalid block number"
+// @Failure      500 {object} APIError "lookup or redaction failed"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/blocks/{number}/transactions [get]
 func (s *Server) getExplorerBlockTransactions(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -1911,6 +2173,18 @@ func (s *Server) getExplorerBlockTransactions(c *gin.Context) {
 	c.JSON(http.StatusOK, redacted)
 }
 
+// getExplorerBlockInternalTxs returns the internal transactions in a block.
+//
+// @Summary      Internal transactions in a block
+// @Description  Returns the internal (trace) transactions contained in a block. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: frames fully hidden from the viewer are dropped and surviving rows are redacted per the viewer's visibility.
+// @Tags         Explorer
+// @Produce      json
+// @Param        number path int true "Block number"
+// @Success      200 {array} explorer.InternalTransaction
+// @Failure      400 {object} APIError "invalid block number"
+// @Failure      500 {object} APIError "lookup or redaction failed"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/blocks/{number}/internal [get]
 func (s *Server) getExplorerBlockInternalTxs(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -1947,6 +2221,16 @@ func (s *Server) getExplorerBlockInternalTxs(c *gin.Context) {
 	c.JSON(http.StatusOK, redacted)
 }
 
+// getExplorerLatestBlockNumber returns the highest indexed block number.
+//
+// @Summary      Latest block number
+// @Description  Returns the highest indexed block number. Private network only (serves the explorer backend); not reachable through the public ingress.
+// @Tags         Explorer
+// @Produce      json
+// @Success      200 {object} ExplorerBlockNumberResponse
+// @Failure      500 {object} APIError "lookup failed"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/blocks/latest/number [get]
 func (s *Server) getExplorerLatestBlockNumber(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -1964,6 +2248,19 @@ func (s *Server) getExplorerLatestBlockNumber(c *gin.Context) {
 
 // --- Transaction sub-endpoints ---
 
+// getExplorerTransactionsPaginated returns a page of transactions with a total.
+//
+// @Summary      List transactions (page/pageSize)
+// @Description  Returns a page of transactions plus a total count, using page/pageSize pagination. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: rows fully hidden from the viewer are dropped and surviving rows are redacted. Note the total is a SQL-level count that may slightly overcount relative to the redacted rows in data.
+// @Tags         Explorer
+// @Produce      json
+// @Param        page query int false "1-based page number" default(1)
+// @Param        pageSize query int false "Rows per page (1-100)" default(25)
+// @Param        with_categories query bool false "Include transaction category tags" default(false)
+// @Success      200 {object} ExplorerListResponse{data=[]explorer.Transaction}
+// @Failure      500 {object} APIError "lookup or redaction failed"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/transactions/paginated [get]
 func (s *Server) getExplorerTransactionsPaginated(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -2028,6 +2325,17 @@ func (s *Server) getExplorerTransactionsPaginated(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": total})
 }
 
+// getExplorerTransactionInternal returns the internal transactions of a tx.
+//
+// @Summary      Internal transactions for a transaction
+// @Description  Returns the internal (trace) frames of a transaction. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: frames are redacted per the viewer's visibility, with the parent transaction's own counterparties revealed only to a viewer who is themselves a parent participant.
+// @Tags         Explorer
+// @Produce      json
+// @Param        hash path string true "Transaction hash (0x-prefixed)"
+// @Success      200 {array} explorer.InternalTransaction
+// @Failure      500 {object} APIError "lookup or redaction failed"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/transactions/{hash}/internal [get]
 func (s *Server) getExplorerTransactionInternal(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -2074,6 +2382,17 @@ func (s *Server) getExplorerTransactionInternal(c *gin.Context) {
 	c.JSON(http.StatusOK, redacted)
 }
 
+// getExplorerTransactionTransfers returns the token transfers of a tx.
+//
+// @Summary      Token transfers for a transaction
+// @Description  Returns the token transfers emitted by a transaction. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: transfers are redacted per the viewer's visibility.
+// @Tags         Explorer
+// @Produce      json
+// @Param        hash path string true "Transaction hash (0x-prefixed)"
+// @Success      200 {array} explorer.TokenTransfer
+// @Failure      500 {object} APIError "lookup or redaction failed"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/transactions/{hash}/transfers [get]
 func (s *Server) getExplorerTransactionTransfers(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -2106,6 +2425,17 @@ func (s *Server) getExplorerTransactionTransfers(c *gin.Context) {
 	c.JSON(http.StatusOK, redacted)
 }
 
+// getExplorerTransactionLogs returns the event logs of a tx.
+//
+// @Summary      Event logs for a transaction
+// @Description  Returns the event logs emitted by a transaction. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: logs are redacted per the viewer's visibility, with logs of the parent transaction revealed to a viewer who is the transaction's sender or recipient.
+// @Tags         Explorer
+// @Produce      json
+// @Param        hash path string true "Transaction hash (0x-prefixed)"
+// @Success      200 {array} explorer.Log
+// @Failure      500 {object} APIError "lookup or redaction failed"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/transactions/{hash}/logs [get]
 func (s *Server) getExplorerTransactionLogs(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -2148,6 +2478,15 @@ func (s *Server) getExplorerTransactionLogs(c *gin.Context) {
 	c.JSON(http.StatusOK, redacted)
 }
 
+// getExplorerTransactionOPDeposit reports OP Stack deposit metadata for a tx.
+//
+// @Summary      OP Stack deposit for a transaction (not applicable)
+// @Description  Returns OP Stack L1 deposit metadata for a transaction. Private network only (serves the explorer backend); not reachable through the public ingress. This deployment is not an OP Stack chain, so this always responds 404.
+// @Tags         Explorer
+// @Produce      json
+// @Param        hash path string true "Transaction hash (0x-prefixed)"
+// @Failure      404 {object} APIError "OP deposit not found (not an OP Stack chain)"
+// @Router       /api/v1/explorer/transactions/{hash}/op-deposit [get]
 func (s *Server) getExplorerTransactionOPDeposit(c *gin.Context) {
 	// This is not an OP Stack chain — always return 404
 	respondNotFound(c, "OP deposit not found (not an OP Stack chain)")
@@ -2155,6 +2494,18 @@ func (s *Server) getExplorerTransactionOPDeposit(c *gin.Context) {
 
 // --- Address sub-endpoints ---
 
+// getExplorerAddressBalance returns the native balance of an address.
+//
+// @Summary      Native balance of an address
+// @Description  Returns the current native-token balance of an address as a hex-quantity string (forwarded from eth_getBalance). Private network only (serves the explorer backend); not reachable through the public ingress. Access is privacy-filtered: it requires visibility of the address (else 404), so a viewer cannot probe balances of addresses hidden from them.
+// @Tags         Explorer
+// @Produce      json
+// @Param        address path string true "Account address (0x-prefixed hex)"
+// @Success      200 {string} string "hex-quantity balance in wei" example(0x0)
+// @Failure      404 {object} APIError "address not found (also returned when the address is hidden from the viewer)"
+// @Failure      500 {object} APIError "upstream RPC or parse failure"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/addresses/{address}/balance [get]
 func (s *Server) getExplorerAddressBalance(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -2195,6 +2546,18 @@ func (s *Server) getExplorerAddressBalance(c *gin.Context) {
 	c.JSON(http.StatusOK, rpcResp.Result)
 }
 
+// getExplorerAddressCode returns the deployed bytecode at an address.
+//
+// @Summary      Deployed bytecode at an address
+// @Description  Returns the contract bytecode at an address (forwarded from eth_getCode). Private network only (serves the explorer backend); not reachable through the public ingress. Access is privacy-filtered: it requires visibility of the address (else 404). The body is a base64-encoded JSON string wrapping the node's hex code result.
+// @Tags         Explorer
+// @Produce      json
+// @Param        address path string true "Account address (0x-prefixed hex)"
+// @Success      200 {string} string "base64-encoded JSON string of the hex bytecode"
+// @Failure      404 {object} APIError "address not found (also returned when the address is hidden from the viewer)"
+// @Failure      500 {object} APIError "upstream RPC or parse failure"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/addresses/{address}/code [get]
 func (s *Server) getExplorerAddressCode(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -2236,6 +2599,18 @@ func (s *Server) getExplorerAddressCode(c *gin.Context) {
 	c.JSON(http.StatusOK, codeBytes)
 }
 
+// getExplorerAddressTokenBalances returns the token balances of an address.
+//
+// @Summary      Token balances of an address
+// @Description  Returns the token balances held by an address. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: access requires visibility of the address (else 404), and balances of token contracts hidden from the viewer are dropped (pseudonymous token contracts have their address masked).
+// @Tags         Explorer
+// @Produce      json
+// @Param        address path string true "Account address (0x-prefixed hex)"
+// @Success      200 {array} explorer.Balance
+// @Failure      404 {object} APIError "address not found (also returned when the address is hidden from the viewer)"
+// @Failure      500 {object} APIError "lookup or visibility check failed"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/addresses/{address}/balances [get]
 func (s *Server) getExplorerAddressTokenBalances(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -2282,7 +2657,7 @@ func (s *Server) getExplorerAddressTokenBalances(c *gin.Context) {
 			case explorer.VisibilityFull:
 				filtered = append(filtered, b)
 			case explorer.VisibilityPseudonymous:
-				b.TokenAddress = explorer.GeneratePseudonym(b.TokenAddress)
+				b.TokenAddress = s.pseudonym(b.TokenAddress)
 				filtered = append(filtered, b)
 				// VisibilityHidden, VisibilityRedacted: drop this balance entry
 			}
@@ -2293,6 +2668,20 @@ func (s *Server) getExplorerAddressTokenBalances(c *gin.Context) {
 	c.JSON(http.StatusOK, balances)
 }
 
+// getExplorerAddressTransfers returns a page of an address's token transfers.
+//
+// @Summary      Token transfers for an address
+// @Description  Returns a page of token transfers involving an address, newest first. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: access requires visibility of the address (else 404), and surviving rows are redacted per the viewer's visibility.
+// @Tags         Explorer
+// @Produce      json
+// @Param        address path string true "Account address (0x-prefixed hex)"
+// @Param        limit query int false "Max rows to return" default(25)
+// @Param        before query int false "Return rows strictly older than this block number (pagination cursor)"
+// @Success      200 {array} explorer.TokenTransfer
+// @Failure      404 {object} APIError "address not found (also returned when the address is hidden from the viewer)"
+// @Failure      500 {object} APIError "lookup or redaction failed"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/addresses/{address}/transfers [get]
 func (s *Server) getExplorerAddressTransfers(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -2340,6 +2729,20 @@ func (s *Server) getExplorerAddressTransfers(c *gin.Context) {
 	c.JSON(http.StatusOK, redacted)
 }
 
+// getExplorerAddressInternal returns a page of an address's internal txs.
+//
+// @Summary      Internal transactions for an address
+// @Description  Returns a page of internal (trace) transactions involving an address plus the count of returned rows. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: access requires visibility of the address (else 404); rows are redacted per the viewer's visibility and total is the count of returned rows (never the raw DB total).
+// @Tags         Explorer
+// @Produce      json
+// @Param        address path string true "Account address (0x-prefixed hex)"
+// @Param        limit query int false "Max rows to return" default(25)
+// @Param        offset query int false "Rows to skip (pagination)" default(0)
+// @Success      200 {object} ExplorerListResponse{data=[]explorer.InternalTransaction}
+// @Failure      404 {object} APIError "address not found (also returned when the address is hidden from the viewer)"
+// @Failure      500 {object} APIError "lookup or redaction failed"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/addresses/{address}/internal [get]
 func (s *Server) getExplorerAddressInternal(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -2383,6 +2786,20 @@ func (s *Server) getExplorerAddressInternal(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": len(redacted)})
 }
 
+// getExplorerAddressLogs returns a page of an address's event logs.
+//
+// @Summary      Event logs for an address
+// @Description  Returns a page of event logs emitted by an address plus the count of returned rows. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: access requires visibility of the address (else 404); logs are redacted per the viewer's visibility and total is the count of returned rows (never the raw DB total).
+// @Tags         Explorer
+// @Produce      json
+// @Param        address path string true "Account address (0x-prefixed hex)"
+// @Param        limit query int false "Max rows to return" default(25)
+// @Param        offset query int false "Rows to skip (pagination)" default(0)
+// @Success      200 {object} ExplorerListResponse{data=[]explorer.Log}
+// @Failure      404 {object} APIError "address not found (also returned when the address is hidden from the viewer)"
+// @Failure      500 {object} APIError "lookup or redaction failed"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/addresses/{address}/logs [get]
 func (s *Server) getExplorerAddressLogs(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -2424,6 +2841,18 @@ func (s *Server) getExplorerAddressLogs(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": len(redacted)})
 }
 
+// getExplorerAddressContract returns contract metadata for an address.
+//
+// @Summary      Contract metadata for an address
+// @Description  Returns deployed-contract metadata (bytecode, verification, ABI, source) for an address. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: access requires visibility of the address (else 404), and the creator address is redacted per the viewer's visibility so a private deployer is not revealed.
+// @Tags         Explorer
+// @Produce      json
+// @Param        address path string true "Contract address (0x-prefixed hex)"
+// @Success      200 {object} explorer.Contract
+// @Failure      404 {object} APIError "address or contract not found (also returned when the address is hidden from the viewer)"
+// @Failure      500 {object} APIError "lookup failed"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/addresses/{address}/contract [get]
 func (s *Server) getExplorerAddressContract(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -2459,6 +2888,18 @@ func (s *Server) getExplorerAddressContract(c *gin.Context) {
 	c.JSON(http.StatusOK, contract)
 }
 
+// getExplorerAddressIsContract reports whether an address is a contract.
+//
+// @Summary      Whether an address is a contract
+// @Description  Reports whether an address has deployed code (is a contract). Private network only (serves the explorer backend); not reachable through the public ingress. Access is privacy-filtered: it requires visibility of the address (else 404), so a viewer cannot probe hidden addresses.
+// @Tags         Explorer
+// @Produce      json
+// @Param        address path string true "Account address (0x-prefixed hex)"
+// @Success      200 {object} ExplorerIsContractResponse
+// @Failure      404 {object} APIError "address not found (also returned when the address is hidden from the viewer)"
+// @Failure      500 {object} APIError "lookup failed"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/addresses/{address}/is-contract [get]
 func (s *Server) getExplorerAddressIsContract(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -2482,6 +2923,21 @@ func (s *Server) getExplorerAddressIsContract(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"is_contract": isContract})
 }
 
+// updateExplorerAddressABI stores a contract ABI for an address.
+//
+// @Summary      Set the ABI for a contract
+// @Description  Stores the ABI JSON for a contract address. Private network only (serves the explorer backend); not reachable through the public ingress. This is privacy-gated: the write requires FULL visibility of the address for the resolved viewer, so only members of the owning org (or a public contract) may update the ABI; other viewers get 404 (indistinguishable from a missing address). The request body is the raw ABI JSON.
+// @Tags         Explorer
+// @Accept       json
+// @Produce      json
+// @Param        address path string true "Contract address (0x-prefixed hex)"
+// @Param        request body object true "Raw contract ABI JSON (array of ABI entries)"
+// @Success      200 {object} ExplorerABIUpdateResponse
+// @Failure      400 {object} APIError "invalid request body"
+// @Failure      404 {object} APIError "address not found (also returned when the viewer lacks full visibility)"
+// @Failure      500 {object} APIError "failed to set contract ABI"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/addresses/{address}/abi [post]
 func (s *Server) updateExplorerAddressABI(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -2492,7 +2948,7 @@ func (s *Server) updateExplorerAddressABI(c *gin.Context) {
 	// Require full visibility: only org members (or public contracts) may update ABI.
 	// This prevents unauthorized writes to private org contracts.
 	viewerDID := s.getViewerDIDFromRequest(c)
-	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), "", viewerDID, address)
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerDID, address)
 	if visibility.Level != VisibilityFull {
 		respondNotFound(c, "address not found")
 		return
@@ -2517,6 +2973,21 @@ func (s *Server) updateExplorerAddressABI(c *gin.Context) {
 
 // --- Logs ---
 
+// getExplorerLogs returns event logs matching optional filters.
+//
+// @Summary      Query event logs
+// @Description  Returns event logs matching the given address / topic / block-range filters. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: logs are redacted per the viewer's visibility.
+// @Tags         Explorer
+// @Produce      json
+// @Param        address query string false "Filter by emitting contract address (0x-prefixed hex)" example(0x0000000000000000000000000000000000000001)
+// @Param        topic0 query string false "Filter by first log topic (event signature hash)"
+// @Param        from query int false "Start block (inclusive)"
+// @Param        to query int false "End block (inclusive)"
+// @Param        limit query int false "Max rows to return (1-1000)" default(100)
+// @Success      200 {array} explorer.Log
+// @Failure      500 {object} APIError "lookup or redaction failed"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/logs [get]
 func (s *Server) getExplorerLogs(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -2577,6 +3048,19 @@ func (s *Server) getExplorerLogs(c *gin.Context) {
 
 // --- Tokens ---
 
+// getExplorerTokens returns a page of tokens with a filtered total.
+//
+// @Summary      List tokens
+// @Description  Returns a page of tokens plus the count of returned rows. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: token contracts hidden from the viewer are dropped, redacted/pseudonymous ones have their identifying fields masked, and total is the count of returned rows (never the raw DB total).
+// @Tags         Explorer
+// @Produce      json
+// @Param        limit query int false "Max rows to return (1-100)" default(25)
+// @Param        offset query int false "Rows to skip (pagination)" default(0)
+// @Param        type query string false "Filter by token type (e.g. ERC20, ERC721)"
+// @Success      200 {object} ExplorerListResponse{data=[]explorer.Token}
+// @Failure      500 {object} APIError "lookup or visibility check failed"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/tokens [get]
 func (s *Server) getExplorerTokens(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -2638,7 +3122,7 @@ func (s *Server) getExplorerTokens(c *gin.Context) {
 				t.USDPrice = nil
 				t.IconURL = nil
 			case explorer.VisibilityPseudonymous:
-				pseudonym := explorer.GeneratePseudonym(t.Address)
+				pseudonym := s.pseudonym(t.Address)
 				t.Address = pseudonym
 				t.Name = nil
 				t.Symbol = ""
@@ -2664,6 +3148,18 @@ func (s *Server) getExplorerTokens(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": tokens, "total": len(tokens)})
 }
 
+// getExplorerToken returns metadata for a single token contract.
+//
+// @Summary      Get token by address
+// @Description  Returns metadata for a single token contract. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: a token hidden or redacted from the viewer returns 404 (same response for both, to avoid an existence oracle); a pseudonymous token has its identifying fields masked; for a fully visible token, holder and transfer counts are recomputed as the number of rows the viewer can see (fail-safe to 0 on error, never the raw aggregate).
+// @Tags         Explorer
+// @Produce      json
+// @Param        address path string true "Token contract address (0x-prefixed hex)"
+// @Success      200 {object} explorer.Token
+// @Failure      404 {object} APIError "token not found (also returned when the token is hidden or redacted from the viewer)"
+// @Failure      500 {object} APIError "lookup failed"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/tokens/{address} [get]
 func (s *Server) getExplorerToken(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -2680,7 +3176,7 @@ func (s *Server) getExplorerToken(c *gin.Context) {
 	// org. Same class as the G16 fix for /check-address/. Now both
 	// non-Full visibilities return the same 404.
 	viewerDID := s.getViewerDIDFromRequest(c)
-	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), "", viewerDID, address)
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerDID, address)
 	if visibility.Level == VisibilityHidden || visibility.Level == VisibilityRedacted {
 		respondNotFound(c, "token not found")
 		return
@@ -2700,7 +3196,7 @@ func (s *Server) getExplorerToken(c *gin.Context) {
 
 	// Redact sensitive fields for non-full visibility.
 	if visibility.Level == VisibilityPseudonymous {
-		pseudonym := explorer.GeneratePseudonym(token.Address)
+		pseudonym := s.pseudonym(token.Address)
 		token.Address = pseudonym
 		token.Name = nil
 		token.Symbol = ""
@@ -2729,6 +3225,20 @@ func (s *Server) getExplorerToken(c *gin.Context) {
 	c.JSON(http.StatusOK, token)
 }
 
+// getExplorerTokenHolders returns a page of a token's holders.
+//
+// @Summary      Token holders
+// @Description  Returns a page of holders of a token contract plus the count of returned rows. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: a token hidden or redacted from the viewer returns 404; holders whose address is hidden from the viewer are dropped and total is the count of returned rows (never the raw DB total).
+// @Tags         Explorer
+// @Produce      json
+// @Param        address path string true "Token contract address (0x-prefixed hex)"
+// @Param        limit query int false "Max rows to return (1-100)" default(25)
+// @Param        offset query int false "Rows to skip (pagination)" default(0)
+// @Success      200 {object} ExplorerListResponse{data=[]explorer.TokenHolder}
+// @Failure      404 {object} APIError "token not found (also returned when the token is hidden or redacted from the viewer)"
+// @Failure      500 {object} APIError "lookup or redaction failed"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/tokens/{address}/holders [get]
 func (s *Server) getExplorerTokenHolders(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -2738,7 +3248,7 @@ func (s *Server) getExplorerTokenHolders(c *gin.Context) {
 
 	// Visibility pre-check on the token address itself.
 	viewerDID := s.getViewerDIDFromRequest(c)
-	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), "", viewerDID, address)
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerDID, address)
 	if visibility.Level == VisibilityHidden || visibility.Level == VisibilityRedacted {
 		respondNotFound(c, "token not found")
 		return
@@ -2777,6 +3287,20 @@ func (s *Server) getExplorerTokenHolders(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": len(redacted)})
 }
 
+// getExplorerTokenTransfers returns a page of a token's transfers.
+//
+// @Summary      Token transfers
+// @Description  Returns a page of transfers of a token contract plus the count of returned rows. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: a token hidden or redacted from the viewer returns 404; surviving transfers are redacted per the viewer's visibility and total is the count of returned rows (never the raw DB total).
+// @Tags         Explorer
+// @Produce      json
+// @Param        address path string true "Token contract address (0x-prefixed hex)"
+// @Param        limit query int false "Max rows to return (1-100)" default(25)
+// @Param        offset query int false "Rows to skip (pagination)" default(0)
+// @Success      200 {object} ExplorerListResponse{data=[]explorer.TokenTransfer}
+// @Failure      404 {object} APIError "token not found (also returned when the token is hidden or redacted from the viewer)"
+// @Failure      500 {object} APIError "lookup or redaction failed"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/tokens/{address}/transfers [get]
 func (s *Server) getExplorerTokenTransfers(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -2786,7 +3310,7 @@ func (s *Server) getExplorerTokenTransfers(c *gin.Context) {
 
 	// Visibility pre-check on the token address itself.
 	viewerDID := s.getViewerDIDFromRequest(c)
-	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), "", viewerDID, address)
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerDID, address)
 	if visibility.Level == VisibilityHidden || visibility.Level == VisibilityRedacted {
 		respondNotFound(c, "token not found")
 		return
@@ -2829,6 +3353,18 @@ func (s *Server) getExplorerTokenTransfers(c *gin.Context) {
 
 // --- Transfers ---
 
+// getExplorerAllTransfers returns a page of all token transfers.
+//
+// @Summary      List all token transfers
+// @Description  Returns a page of token transfers across all tokens plus the count of returned rows. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: transfers are redacted per the viewer's visibility and total is the count of returned rows (never the raw DB total).
+// @Tags         Explorer
+// @Produce      json
+// @Param        limit query int false "Max rows to return (1-100)" default(25)
+// @Param        offset query int false "Rows to skip (pagination)" default(0)
+// @Success      200 {object} ExplorerListResponse{data=[]explorer.TokenTransfer}
+// @Failure      500 {object} APIError "lookup or redaction failed"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/transfers [get]
 func (s *Server) getExplorerAllTransfers(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -2872,6 +3408,18 @@ func (s *Server) getExplorerAllTransfers(c *gin.Context) {
 
 // --- Accounts ---
 
+// getExplorerAccounts returns a page of accounts with a filtered total.
+//
+// @Summary      List accounts
+// @Description  Returns a page of accounts (address statistics) plus the count of returned rows. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: accounts hidden from the viewer are dropped, pseudonymous ones have their address masked, and total is the count of returned rows (never the raw DB total).
+// @Tags         Explorer
+// @Produce      json
+// @Param        page query int false "1-based page number" default(1)
+// @Param        pageSize query int false "Rows per page (1-100)" default(25)
+// @Success      200 {object} ExplorerListResponse{data=[]explorer.AddressStats}
+// @Failure      500 {object} APIError "lookup or visibility check failed"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/accounts [get]
 func (s *Server) getExplorerAccounts(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -2923,7 +3471,7 @@ func (s *Server) getExplorerAccounts(c *gin.Context) {
 			case explorer.VisibilityFull:
 				filtered = append(filtered, a)
 			case explorer.VisibilityPseudonymous:
-				a.Address = explorer.GeneratePseudonym(a.Address)
+				a.Address = s.pseudonym(a.Address)
 				filtered = append(filtered, a)
 				// VisibilityHidden, VisibilityRedacted: drop this account
 			}
@@ -2937,6 +3485,18 @@ func (s *Server) getExplorerAccounts(c *gin.Context) {
 
 // --- Search ---
 
+// getExplorerSearchSuggestions returns autocomplete suggestions for a query.
+//
+// @Summary      Search autocomplete suggestions
+// @Description  Returns autocomplete suggestions (blocks, transactions, addresses, tokens) for a query string. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: address/contract suggestions hidden or redacted from the viewer are dropped and pseudonymous ones are masked, so private contracts cannot be discovered via autocomplete. An empty query returns an empty list.
+// @Tags         Explorer
+// @Produce      json
+// @Param        q query string false "Search query (empty returns no suggestions)"
+// @Param        limit query int false "Max suggestions to return (1-50)" default(10)
+// @Success      200 {array} explorer.SearchSuggestion
+// @Failure      500 {object} APIError "search or visibility check failed"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/search/suggestions [get]
 func (s *Server) getExplorerSearchSuggestions(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -2995,7 +3555,7 @@ func (s *Server) getExplorerSearchSuggestions(c *gin.Context) {
 						continue // drop hidden/restricted address suggestions
 					}
 					if level == explorer.VisibilityPseudonymous {
-						pseudo := explorer.GeneratePseudonym(sug.Value)
+						pseudo := s.pseudonym(sug.Value)
 						sug.Value = pseudo
 						sug.Label = pseudo
 					}
@@ -3011,6 +3571,18 @@ func (s *Server) getExplorerSearchSuggestions(c *gin.Context) {
 
 // --- Stats ---
 
+// getExplorerTransactionHistory returns a time series of transaction counts.
+//
+// @Summary      Transaction-count history
+// @Description  Returns a time series of transaction counts bucketed by interval. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: counts reflect only transactions the viewer may see.
+// @Tags         Explorer
+// @Produce      json
+// @Param        interval query int false "Bucket size in minutes" default(60)
+// @Param        limit query int false "Max buckets to return (1-100)" default(30)
+// @Success      200 {array} explorer.TxHistoryPoint
+// @Failure      500 {object} APIError "lookup failed"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/stats/tx-history [get]
 func (s *Server) getExplorerTransactionHistory(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -3047,6 +3619,16 @@ func (s *Server) getExplorerTransactionHistory(c *gin.Context) {
 
 // --- Sync sub-endpoints ---
 
+// getExplorerIndexerProgress returns the indexer backfill progress.
+//
+// @Summary      Indexer progress
+// @Description  Returns indexer backfill progress (min/max fetched block, backfill-complete flag). Private network only (serves the explorer backend); not reachable through the public ingress.
+// @Tags         Explorer
+// @Produce      json
+// @Success      200 {object} explorer.IndexerProgress
+// @Failure      500 {object} APIError "lookup failed"
+// @Failure      503 {object} APIError "explorer store not configured"
+// @Router       /api/v1/explorer/sync/indexer-progress [get]
 func (s *Server) getExplorerIndexerProgress(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -3067,6 +3649,14 @@ func (s *Server) getExplorerIndexerProgress(c *gin.Context) {
 	c.JSON(http.StatusOK, progress)
 }
 
+// getExplorerCatchupProgress returns indexer catch-up progress.
+//
+// @Summary      Catch-up progress
+// @Description  Returns indexer catch-up progress. Private network only (serves the explorer backend); not reachable through the public ingress. The proxy has no indexer of its own, so this always reports a static "not running" state.
+// @Tags         Explorer
+// @Produce      json
+// @Success      200 {object} ExplorerCatchupProgressResponse
+// @Router       /api/v1/explorer/sync/catchup [get]
 func (s *Server) getExplorerCatchupProgress(c *gin.Context) {
 	// The proxy has no indexer of its own — return static "not running" response
 	c.JSON(http.StatusOK, gin.H{

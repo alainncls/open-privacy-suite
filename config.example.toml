@@ -79,6 +79,12 @@ REQUIRE_PROOF_OF_HUMANITY = true
 RUNTIME_TRACING_ETH_CALL_ENABLED = true
 ETH_CALL_TRACE_TIMEOUT = "5s"
 RUNTIME_TRACING_INTRA_ORG_GRANTS_ENABLED = false
+# ETH_CALL_DENY_WITHOUT_ABI (RD-1144): when true, eth_call returns from contracts
+# with no resolvable ABI are blanked (fail-closed). Default false passes them
+# through. Address-typed returns of ABI-registered contracts are field-level
+# redacted either way; setting this true also blocks reads of unregistered
+# contracts, so weigh privacy vs usability for your deployment.
+ETH_CALL_DENY_WITHOUT_ABI = false
 MAX_CONCURRENT_REQUESTS = 50
 # EXTRA_RPC_NAMESPACES_FILE = "./rpc-namespaces.json"
 
@@ -108,6 +114,12 @@ AUTO_KYC_AZURE_SERVICE_PRINCIPAL = false         # Azure AD M2M service principa
 # -----------------------------------------------------------------------------
 RPC_API_KEY_HEADER = "Authorization"
 # RPC_API_KEY and RPC_API_KEY_ENCRYPTION_KEY are secrets — set via env.
+# RPC_API_KEY_ENCRYPTION_KEY must be valid 32-byte hex; the proxy refuses to
+# start on an invalid value instead of silently storing keys in plaintext.
+# Rotate it with: privacy-cli reencrypt-rpc-keys --old-key ... --new-key ...
+
+# EXPLORER_PSEUDONYM_KEY (optional, recommended in production) makes explorer
+# address pseudonyms non-enumerable. It is a secret — set via env, not here.
 
 # -----------------------------------------------------------------------------
 # Audit log integrity
