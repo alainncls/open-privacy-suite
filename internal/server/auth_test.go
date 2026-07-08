@@ -432,7 +432,13 @@ func TestHandleAuthCallback_VerifierIDMismatch(t *testing.T) {
 	var errorResp map[string]interface{}
 	err := json.Unmarshal(w2.Body.Bytes(), &errorResp)
 	require.NoError(t, err)
-	assert.Contains(t, errorResp["error"].(string), "verifier ID mismatch")
+	// RD-1178 #5: the response to this UNAUTHENTICATED caller must be opaque.
+	// The raw verifier error (verifier DID, circuit/issuer/schema internals)
+	// stays in slog; it must never reach the client.
+	body := errorResp["error"].(string)
+	assert.Equal(t, "authentication failed", body)
+	assert.NotContains(t, body, "verifier ID mismatch")
+	assert.NotContains(t, body, "did:privado")
 }
 
 func TestHandleRefresh_Success(t *testing.T) {
