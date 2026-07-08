@@ -141,7 +141,7 @@ Users in the same org but in a group **without** a `contract_grant` and **withou
 | `value` | 0 / nil | 0 / nil | 0 / nil | unchanged | Yes | Yes | Zeroed when either side hidden/redacted |
 | `input` | nil | nil | nil | unchanged | Yes | Yes | |
 | `output` | nil | nil | nil | unchanged | Yes | Yes | |
-| `error` | **unchanged** | **unchanged** | **unchanged** | unchanged | **No** | No | **GAP G4** — error strings may contain embedded addresses or revert reasons exposing private data |
+| `error` | nil | nil | nil | unchanged | Yes | Yes | Zeroed when either side hidden/redacted (revert strings can embed the hidden counterparty's address/reason). **G4 resolved (RD-1177).** |
 | `gas` | unchanged | unchanged | unchanged | unchanged | N/A | N/A | Accepted |
 | `gasUsed` | unchanged | unchanged | unchanged | unchanged | N/A | N/A | Accepted |
 
@@ -372,7 +372,7 @@ A deployment-wide boolean flag (`ORG_ADMIN_VIEW_USER_TXS`, env var; `config.OrgA
 
 ## 4. Known Gaps
 
-The following gaps are numbered. G1, G2, G3, G5, G6, G7, G8, G9, G11, G14, G16, G20, G21, G22, G24 are resolved. G4, G15, G23 are outstanding.
+The following gaps are numbered. G1, G2, G3, G4, G5, G6, G7, G8, G9, G11, G14, G16, G20, G21, G22, G24 are resolved. G15, G23 are outstanding.
 
 ### Resolved
 
@@ -391,13 +391,13 @@ The following gaps are numbered. G1, G2, G3, G5, G6, G7, G8, G9, G11, G14, G16, 
 - **G25 (resolved, RD-1079): the transfer-participant union must be driven by Full-visible addresses only, never by non-Full disclosure grants**
   The G24 union originally fed `VisibleTxHashes` from the *whole* `visible` set, which `buildVisibilityFilter` builds from (a) Full-visible addresses **and** (b) pseudonymous/redacted **disclosure-grant** addresses (added for SQL row-survival of the disclosed party in `/transfers`). Because `VisibleTxHashes` is a *full-reveal* override, a viewer holding a **pseudonymous** disclosure grant on a transfer participant (Eve) had every tx where Eve is a participant unioned in — and the override force-revealed Eve's **counterparty's** real address (Charlie) in full hex, bypassing the disclosure-grant counterparty lens (§3.7.2). The G24 "reveals nothing new" rationale was false here: on `/transfers` Eve renders as a pseudonym while Charlie was shown in full. **Fix:** the union is driven by `fullVisible` (only addresses where `GetBatchVisibility` returns `VisibilityFull` — RBAC-full contracts/admin, plus *full* disclosure grants), excluding pseudonymous/redacted grant addresses. Those addresses stay in `VisibleAddresses` (so the disclosed party's `/transfers` row still survives), but no longer drive the full-reveal union, so the counterparty lens runs and renders Charlie at Eve's grant level. **Trade-off:** for a pseudonymous/redacted-grant viewer the disclosed party's transfer still shows in `/transfers` (pseudonymised), but the parent tx no longer surfaces in `/transactions` — strictly more private than the leak it replaced. A Full-level viewer (admin, or a full disclosure grant) is entitled to see counterparties, so the G24 coherence behaviour is unchanged for them. Pinned by `TestBuildVisibilityFilter_DisclosureGrant_UnionDrivenByFullOnly_RD1079` (server) and `redactor_rd1079_test.go` (redactor).
 
+- **G4 (resolved, RD-1177): InternalTransaction.error not stripped**
+  Error strings returned from trace calls can contain raw revert messages or embedded addresses (e.g. `execution reverted: caller 0xABCD... not authorized`). `RedactInternalTransactions` masked From/To→`[PRIVATE]` and stripped Input/Output/Value on the one-side-hidden branch but left `error` unchanged, while the top-level `RedactTransactions` already nil'd it — an asymmetry that leaked the hidden counterparty's address/reason on `/transactions/:hash/internal`. Fixed: `redacted.Error = nil` on the one-side-hidden branch, mirroring `RedactTransactions`. Pinned by `TestRedactInternalTransactions_OneSideHidden_StripsError_RD1177`.
+
 - **G22 (resolved): Address page transaction count not filtered**
   The `/addresses/:address/stats` endpoint returned the pre-computed `tx_count` from the `address_stats` table without applying visibility filtering. A viewer who could only see 2 of 12 transactions still saw "Transactions: 12", leaking the total activity volume of the address. Same class of issue as RD-758 (fixed for paginated list endpoints and block counts) but missed for address summary counts. Fixed: the handler now computes a live `COUNT(*)` from the `transactions` table with the SQL-level visibility filter applied via `GetAddressTransactionCountFiltered`, overriding the stale `address_stats.tx_count`. The filter is built per-viewer using `buildVisibilityFilter`, matching the pattern used by block transaction counts.
 
 ### Outstanding
-
-- **G4: InternalTransaction.error not stripped**
-  Error strings returned from trace calls can contain raw revert messages or embedded addresses (e.g. `execution reverted: caller 0xABCD... not authorized`). When either side of the internal call is Hidden or Redacted, the `error` field must be set to nil before the response is returned. Currently returned unmodified.
 
 - **G10: One-side-hidden transactions leak activity metadata**
   When only one party in a transaction/transfer is hidden and the other is public, the entry survives the SQL visibility filter. The hidden side is masked (`[PRIVATE]`), but the viewer still learns that *some* private party interacted with the visible address — including timing, block number, gas used, and transfer amounts. For example, a non-participant can see "someone private called [public contract]." On a private network this metadata may be sensitive. The stricter alternative — drop if ANY side is hidden unless viewer is a participant — would eliminate this leak but significantly reduce explorer utility for public addresses. **Decision pending**: track as a design tradeoff. If tightened, the participant override in `RedactTransactions`/`RedactTransfers`/`RedactInternalTransactions` ensures participants still see their own activity.
