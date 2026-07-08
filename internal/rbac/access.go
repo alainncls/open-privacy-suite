@@ -694,16 +694,14 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 				Reason:  err.Error(),
 			}, nil
 		}
-		// eth_getLogs passed validation - return allowed with rate limits
+		// eth_getLogs passed validation - return allowed
 		allClaims := collectAllClaims(perms)
 		return &AccessCheckResult{
-			Allowed:        true,
-			OrgID:          org.ID,
-			UserID:         user.ID,
-			RateLimitRPS:    perms.RateLimitRPS,
-			RateLimitDaily:  perms.RateLimitDaily,
-			RPCAPIKey:       perms.RPCAPIKey,
-			Claims:          allClaims,
+			Allowed:   true,
+			OrgID:     org.ID,
+			UserID:    user.ID,
+			RPCAPIKey: perms.RPCAPIKey,
+			Claims:    allClaims,
 		}, nil
 	}
 
@@ -740,13 +738,11 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 				}
 				allClaims := collectAllClaims(perms)
 				return &AccessCheckResult{
-					Allowed:        true,
-					OrgID:          org.ID,
-					UserID:         user.ID,
-					RateLimitRPS:   perms.RateLimitRPS,
-					RateLimitDaily: perms.RateLimitDaily,
-					RPCAPIKey:      perms.RPCAPIKey,
-					Claims:         allClaims,
+					Allowed:   true,
+					OrgID:     org.ID,
+					UserID:    user.ID,
+					RPCAPIKey: perms.RPCAPIKey,
+					Claims:    allClaims,
 				}, nil
 			}
 		}
@@ -770,13 +766,11 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 				// Not owned by any org — allow (method allowlist already verified).
 				allClaims := collectAllClaims(perms)
 				return &AccessCheckResult{
-					Allowed:        true,
-					OrgID:          org.ID,
-					UserID:         user.ID,
-					RateLimitRPS:   perms.RateLimitRPS,
-					RateLimitDaily: perms.RateLimitDaily,
-					RPCAPIKey:      perms.RPCAPIKey,
-					Claims:         allClaims,
+					Allowed:   true,
+					OrgID:     org.ID,
+					UserID:    user.ID,
+					RPCAPIKey: perms.RPCAPIKey,
+					Claims:    allClaims,
 				}, nil
 			}
 			// Owned by an org — fall through to contract access check
@@ -1074,13 +1068,11 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 			}
 			allClaims := collectAllClaims(perms)
 			return &AccessCheckResult{
-				Allowed:        true,
-				OrgID:          org.ID,
-				UserID:         user.ID,
-				RateLimitRPS:   perms.RateLimitRPS,
-				RateLimitDaily: perms.RateLimitDaily,
-				RPCAPIKey:      perms.RPCAPIKey,
-				Claims:         allClaims,
+				Allowed:   true,
+				OrgID:     org.ID,
+				UserID:    user.ID,
+				RPCAPIKey: perms.RPCAPIKey,
+				Claims:    allClaims,
 			}, nil
 		}
 	}
@@ -1107,13 +1099,11 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 	allClaims := collectAllClaims(perms)
 
 	return &AccessCheckResult{
-		Allowed:         true,
-		OrgID:           org.ID,
-		UserID:          user.ID,
-		RateLimitRPS:    perms.RateLimitRPS,
-		RateLimitDaily:  perms.RateLimitDaily,
-		RPCAPIKey:       perms.RPCAPIKey,
-		Claims:          allClaims,
+		Allowed:   true,
+		OrgID:     org.ID,
+		UserID:    user.ID,
+		RPCAPIKey: perms.RPCAPIKey,
+		Claims:    allClaims,
 	}, nil
 }
 

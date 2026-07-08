@@ -307,9 +307,7 @@ func TestGroupAccess_CRUD(t *testing.T) {
 			ID:             uuid.New().String(),
 			GroupID:        group.ID,
 			AllowedMethods: []string{"eth_call", "eth_getBalance"},
-			Claims:  []rbac.Claim{},
-			RateLimitRPS:   intPtr(100),
-			RateLimitDaily: intPtr(10000),
+			Claims:         []rbac.Claim{},
 		}
 
 		err := database.SetGroupAccess(ctx, access)
@@ -331,10 +329,6 @@ func TestGroupAccess_CRUD(t *testing.T) {
 		if len(access.AllowedMethods) != 2 {
 			t.Errorf("AllowedMethods length = %d, want 2", len(access.AllowedMethods))
 		}
-
-		if access.RateLimitRPS == nil || *access.RateLimitRPS != 100 {
-			t.Error("RateLimitRPS should be 100")
-		}
 	})
 
 	t.Run("Update (Upsert)", func(t *testing.T) {
@@ -342,8 +336,7 @@ func TestGroupAccess_CRUD(t *testing.T) {
 			ID:             uuid.New().String(), // New ID, but same group
 			GroupID:        group.ID,
 			AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_sendTransaction"},
-			Claims:  []rbac.Claim{},
-			RateLimitRPS:   intPtr(200),
+			Claims:         []rbac.Claim{},
 		}
 
 		err := database.SetGroupAccess(ctx, access)
@@ -1128,10 +1121,4 @@ func TestIsContractRegisteredToAnyOrg(t *testing.T) {
 			t.Error("Expected true for contract registered to org2")
 		}
 	})
-}
-
-// Helper functions
-
-func intPtr(i int) *int {
-	return &i
 }

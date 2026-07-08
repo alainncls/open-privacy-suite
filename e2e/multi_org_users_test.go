@@ -100,20 +100,18 @@ func TestMultiOrgUsers_EffectivePermissionsAreOrgScoped(t *testing.T) {
 	org1 := f.CreateOrg("effperm1")
 	org2 := f.CreateOrg("effperm2")
 
-	// org1: admin claim + write-capable allowed_methods + high rate.
+	// org1: admin claim + write-capable allowed_methods.
 	group1 := f.CreateGroup(org1.ID, "admins", testfixtures.CreateGroupOptions{})
 	f.SetGroupAccess(org1.ID, group1.ID, testfixtures.GroupAccessInput{
 		AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
 		Claims:         []testfixtures.Claim{testfixtures.ClaimAdmin},
-		RateLimitRPS:   testfixtures.Ptr(100),
 	})
 
-	// org2: no claim, read-only methods, low rate.
+	// org2: no claim, read-only methods.
 	group2 := f.CreateGroup(org2.ID, "readers", testfixtures.CreateGroupOptions{})
 	f.SetGroupAccess(org2.ID, group2.ID, testfixtures.GroupAccessInput{
 		AllowedMethods: []string{"eth_call"},
 		Claims:         []testfixtures.Claim{},
-		RateLimitRPS:   testfixtures.Ptr(10),
 	})
 
 	user, _ := f.CreateUser(testfixtures.CreateUserOptions{})

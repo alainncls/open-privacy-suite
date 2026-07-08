@@ -336,8 +336,6 @@ func TestPermissionCache_SetGetRoundtrip(t *testing.T) {
 	client := setupRedis(t)
 	cache := NewPermissionCache(client, 5*time.Minute)
 
-	rps := 100
-	daily := 10000
 	perms := &rbac.EffectivePermissions{
 		ID:             "perm-1",
 		UserID:         "user-1",
@@ -345,8 +343,6 @@ func TestPermissionCache_SetGetRoundtrip(t *testing.T) {
 		AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
 		Claims:         []rbac.Claim{rbac.ClaimDeploy},
 		RPCAPIKey:      "secret-api-key-12345",
-		RateLimitRPS:   &rps,
-		RateLimitDaily: &daily,
 		ComputedAt:     time.Now().Truncate(time.Millisecond),
 		ExpiresAt:      time.Now().Add(5 * time.Minute).Truncate(time.Millisecond),
 	}
@@ -361,8 +357,6 @@ func TestPermissionCache_SetGetRoundtrip(t *testing.T) {
 	assert.Equal(t, []string{"eth_call", "eth_sendTransaction"}, got.AllowedMethods)
 	assert.Equal(t, []rbac.Claim{rbac.ClaimDeploy}, got.Claims)
 	assert.Equal(t, "secret-api-key-12345", got.RPCAPIKey, "RPCAPIKey must survive cache roundtrip")
-	assert.Equal(t, 100, *got.RateLimitRPS)
-	assert.Equal(t, 10000, *got.RateLimitDaily)
 }
 
 func TestPermissionCache_RPCAPIKeyPreserved(t *testing.T) {

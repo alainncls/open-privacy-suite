@@ -15,18 +15,17 @@ import (
 // Effective Permissions Cache operations
 
 func (d *DB) GetCachedPermissions(ctx context.Context, userID, orgID string) (*rbac.EffectivePermissions, error) {
-	query := `SELECT id, user_id, org_id, allowed_methods, contract_access, claims, rate_limit_rps, rate_limit_daily, computed_at, expires_at
+	query := `SELECT id, user_id, org_id, allowed_methods, contract_access, claims, computed_at, expires_at
 	          FROM effective_permissions_cache WHERE user_id = $1 AND org_id = $2 AND expires_at > $3`
 
 	perms := &rbac.EffectivePermissions{}
 	var allowedMethods, claimsArr pq.StringArray
 	var contractAccess []byte
-	var rateLimitRPS, rateLimitDaily sql.NullInt32
 
 	err := d.conn.QueryRowContext(ctx, query, userID, orgID, time.Now()).Scan(
 		&perms.ID, &perms.UserID, &perms.OrgID,
 		&allowedMethods, &contractAccess, &claimsArr,
-		&rateLimitRPS, &rateLimitDaily, &perms.ComputedAt, &perms.ExpiresAt,
+		&perms.ComputedAt, &perms.ExpiresAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -49,27 +48,16 @@ func (d *DB) GetCachedPermissions(ctx context.Context, userID, orgID string) (*r
 		perms.ContractAccess = make(map[string]rbac.ContractAccess)
 	}
 
-	if rateLimitRPS.Valid {
-		val := int(rateLimitRPS.Int32)
-		perms.RateLimitRPS = &val
-	}
-	if rateLimitDaily.Valid {
-		val := int(rateLimitDaily.Int32)
-		perms.RateLimitDaily = &val
-	}
-
 	return perms, nil
 }
 
 func (d *DB) SetCachedPermissions(ctx context.Context, perms *rbac.EffectivePermissions) error {
-	query := `INSERT INTO effective_permissions_cache (id, user_id, org_id, allowed_methods, contract_access, claims, rate_limit_rps, rate_limit_daily, computed_at, expires_at)
-	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	query := `INSERT INTO effective_permissions_cache (id, user_id, org_id, allowed_methods, contract_access, claims, computed_at, expires_at)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	          ON CONFLICT (user_id, org_id) DO UPDATE SET
 	          allowed_methods = EXCLUDED.allowed_methods,
 	          contract_access = EXCLUDED.contract_access,
 	          claims = EXCLUDED.claims,
-	          rate_limit_rps = EXCLUDED.rate_limit_rps,
-	          rate_limit_daily = EXCLUDED.rate_limit_daily,
 	          computed_at = EXCLUDED.computed_at,
 	          expires_at = EXCLUDED.expires_at`
 
@@ -83,7 +71,7 @@ func (d *DB) SetCachedPermissions(ctx context.Context, perms *rbac.EffectivePerm
 	_, err := d.conn.ExecContext(ctx, query,
 		perms.ID, perms.UserID, perms.OrgID,
 		pq.Array(perms.AllowedMethods), contractAccess, pq.Array(claimsArr),
-		perms.RateLimitRPS, perms.RateLimitDaily, perms.ComputedAt, perms.ExpiresAt,
+		perms.ComputedAt, perms.ExpiresAt,
 	)
 	return err
 }

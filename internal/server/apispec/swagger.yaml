@@ -1403,12 +1403,6 @@ components:
             $ref: '#/components/schemas/privacy-proxy_internal_rbac.Claim'
           type: array
           uniqueItems: false
-        rate_limit_daily:
-          example: 100000
-          type: integer
-        rate_limit_rps:
-          example: 50
-          type: integer
         rpc_api_key:
           type: string
         verbose_errors:
@@ -2818,12 +2812,6 @@ components:
         org_id:
           description: Resolved organization ID
           type: string
-        rate_limit_daily:
-          description: 'Deprecated: rate limiting moved to RPC proxy'
-          type: integer
-        rate_limit_rps:
-          description: 'Deprecated: rate limiting moved to RPC proxy'
-          type: integer
         reason:
           type: string
         user_id:
@@ -2973,10 +2961,6 @@ components:
           type: string
         org_id:
           type: string
-        rate_limit_daily:
-          type: integer
-        rate_limit_rps:
-          type: integer
         user_id:
           type: string
       type: object
@@ -3116,12 +3100,6 @@ components:
           type: string
         narrowed_by_parent:
           type: boolean
-        rate_limit_daily:
-          description: 'Deprecated: rate limiting moved to RPC proxy'
-          type: integer
-        rate_limit_rps:
-          description: 'Deprecated: rate limiting moved to RPC proxy'
-          type: integer
         rpc_api_key:
           description: API key for upstream RPC proxy authentication
           type: string
@@ -7686,12 +7664,12 @@ paths:
     put:
       description: 'Creates or replaces the group''s access settings. Body: allowed_methods
         ([]string; "*" expands to the full method list), claims ([]string of operational
-        claims: deploy/upgrade/admin), rate_limit_rps, rate_limit_daily, rpc_api_key
-        (encrypted at rest, never returned in clear), verbose_errors. is_system group
-        access is super-admin-only (X-Admin-Token). Reshaping an is_org_admin group''s
-        access is super-admin-only; reshaping a regular group''s access is rejected
-        for the operator token. On is_org_admin groups claims must be empty and at
-        least one method is required. The returned rpc_api_key is masked.'
+        claims: deploy/upgrade/admin), rpc_api_key (encrypted at rest, never returned
+        in clear), verbose_errors. is_system group access is super-admin-only (X-Admin-Token).
+        Reshaping an is_org_admin group''s access is super-admin-only; reshaping a
+        regular group''s access is rejected for the operator token. On is_org_admin
+        groups claims must be empty and at least one method is required. The returned
+        rpc_api_key is masked.'
       parameters:
       - description: Organization ID (UUID)
         in: path
