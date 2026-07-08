@@ -72,7 +72,16 @@ func main() {
 	for m := range methodTotals {
 		methods = append(methods, m)
 	}
-	sort.Slice(methods, func(i, j int) bool { return methodTotals[methods[i]] > methodTotals[methods[j]] })
+	// Sort by count descending, then method name ascending. The name tiebreaker
+	// is required for determinism: without it, equal-count methods come out in
+	// map-iteration order (randomized per run), so `make api-spec` produced a
+	// different ordering each time and the CI drift gate was latently flaky.
+	sort.Slice(methods, func(i, j int) bool {
+		if methodTotals[methods[i]] != methodTotals[methods[j]] {
+			return methodTotals[methods[i]] > methodTotals[methods[j]]
+		}
+		return methods[i] < methods[j]
+	})
 	var parts []string
 	for _, m := range methods {
 		parts = append(parts, fmt.Sprintf("%s %d", m, methodTotals[m]))
