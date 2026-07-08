@@ -1352,14 +1352,15 @@ func (s *Server) getExplorerBlock(c *gin.Context) {
 		respondNotFound(c, "block not found")
 		return
 	}
-	// Adjust TransactionCount to reflect only visible transactions
+	// Adjust TransactionCount to reflect only visible transactions.
+	// visibleCountOrZero fails SAFE: on a counting error the badge falls back
+	// to 0, never the raw chain-wide total (count-disclosure — RD-1154/RD-758).
+	// (RD-1176 #8)
 	viewerDID := s.getViewerDIDFromRequest(c)
 	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID)
 	if filter != nil {
 		filteredCount, err := s.explorerStore.GetBlockTransactionCountFiltered(c.Request.Context(), num, filter)
-		if err == nil {
-			block.TransactionCount = filteredCount
-		}
+		block.TransactionCount = visibleCountOrZero(filteredCount, err, "block_transactions", strconv.FormatUint(num, 10))
 	}
 	c.JSON(http.StatusOK, block)
 }
@@ -1393,14 +1394,13 @@ func (s *Server) getExplorerBlockByHash(c *gin.Context) {
 		respondNotFound(c, "block not found")
 		return
 	}
-	// Adjust TransactionCount to reflect only visible transactions
+	// Adjust TransactionCount to reflect only visible transactions.
+	// Fail SAFE to 0 on a counting error, never the raw chain-wide total. (RD-1176 #8)
 	viewerDID := s.getViewerDIDFromRequest(c)
 	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID)
 	if filter != nil {
 		filteredCount, err := s.explorerStore.GetBlockTransactionCountFiltered(c.Request.Context(), block.Number, filter)
-		if err == nil {
-			block.TransactionCount = filteredCount
-		}
+		block.TransactionCount = visibleCountOrZero(filteredCount, err, "block_transactions", hash)
 	}
 	c.JSON(http.StatusOK, block)
 }
@@ -2875,13 +2875,19 @@ func (s *Server) getExplorerAddressContract(c *gin.Context) {
 		respondNotFound(c, "contract not found")
 		return
 	}
-	// Redact the creator address - it may belong to a private user
+	// Redact the creator address - it may belong to a private user.
+	// Fail CLOSED on error: RedactAddress already returns "[REDACTED]" alongside
+	// the error, so assign it unconditionally. Keeping the raw deployer EOA on a
+	// transient GetBatchVisibility error would leak a (possibly private, foreign)
+	// address to any authenticated viewer. (RD-1176 #7)
 	if contract.Creator != "" {
 		viewerDID := s.getViewerDIDFromRequest(c)
 		redactedCreator, err := s.explorerRedactor.RedactAddress(c.Request.Context(), contract.Creator, viewerDID)
-		if err == nil {
-			contract.Creator = redactedCreator
+		if err != nil {
+			slog.Error("explorer: RedactAddress failed for contract creator; failing closed to [REDACTED]",
+				"address", address, "err", err)
 		}
+		contract.Creator = redactedCreator
 	}
 	c.JSON(http.StatusOK, contract)
 }
