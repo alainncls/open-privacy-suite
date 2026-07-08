@@ -9,7 +9,7 @@ require (
 	github.com/ethereum/go-ethereum v1.16.8
 	github.com/gin-gonic/gin v1.9.1
 	github.com/go-jose/go-jose/v4 v4.1.3
-	github.com/golang-jwt/jwt/v5 v5.2.1
+	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/google/uuid v1.6.0
 	github.com/iden3/go-iden3-auth/v2 v2.7.8
 	github.com/iden3/go-iden3-core/v2 v2.4.0
