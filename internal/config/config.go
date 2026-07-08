@@ -1004,6 +1004,20 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	// Production hardening warnings (RD-1164 #8/#20/#18). These are safer-by-default
+	// controls that are not hard-required (a deliberate single-replica or
+	// infra-provisioned deployment may legitimately omit them), so they warn
+	// loudly rather than fail — belt-and-suspenders over the shipped prod compose.
+	if len(c.ExplorerPseudonymKey) == 0 {
+		slog.Warn("EXPLORER_PSEUDONYM_KEY is not set in production: explorer address pseudonyms are unkeyed — non-reversible but offline-ENUMERABLE (an attacker with a candidate address set can correlate pseudonyms back to real addresses). Set EXPLORER_PSEUDONYM_KEY to a 32-byte hex key (RD-1164 #8).")
+	}
+	if c.RedisURL == "" {
+		slog.Warn("REDIS_URL is not set in production: state stores fall back to in-memory, which is NOT safe across multiple replicas (rate-limit counters, sessions and caches are per-process). Configure Redis for any multi-replica deployment (RD-1164 #20).")
+	}
+	if getEnv("AUDIT_DATABASE_URL", "") == "" {
+		slog.Warn("AUDIT_DATABASE_URL is not set in production: the append-only audit database is DERIVED on the same server reusing DATABASE_URL's owner credentials, so the INSERT-only seal is not enforced. Provision a separate audit DB and set AUDIT_DATABASE_URL to its restricted-role DSN (RD-1164 #18).")
+	}
+
 	return nil
 }
 
