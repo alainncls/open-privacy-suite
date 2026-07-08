@@ -82,7 +82,7 @@ func setupProcessorWithCapturingTracer(t *testing.T, srv *httptest.Server) (*JSO
 	tv := rbac.NewTraceValidator(ts.db)
 	proc := NewJSONRPCProcessorWithTracing(
 		ts.rbacAccessCtrl, &noopRateLimiter{}, nil, ts.db, rt, tv,
-		NewCircuitBreaker(), NewConcurrencyLimiter(50), "",
+		NewCircuitBreaker(), NewConcurrencyLimiter(50, 0), "",
 	)
 	proc.SetEthCallTracing(true, 5*time.Second)
 	return proc, ts

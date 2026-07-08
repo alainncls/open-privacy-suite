@@ -429,6 +429,7 @@ type Config struct {
 	RPCAPIKeyEncryptionKey []byte // RPC_API_KEY_ENCRYPTION_KEY — 32-byte hex key for AES-256 encryption of RPC API keys at rest
 	ExplorerPseudonymKey   []byte // EXPLORER_PSEUDONYM_KEY — HMAC key for explorer address pseudonyms (non-reversible, non-enumerable). Optional; set in production.
 	MaxConcurrentRequests  int    // MAX_CONCURRENT_REQUESTS — per-user concurrency cap (default: 50)
+	MaxConcurrentAnonymousRequests int // MAX_CONCURRENT_ANONYMOUS_REQUESTS — shared concurrency cap for anonymous /rpc traffic (default: = MaxConcurrentRequests; 0 disables)
 
 	// Azure AD / Microsoft Entra ID authentication
 	AzureADClientID     string // AZURE_AD_CLIENT_ID
@@ -644,6 +645,20 @@ func Load() *Config {
 		}
 	}
 
+	// Shared concurrency cap for anonymous /rpc traffic (RD-1164 #3). The
+	// per-user cap above is keyed by DID and cannot bound anonymous callers
+	// (no identity), so anonymous floods were previously uncapped and still did
+	// JWT/RBAC/compliance DB work per request. All anonymous requests draw from
+	// one shared bucket (not per-IP: IPs are spoofable and shared behind the
+	// ingress, so per-IP would let one client starve the rest). Defaults to the
+	// per-user cap; set 0 to disable.
+	maxConcurrentAnonymousRequests := maxConcurrentRequests
+	if maStr := getEnv("MAX_CONCURRENT_ANONYMOUS_REQUESTS", ""); maStr != "" {
+		if n, err := strconv.Atoi(maStr); err == nil && n >= 0 {
+			maxConcurrentAnonymousRequests = n
+		}
+	}
+
 	// iden3 network resolver config for the Billions identity chain. Defaults
 	// let a stock deployment verify Billions-app DIDs out of the box (RD-943);
 	// override either value if Billions moves its RPC or state contract.
@@ -820,6 +835,7 @@ func Load() *Config {
 		RPCAPIKeyEncryptionKey:              rpcAPIKeyEncKey,
 		ExplorerPseudonymKey:                pseudonymKey,
 		MaxConcurrentRequests:               maxConcurrentRequests,
+		MaxConcurrentAnonymousRequests:      maxConcurrentAnonymousRequests,
 		AzureADClientID:                     getEnv("AZURE_AD_CLIENT_ID", ""),
 		AzureADClientSecret:                 getEnv("AZURE_AD_CLIENT_SECRET", ""),
 		AzureADTenantID:                     getEnv("AZURE_AD_TENANT_ID", "common"),

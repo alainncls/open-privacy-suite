@@ -686,7 +686,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 
 	// Initialize circuit breaker and concurrency limiter for upstream RPC proxy
 	circuitBreaker := NewCircuitBreaker()
-	concurrencyLimiter := NewConcurrencyLimiter(cfg.MaxConcurrentRequests)
+	concurrencyLimiter := NewConcurrencyLimiter(cfg.MaxConcurrentRequests, cfg.MaxConcurrentAnonymousRequests)
 
 	// Initialize JSON-RPC processor with dependencies. RD-1147: the basic
 	// LogAccess fallback (used only when the chained/buffered audit write fails)

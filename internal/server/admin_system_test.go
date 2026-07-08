@@ -45,7 +45,7 @@ func setupSystemAdminTestServer(t *testing.T) *testServerRBAC {
 		&proxy.Proxy{},
 		ts.db,
 		NewCircuitBreaker(),
-		NewConcurrencyLimiter(50),
+		NewConcurrencyLimiter(50, 0),
 		"",
 	)
 	proc.SetEthCallTracing(true, 5*time.Second)

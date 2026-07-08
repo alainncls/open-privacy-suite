@@ -32,7 +32,7 @@ func TestViewerAdminContracts(t *testing.T) {
 		nil,
 		ts.db,
 		NewCircuitBreaker(),
-		NewConcurrencyLimiter(50),
+		NewConcurrencyLimiter(50, 0),
 		"",
 	)
 
@@ -200,7 +200,7 @@ func TestApplyResponseFilter_AdminBypass_UsesUUIDFromAccessCheckResult(t *testin
 		nil,
 		ts.db,
 		NewCircuitBreaker(),
-		NewConcurrencyLimiter(50),
+		NewConcurrencyLimiter(50, 0),
 		"",
 	)
 
