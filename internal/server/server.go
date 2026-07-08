@@ -2098,8 +2098,11 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 		case "eth_sendRawTransaction":
 			rawTxHex, extractErr := extractRawTxHex(input.Params)
 			if extractErr != nil {
+				// Opaque client message; raw decode/RLP errors stay in slog.
+				// (RD-1178 #10 / RD-934)
+				slog.Warn("admin test-request: extract raw transaction failed", "error", extractErr)
 				c.JSON(http.StatusBadRequest, TestRequestResponse{
-					Error:    "failed to extract raw transaction: " + extractErr.Error(),
+					Error:    "failed to extract raw transaction",
 					Identity: testIdentity,
 				})
 				return
@@ -2107,8 +2110,9 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 			var decodeErr error
 			compFrom, compTo, compData, compValue, _, decodeErr = decodeRawTransaction(rawTxHex)
 			if decodeErr != nil {
+				slog.Warn("admin test-request: decode raw transaction failed", "error", decodeErr)
 				c.JSON(http.StatusBadRequest, TestRequestResponse{
-					Error:    "failed to decode raw transaction: " + decodeErr.Error(),
+					Error:    "failed to decode raw transaction",
 					Identity: testIdentity,
 				})
 				return
@@ -2127,16 +2131,22 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 				CorrelationID: getCorrelationID(c),
 			})
 			if compErr != nil {
+				slog.Error("admin test-request: compliance check failed", "method", input.Method, "error", compErr)
 				c.JSON(http.StatusInternalServerError, TestRequestResponse{
-					Error:    "compliance check failed: " + compErr.Error(),
+					Error:    "compliance check failed",
 					Identity: testIdentity,
 				})
 				return
 			}
 			if !compResult.Allowed {
 				auditDB.LogAccess(c.Request.Context(), testIdentity, input.Method, http.StatusForbidden, c.ClientIP())
+				// sanitizeComplianceReason maps the deny reason to a finite,
+				// non-tenant-revealing category; the full reason (which can
+				// carry token addresses / sanction text / thresholds) stays in
+				// compliance_log + slog. Same treatment as the live /rpc path.
+				slog.Info("admin test-request: compliance denied", "method", input.Method, "reason", compResult.Reason)
 				c.JSON(http.StatusForbidden, TestRequestResponse{
-					Error:    "compliance denied: " + compResult.Reason,
+					Error:    "compliance denied: " + sanitizeComplianceReason(compResult.Reason),
 					Identity: testIdentity,
 				})
 				return
@@ -2160,8 +2170,11 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 
 	if err != nil {
 		auditDB.LogAccess(c.Request.Context(), testIdentity, input.Method, http.StatusBadGateway, c.ClientIP())
+		// Opaque client message; the raw upstream forward error (which can
+		// reveal the node URL, dial/TLS internals) stays in slog. (RD-1178 #10 / RD-934)
+		slog.Warn("admin test-request: upstream forward failed", "method", input.Method, "error", err)
 		c.JSON(http.StatusBadGateway, TestRequestResponse{
-			Error:     err.Error(),
+			Error:     "upstream request failed",
 			LatencyMs: latency,
 			Identity:  testIdentity,
 		})

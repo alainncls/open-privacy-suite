@@ -667,9 +667,12 @@ func (s *Server) checkContractsOnChain(c *gin.Context) {
 		// Make eth_getCode RPC call
 		code, err := s.getContractCode(contract.Address)
 		if err != nil {
-			// RPC error - could be chain unavailable
+			// RPC error - could be chain unavailable. Opaque status to the
+			// client; raw chain/RPC error stays in slog. (RD-1178 / RD-934)
+			slog.Warn("admin_rbac_contract: getContractCode failed (checkContractsOnChain)",
+				"org_id", orgID, "contract_id", contract.ID, "err", err)
 			status.Status = "error"
-			status.Error = err.Error()
+			status.Error = "chain unavailable"
 			errors = append(errors, status)
 			continue
 		}
