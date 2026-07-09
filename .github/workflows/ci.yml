@@ -54,6 +54,18 @@ jobs:
           make api-spec
           git diff --exit-code -- internal/server/apispec site/public/openapi.json API_ENDPOINTS.md
 
+      # RD-1190: determinism guard. The step above proved run-1 == committed.
+      # Regenerate once more: if any generator (swag emission, api-inventory) is
+      # non-deterministic across process invocations, run-2 diverges, the tree
+      # goes dirty, and this git diff fails loudly — instead of leaking out as an
+      # intermittent drift flake on an unrelated PR. Tree-clean by construction
+      # when generation is deterministic. (api-inventory's in-process
+      # determinism is also unit-tested by TestBuildInventory_Deterministic.)
+      - name: Verify API spec generation is deterministic (RD-1190)
+        run: |
+          make api-spec
+          git diff --exit-code -- internal/server/apispec site/public/openapi.json API_ENDPOINTS.md
+
   vuln:
     name: Vulnerability Scan
     runs-on: ubuntu-latest
