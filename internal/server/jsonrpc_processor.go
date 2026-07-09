@@ -83,16 +83,6 @@ type JSONRPCProcessor struct {
 
 	// Prometheus metrics
 	metrics *metrics.Metrics
-
-	// RD-1144: eth_call return-data field redaction.
-	// explorerVisibility is the DID-based per-address visibility resolver
-	// shared with the explorer redaction engine (db.DB.GetBatchVisibilityDetailed)
-	// so the two layers agree per (viewer, address). Wired via
-	// SetExplorerVisibilityResolver; nil => the eth_call redactor fails closed
-	// for address-bearing returns. ethCallDenyWithoutABI is the operator posture
-	// for contracts with no resolvable ABI (default false = passthrough).
-	explorerVisibility    ExplorerVisibilityResolver
-	ethCallDenyWithoutABI bool
 }
 
 // runtimeToggleState captures the current value of a fleet-wide on/off
@@ -444,23 +434,6 @@ func (p *JSONRPCProcessor) resolveAPIKeyHeader() string {
 // from the DB during response filtering and stores them during send.
 func (p *JSONRPCProcessor) SetTxVisibilityStore(store rbac.TxVisibilityProvider) {
 	p.txVisibilityStore = store
-}
-
-// SetExplorerVisibilityResolver wires the DID-based per-address visibility
-// resolver used by RD-1144 eth_call return-data redaction. It MUST be the same
-// resolver the explorer redaction engine uses (db.DB) so the RPC and explorer
-// layers agree per (viewer, address). When unset, the eth_call redactor fails
-// closed for address-bearing returns.
-func (p *JSONRPCProcessor) SetExplorerVisibilityResolver(r ExplorerVisibilityResolver) {
-	p.explorerVisibility = r
-}
-
-// SetEthCallDenyWithoutABI sets the operator posture for eth_call returns from
-// contracts with no resolvable ABI (RD-1144). false (default) passes the raw
-// return through (documented residual, closeable by registering the ABI); true
-// blanks it (fail-closed, but breaks reads of unregistered contracts).
-func (p *JSONRPCProcessor) SetEthCallDenyWithoutABI(deny bool) {
-	p.ethCallDenyWithoutABI = deny
 }
 
 // logAccess logs an access entry using enhanced logging (with hash chain + SIEM) if available,
@@ -1181,16 +1154,6 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 			addrs = nil
 		}
 		return FilterBlockReceipts(responseBody, addrs)
-
-	case strings.EqualFold(m, rbac.MethodCall):
-		// RD-1144: field-level redaction of eth_call return data. Target
-		// contract + selector come from the call object (params[0]); the
-		// resolver is the DID-based one shared with the explorer layer, and
-		// the function fails closed on any decode/visibility error or
-		// address-bearing dynamic output (see redactEthCallResult).
-		_, to, data, _ := extractTxParams(req.Params)
-		return redactEthCallResult(ctx, responseBody, to, data, req.UserID,
-			p.contractABIProvider(ctx), p.explorerVisibility, p.ethCallDenyWithoutABI)
 	}
 	return responseBody
 }

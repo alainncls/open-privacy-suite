@@ -345,12 +345,6 @@ type Config struct {
 	// (eth_sendTransaction / eth_sendRawTransaction / deploy).
 	RuntimeTracingIntraOrgGrantsEnabled bool
 
-	// EthCallDenyWithoutABI sets the RD-1144 posture for eth_call return data
-	// from contracts with no resolvable ABI. false (default) passes the raw
-	// return through; true blanks it (fail-closed). Address-typed returns of
-	// ABI-registered contracts are field-level redacted regardless of this flag.
-	EthCallDenyWithoutABI bool
-
 	// Travel rule compliance configuration
 	EnableTravelRule   bool          // If true, enable travel rule enforcement (default: false)
 	TravelRecordExpiry time.Duration // How long travel rule records stay valid (default: 24h)
@@ -543,13 +537,6 @@ func Load() *Config {
 	// operators opt in when they want grants to gate composition within an
 	// org too. Cross-org isolation is unaffected either way.
 	intraOrgGrantsTracingEnabled := getEnv("RUNTIME_TRACING_INTRA_ORG_GRANTS_ENABLED", "false") == "true"
-	// RD-1144: eth_call return-data redaction posture for contracts with NO
-	// resolvable ABI. Default false = passthrough (current behaviour; the
-	// address-typed return of an ABI-registered contract is still redacted
-	// regardless of this flag). true = fail-closed blank of every no-ABI
-	// eth_call return — safest, but breaks reads of unregistered contracts.
-	// A privacy-vs-usability operator decision (see docs/security/response-filtering).
-	ethCallDenyWithoutABI := getEnv("ETH_CALL_DENY_WITHOUT_ABI", "false") == "true"
 	ethCallTraceTimeout := 5 * time.Second
 	if t := getEnv("ETH_CALL_TRACE_TIMEOUT", ""); t != "" {
 		if d, err := time.ParseDuration(t); err == nil {
@@ -802,7 +789,6 @@ func Load() *Config {
 		RuntimeTracingEthCallEnabled:        ethCallTracingEnabled,
 		EthCallTraceTimeout:                 ethCallTraceTimeout,
 		RuntimeTracingIntraOrgGrantsEnabled: intraOrgGrantsTracingEnabled,
-		EthCallDenyWithoutABI:               ethCallDenyWithoutABI,
 		EnableTravelRule:                    enableTravelRule,
 		TravelRecordExpiry:                  travelRecordExpiry,
 		ComplianceDefaultMode:               complianceDefaultMode,
