@@ -24,7 +24,7 @@ type Block struct {
 	// tx — including ones hidden from the viewer — so it leaks other-org block
 	// activity/volume. Never serialized to the explorer API (RD-1052); the DB
 	// scan / gRPC mapper still populate the struct field for internal use.
-	Size uint64 `json:"-"`
+	Size             uint64    `json:"-"`
 	Difficulty       string    `json:"difficulty"`
 	TotalDifficulty  string    `json:"totalDifficulty"`
 	Nonce            string    `json:"nonce"`
