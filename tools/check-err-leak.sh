@@ -23,6 +23,17 @@
 #   respond[A-Z][a-zA-Z]+(c, err.Error())
 #   respond[A-Z][a-zA-Z]+(c, fmt.Sprintf(..., err))
 #
+# RD-1178 extended the sweep beyond the literal variable name `err` and the
+# gin.H / respond* containers, because the self-audit found leaks the original
+# lint missed: they used a differently-named error variable (verifyErr,
+# compErr, traceErr, ...) and/or a non-gin response container (a ProcessError /
+# TestRequestResponse struct literal, or a `foo.Error = ...` field assignment).
+# Now also blocked:
+#   ...<name>Err.Error()... inside a response container
+#   ProcessError{... Message: fmt.Sprintf(..., <name>Err) ...}
+#   Error:/Reason:/Message: <expr with <name>Err.Error()>  (struct literal)
+#   x.Error / x.Reason / x.Message = <expr with <name>Err.Error()>  (assignment)
+#
 # Allowed in test files (*_test.go) because:
 #   (a) the lint is for production handlers, not test fixtures;
 #   (b) some tests intentionally build a mock handler that echoes err
@@ -57,15 +68,30 @@ search() {
 #
 # All match a single line; multi-line interpolations are caught by hand
 # review during the audit and by the slog-emit-first convention.
+# ERR is any error-typed variable: the literal `err` or any camelCase name
+# ending in `Err` (verifyErr, compErr, traceErr, extractErr, decodeErr, ...).
+# `.Error()` on such a name, or passing it to fmt.Sprintf, is the leak signal.
+# Anchoring to `Err`/`err` as an identifier (not the substring "err" inside a
+# quoted format string like "bad error") keeps false positives at zero.
+ERR='[A-Za-z0-9_]*[Ee]rr'
 declare -a patterns=(
-  # gin.H { ... err.Error() ... }
-  'gin\.H\{[^}]*err\.Error\(\)'
-  # gin.H { ... fmt.Sprintf(..., err...) }
-  'gin\.H\{[^}]*fmt\.Sprintf\([^)]*err'
-  # respondXxx(c, ... err.Error() ...)
-  'respond[A-Z][a-zA-Z]+\(\s*c\s*,[^)]*err\.Error\(\)'
-  # respondXxx(c, fmt.Sprintf(..., err...))
-  'respond[A-Z][a-zA-Z]+\(\s*c\s*,[^)]*fmt\.Sprintf\([^)]*err'
+  # gin.H { ... <name>Err.Error() ... }
+  "gin\.H\{[^}]*${ERR}\.Error\(\)"
+  # gin.H { ... fmt.Sprintf(..., <name>Err...) }
+  "gin\.H\{[^}]*fmt\.Sprintf\([^)]*${ERR}\b"
+  # respondXxx(c, ... <name>Err.Error() ...)
+  "respond[A-Z][a-zA-Z]+\(\s*c\s*,[^)]*${ERR}\.Error\(\)"
+  # respondXxx(c, fmt.Sprintf(..., <name>Err...))
+  "respond[A-Z][a-zA-Z]+\(\s*c\s*,[^)]*fmt\.Sprintf\([^)]*${ERR}\b"
+  # Response struct-literal field set to a raw error:
+  #   Error:/Reason:/Message: ... <name>Err.Error()
+  # (catches ProcessError{Message: ...}, TestRequestResponse{Error: ...}, and
+  #  the anonymous {ID, Reason} structs in the sync handlers).
+  "(Error|Reason|Message):[^,}]*${ERR}\.Error\(\)"
+  # Response struct-literal field built via fmt.Sprintf(..., <name>Err...):
+  "(Error|Reason|Message):\s*fmt\.Sprintf\([^)]*${ERR}\b"
+  # Field-assignment form: x.Error / x.Reason / x.Message = ... <name>Err.Error()
+  "\.(Error|Reason|Message)\s*=[^=][^;]*${ERR}\.Error\(\)"
 )
 
 current=0

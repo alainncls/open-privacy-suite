@@ -632,6 +632,9 @@ type ContractSyncStatus struct {
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/contracts/sync-check [post]
 func (s *Server) checkContractsOnChain(c *gin.Context) {
+	if denyOperatorTenantRead(c) { // RD-1173: operator token must not read tenant contract inventory
+		return
+	}
 	orgID := c.Param("org_id")
 
 	contracts, err := s.db.ListContracts(c.Request.Context(), orgID)
@@ -664,9 +667,12 @@ func (s *Server) checkContractsOnChain(c *gin.Context) {
 		// Make eth_getCode RPC call
 		code, err := s.getContractCode(contract.Address)
 		if err != nil {
-			// RPC error - could be chain unavailable
+			// RPC error - could be chain unavailable. Opaque status to the
+			// client; raw chain/RPC error stays in slog. (RD-1178 / RD-934)
+			slog.Warn("admin_rbac_contract: getContractCode failed (checkContractsOnChain)",
+				"org_id", orgID, "contract_id", contract.ID, "err", err)
 			status.Status = "error"
-			status.Error = err.Error()
+			status.Error = "chain unavailable"
 			errors = append(errors, status)
 			continue
 		}
@@ -739,34 +745,32 @@ func (s *Server) deleteStaleContracts(c *gin.Context) {
 	for _, contractID := range input.ContractIDs {
 		contract, err := s.db.GetContract(c.Request.Context(), contractID)
 		if err != nil {
+			slog.Warn("sync-delete: contract lookup failed", "contract_id", contractID, "err", err) // RD-1178: don't echo raw err
 			skipped = append(skipped, struct {
 				ID     string `json:"id"`
 				Reason string `json:"reason"`
-			}{contractID, "database error: " + err.Error()})
+			}{contractID, "lookup failed"})
 			continue
 		}
-		if contract == nil {
+		// RD-1180: "not found" and "belongs to another org" return the SAME
+		// opaque reason so the by-ID skipped list can't be used as a
+		// cross-tenant existence oracle.
+		if contract == nil || contract.OrgID != orgID {
 			skipped = append(skipped, struct {
 				ID     string `json:"id"`
 				Reason string `json:"reason"`
-			}{contractID, "contract not found"})
-			continue
-		}
-		if contract.OrgID != orgID {
-			skipped = append(skipped, struct {
-				ID     string `json:"id"`
-				Reason string `json:"reason"`
-			}{contractID, "contract belongs to different organization"})
+			}{contractID, "not eligible for deletion"})
 			continue
 		}
 
 		// Re-verify the contract is still missing on-chain (safety check)
 		code, err := s.getContractCode(contract.Address)
 		if err != nil {
+			slog.Warn("sync-delete: on-chain code check failed", "contract_id", contractID, "err", err) // RD-1178
 			skipped = append(skipped, struct {
 				ID     string `json:"id"`
 				Reason string `json:"reason"`
-			}{contractID, "chain unavailable: " + err.Error()})
+			}{contractID, "chain check failed"})
 			continue
 		}
 		if code != "0x" && code != "" {
@@ -779,10 +783,11 @@ func (s *Server) deleteStaleContracts(c *gin.Context) {
 
 		// Delete the contract
 		if err := s.db.DeleteContract(c.Request.Context(), contractID); err != nil {
+			slog.Warn("sync-delete: delete failed", "contract_id", contractID, "err", err) // RD-1178: don't echo raw err
 			skipped = append(skipped, struct {
 				ID     string `json:"id"`
 				Reason string `json:"reason"`
-			}{contractID, "delete failed: " + err.Error()})
+			}{contractID, "delete failed"})
 			continue
 		}
 
@@ -869,8 +874,11 @@ const noABIForEventRulesErrorMessage = "cannot save event_rules: contract has no
 //     "topic0 not in ABI" case for the privacy product.)
 //
 //   - Per-rule param_rules are checked:
+//
 //   - index must be within the event's input count
+//
 //   - "self" constraints must target an address-typed parameter
+//
 //   - hex value constraints must have the correct byte length for the param type
 //
 // Returns a descriptive error message, or "" if valid.
@@ -1237,8 +1245,8 @@ func (s *Server) createContractGrant(c *gin.Context) {
 	}
 
 	var input struct {
-		GroupID    string               `json:"group_id" binding:"required"`
-		Functions  []rbac.FunctionRule  `json:"functions"`   // nil = all functions
+		GroupID    string                `json:"group_id" binding:"required"`
+		Functions  []rbac.FunctionRule   `json:"functions"`   // nil = all functions
 		EventRules *rbac.EventRulesField `json:"event_rules"` // nil = deny, "*" = wildcard, [...] = allowlist
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -1715,9 +1723,9 @@ func (s *Server) batchMoveContracts(c *gin.Context) {
 	orgID := c.Param("org_id")
 
 	var input struct {
-		ContractIDs            []string `json:"contract_ids" binding:"required"`
-		TargetGroupID          string   `json:"target_group_id"`
-		NewGroup               *struct {
+		ContractIDs   []string `json:"contract_ids" binding:"required"`
+		TargetGroupID string   `json:"target_group_id"`
+		NewGroup      *struct {
 			Slug string `json:"slug" binding:"required"`
 			Name string `json:"name" binding:"required"`
 		} `json:"new_group"`
@@ -1748,9 +1756,9 @@ func (s *Server) batchMoveContracts(c *gin.Context) {
 	}
 
 	type moveResult struct {
-		TargetGroupID     string   `json:"target_group_id"`
-		MovedCount        int      `json:"moved_count"`
-		DeletedGroupIDs   []string `json:"deleted_group_ids,omitempty"`
+		TargetGroupID   string   `json:"target_group_id"`
+		MovedCount      int      `json:"moved_count"`
+		DeletedGroupIDs []string `json:"deleted_group_ids,omitempty"`
 	}
 
 	var result moveResult
