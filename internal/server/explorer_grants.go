@@ -578,9 +578,13 @@ func (s *Server) getGrantTransactions(c *gin.Context) {
 		// Fewer than limit+1 in-scope found. If the raw feed was exhausted we've
 		// seen everything (has_more=false); if the maxScan cap stopped us first,
 		// there may be more in-scope txs deeper — report has_more so the client
-		// keeps paging (it advances by the min returned block). Under-discloses
-		// only at the deep tail beyond maxScan (RD-1149 is the complete fix).
-		hasMore = !feedExhausted
+		// keeps paging (it advances by the min returned block). BUT only when we
+		// actually returned a row: with an empty page there is no block for the
+		// client to advance from, so has_more=true would be a dead-end ("load
+		// more" that never yields). Report has_more=false in that case. This is
+		// the extreme deep-tail residual (RD-1149 is the complete fix); it
+		// under-discloses (safe), never over-discloses.
+		hasMore = !feedExhausted && len(txs) > 0
 	}
 
 	realAddrLower := strings.ToLower(realAddress)

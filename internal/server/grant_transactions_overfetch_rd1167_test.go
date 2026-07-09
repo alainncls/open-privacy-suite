@@ -21,8 +21,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// createGrantWithScope creates an approved disclosure grant whose Scope carries
-// the given addresses/date-range (the shared helper only sets disclosure_level).
+// createScopedGrantRD1167 creates an approved disclosure grant whose Scope
+// carries the given addresses/date-range (the shared helper only sets
+// disclosure_level).
 func createScopedGrantRD1167(t *testing.T, database *db.DB, requesterDID, targetUserID string, scope disclosure.Scope, expiresAt time.Time) string {
 	t.Helper()
 	ctx := context.Background()
@@ -179,19 +180,29 @@ func TestGrantTransactions_DateScopeReachesInRange_RD1167(t *testing.T) {
 	addressID := explorer.GenerateAddressID(testTargetAddress, grantID)
 
 	ext := "0xffffffffffffffffffffffffffffffffffffffff"
-	// Newest 30 blocks: timestamped NOW (after rangeEnd → out of scope).
-	for i := 0; i < 30; i++ {
-		block := seedBlockWithTS(t, conn, time.Now().Unix())
-		seedExplorerTransaction(t, conn, block, fmt.Sprintf("0xnow_%d", i), testTargetAddress, ext)
-	}
-	// Older 4 blocks: timestamped inside the range → in scope.
+	// Block numbers are assigned monotonically at seed time and the query orders
+	// by block_number DESC, so seed the 4 in-range (older-timestamp) txs FIRST —
+	// they get the LOWEST block numbers and sit BEHIND the newest page. Without
+	// the fix, the newest limit+1 fetch would be all out-of-range and the 4
+	// in-range txs (deeper) would be unreachable.
 	inRangeTs := rangeStart.Add(12 * time.Hour).Unix()
 	for i := 0; i < 4; i++ {
 		block := seedBlockWithTS(t, conn, inRangeTs)
 		seedExplorerTransaction(t, conn, block, fmt.Sprintf("0xin_%d", i), testTargetAddress, ext)
 	}
+	// Newest 30 blocks: timestamped NOW (after rangeEnd → out of scope), seeded
+	// AFTER so they get the HIGHEST block numbers and form the newest page.
+	for i := 0; i < 30; i++ {
+		block := seedBlockWithTS(t, conn, time.Now().Unix())
+		seedExplorerTransaction(t, conn, block, fmt.Sprintf("0xnow_%d", i), testTargetAddress, ext)
+	}
 
 	resp := grantTxResponse(t, router, srv, grantID, addressID, "")
 	assert.Len(t, resp.Transactions, 4, "only the 4 in-range txs are disclosed, and they are reachable behind the out-of-range page")
+	// Confirm they are the in-range ones, not any out-of-range 0xnow_* tx.
+	for _, tx := range resp.Transactions {
+		require.NotNil(t, tx.TxHash)
+		assert.Contains(t, *tx.TxHash, "0xin_", "returned tx must be an in-range one")
+	}
 	assert.False(t, resp.HasMore, "no more in-range txs beyond the 4")
 }
