@@ -4,8 +4,22 @@ A privacy-preserving JSON-RPC proxy for Ethereum nodes with ZK-proof authenticat
 
 ## Quick Start
 
+**Evaluating the product?** One command brings up a self-contained demo —
+two banks and a regulator sharing one chain, with seeded identities and
+ready-to-use tokens showing the same query answered differently per viewer:
+
 ```bash
-# Start the stack
+make quickstart
+```
+
+Then follow the guided tour in [ONBOARDING.md](ONBOARDING.md). If you use an
+AI coding agent (Claude Code, Cursor), point it at this repo and ask it
+anything — there's an [MCP server](docs/mcp.md) it can drive the stack with.
+
+**Developing?**
+
+```bash
+# Start the plain dev stack
 make run
 
 # Open admin UI
@@ -44,6 +58,7 @@ In development mode, click the flask icon on the login page for instant mock aut
 
 | Document | Description |
 |----------|-------------|
+| [What It Does](site/src/app/docs/what-it-does/page.mdx) | Plain-language capabilities, boundaries, and trust model |
 | [Getting Started](site/src/app/docs/getting-started/page.mdx) | Installation, setup, first run |
 | [Architecture](site/src/app/docs/architecture/page.mdx) | System overview, request flow, components |
 | [Authentication](site/src/app/docs/authentication/page.mdx) | ZK-proof auth, ETH address linking |

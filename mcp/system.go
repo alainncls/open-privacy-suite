@@ -75,15 +75,16 @@ func registerStatus(s *mcp.Server, client *httpClient) {
 }
 
 type testRequestArgs struct {
-	Method         string `json:"method" jsonschema:"JSON-RPC method to test (e.g. eth_call, required)"`
-	Params         any    `json:"params,omitempty" jsonschema:"JSON-RPC params (array or object)"`
-	UserExternalID string `json:"user_external_id,omitempty" jsonschema:"user DID to test as"`
+	Method   string `json:"method" jsonschema:"JSON-RPC method to test (e.g. eth_call, required)"`
+	Params   any    `json:"params,omitempty" jsonschema:"JSON-RPC params (array or object)"`
+	JWTToken string `json:"jwt_token,omitempty" jsonschema:"user JWT to test as (identity is taken from the validated token; omitted = the synthetic test:dashboard identity)"`
+	OrgID    string `json:"org_id,omitempty" jsonschema:"org context to test in (required for users that belong to several orgs when the request has no target contract)"`
 }
 
 func registerTestRequest(s *mcp.Server, client *httpClient) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "test_request",
-		Description: "Send a test JSON-RPC request through the proxy pipeline to verify RBAC, compliance, and filtering.",
+		Description: "Send a test JSON-RPC request through the proxy pipeline to verify RBAC, compliance, and filtering. Pass jwt_token to test as a specific user — 'what would this user be allowed to do?'.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args testRequestArgs) (*mcp.CallToolResult, any, error) {
 		if args.Method == "" {
 			return errorResult("method is required")
@@ -92,8 +93,11 @@ func registerTestRequest(s *mcp.Server, client *httpClient) {
 		if args.Params != nil {
 			body["params"] = args.Params
 		}
-		if args.UserExternalID != "" {
-			body["user_external_id"] = args.UserExternalID
+		if args.JWTToken != "" {
+			body["jwt_token"] = args.JWTToken
+		}
+		if args.OrgID != "" {
+			body["org_id"] = args.OrgID
 		}
 		raw, err := client.post("/api/v1/admin/test-request", body)
 		if err != nil {

@@ -1,0 +1,133 @@
+import { Callout } from "@/components/mdx/callout"
+
+export const metadata = {
+  title: "What It Does",
+  description:
+    "Plain-language summary: what the privacy proxy hides, from whom, what it does not hide, and the trust model.",
+}
+
+# What It Does
+
+This page is the plain-language version of the whole product. No API calls,
+no configuration — just what the system can and cannot do, so you can decide
+in ten minutes whether it fits your problem.
+
+**The one-sentence version:** the privacy proxy sits between your users and a
+shared EVM blockchain and enforces *who is allowed to see and do what* —
+so multiple organizations can transact on one chain without seeing each
+other's business.
+
+## The problem it solves
+
+On a normal blockchain, everything is public to everyone with a node
+connection: every transaction, every counterparty, every amount. That is a
+non-starter for banks, payment operators, and enterprises that are required
+to keep client activity confidential.
+
+The privacy proxy makes a shared chain behave like this instead:
+
+- **You see your own activity in full.**
+- **You see what others have explicitly shared with you.**
+- **Everything else is redacted or invisible** — including the fact that it exists (filtered lists don't leak counts of hidden items).
+
+## What is hidden, from whom
+
+| Data | Who can see it |
+|------|----------------|
+| An organization's contracts and their activity | That organization's members (per their role), plus anyone explicitly granted access |
+| A user's personal wallet and its history | Only that user — **not even their own org admin** — plus recipients of a disclosure grant |
+| Transaction details (counterparties, amounts, calldata) | Participants of the transaction; others see `[PRIVATE]` placeholders or nothing at all |
+| Transaction counts, volumes, charts | Filtered per viewer — totals never reveal how much hidden activity exists |
+| Unknown/unregistered addresses | Nobody (private by default) |
+
+Two enforcement layers apply to every response: raw JSON-RPC responses are
+filtered before they reach the caller, and the block-explorer API applies
+graduated redaction (`[PRIVATE]` placeholders, zeroed values, dropped rows)
+based on the viewer's identity. Both layers are kept in agreement by
+dedicated tests.
+
+## What is NOT hidden
+
+Honesty matters more in this section than anywhere else:
+
+- **The chain itself is not encrypted.** Privacy is enforced at the access
+  layer. Anyone with *direct* access to the underlying node sees everything —
+  which is why a production deployment must make the proxy the only path to
+  the node. That is a deployment requirement, not an optional hardening step.
+- **Chain-level metadata** (block numbers, timestamps, gas totals) is visible
+  to authenticated users.
+- **Whatever you share is shared.** Grants and disclosure approvals reveal
+  exactly what they say they reveal — the system's job is to make that
+  sharing explicit, scoped, expiring, and audited.
+
+## How access control works
+
+- **Organizations** own contracts. **Groups** within an org carry permissions.
+  **Users** belong to groups.
+- Permissions are layered: which JSON-RPC methods a group may call, which
+  claims it holds (`read`, `write`, `deploy`, `upgrade`, `admin`), which
+  contracts it can touch, down to **individual function parameters** — e.g.
+  "this group may call `balanceOf`, but only for the caller's own address."
+- **Cross-organization isolation is absolute by default**: org A's users
+  cannot read or call org B's contracts — even indirectly. Transactions are
+  runtime-traced, so routing a call through an intermediary contract does not
+  evade the check.
+- Users authenticate with ZK-proof credentials (Privado ID), SSO
+  (Microsoft Entra ID), or wallet linking — and then use completely standard
+  JSON-RPC tooling (MetaMask, Foundry, ethers.js) with an auth header.
+
+## Sharing and disclosure
+
+Data crosses a privacy boundary only through explicit, auditable mechanisms:
+
+- **Contract grants** — an org shares a contract (or single functions of it)
+  with a specific group.
+- **Disclosure requests** — e.g. a regulator requests access to a user's
+  activity. The request names a reason and legal basis, requires consent,
+  can expire automatically, and **every access made under it is logged**
+  and can be exported as a compliance report.
+
+## Compliance built in
+
+- KYC status gates access; unverified or banned users are denied.
+- Travel-rule checks can be enforced on transfers.
+- Access logs are written to an append-only audit store with tamper-evident
+  integrity checking — an operator can prove what was and wasn't accessed.
+
+## The trust model, honestly stated
+
+- The **proxy operator** is trusted: they run the gateway and hold admin
+  credentials. The product's guarantees are about *users and organizations
+  not seeing each other's data* — not about hiding data from whoever operates
+  the infrastructure.
+- The **node must sit behind the proxy** in production. The proxy enforces
+  privacy; the chain does not.
+- The **audit trail is tamper-evident**: logs are hash-chained and verified,
+  so after-the-fact manipulation is detectable.
+
+## Quick answers
+
+| Question | Answer |
+|----------|--------|
+| Can Bank B see Bank A's transactions? | No — not the parties, amounts, or even that they exist, unless Bank A grants access. |
+| Can my org admin read my wallet history? | No. Personal wallets are visible only to their owner, unless the owner approves a disclosure. |
+| Can a regulator get access? | Yes — through a scoped, consented, expiring disclosure grant, with every access logged. |
+| Does it modify the blockchain? | No. It is a gateway in front of a standard EVM node; contracts and tooling work unchanged. |
+| Can I use MetaMask / Foundry / ethers.js? | Yes — it speaks standard JSON-RPC, plus an auth header. |
+| What if someone bypasses the proxy? | Then they see raw chain data. Production deployments must restrict node access to the proxy — see [Operator Deployment](/docs/operator-deployment). |
+
+## Try it in five minutes
+
+The repo ships a one-command demo — two banks and a regulator on one chain,
+with ready-to-use identities:
+
+```bash
+git clone https://github.com/gateway-fm/privacy-proxy.git
+cd privacy-proxy
+make quickstart
+```
+
+It prints tokens and copy-paste requests that show the same query answered
+differently for three different viewers. `ONBOARDING.md` in the repo root is
+the guided tour — and if you use an AI coding agent, point it at the repo and
+ask it anything: the repo is set up so agents can answer accurately.

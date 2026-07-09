@@ -41,7 +41,15 @@ func newHTTPClient(rawURL, adminToken string) (*httpClient, error) {
 }
 
 func (c *httpClient) get(path string) (json.RawMessage, error) {
-	return c.do(http.MethodGet, path, nil)
+	return c.doAs(http.MethodGet, path, nil, "")
+}
+
+// getAs issues a GET with a viewer JWT in the Authorization header. Explorer
+// endpoints resolve the viewer identity ONLY from a validated JWT (RD-1164 #7),
+// so privacy-filtered responses need the user's token — the admin token alone
+// yields the anonymous (empty/redacted) view.
+func (c *httpClient) getAs(path, viewerJWT string) (json.RawMessage, error) {
+	return c.doAs(http.MethodGet, path, nil, viewerJWT)
 }
 
 func (c *httpClient) post(path string, payload any) (json.RawMessage, error) {
@@ -57,6 +65,10 @@ func (c *httpClient) del(path string) (json.RawMessage, error) {
 }
 
 func (c *httpClient) do(method, path string, payload any) (json.RawMessage, error) {
+	return c.doAs(method, path, payload, "")
+}
+
+func (c *httpClient) doAs(method, path string, payload any, viewerJWT string) (json.RawMessage, error) {
 	var body io.Reader
 	if payload != nil {
 		data, err := json.Marshal(payload)
@@ -90,6 +102,9 @@ func (c *httpClient) do(method, path string, payload any) (json.RawMessage, erro
 
 	if c.adminToken != "" {
 		req.Header.Set("X-Admin-Token", c.adminToken)
+	}
+	if viewerJWT != "" {
+		req.Header.Set("Authorization", "Bearer "+viewerJWT)
 	}
 
 	resp, err := c.http.Do(req)

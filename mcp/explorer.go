@@ -35,9 +35,15 @@ func registerExplorerSyncStatus(s *mcp.Server, client *httpClient) {
 	})
 }
 
+// Explorer responses are privacy-filtered per viewer, and the viewer identity
+// is resolved ONLY from a validated user JWT (RD-1164 #7) — never from the
+// admin token or a wallet param. Without viewer_jwt every explorer tool
+// renders the anonymous view (mostly empty / redacted), which is correct but
+// rarely what you want: pass a user's JWT to see the chain as that user.
 type explorerListArgs struct {
-	Limit  int `json:"limit,omitempty" jsonschema:"max entries (default 20)"`
-	Offset int `json:"offset,omitempty" jsonschema:"pagination offset"`
+	Limit     int    `json:"limit,omitempty" jsonschema:"max entries (default 20)"`
+	Offset    int    `json:"offset,omitempty" jsonschema:"pagination offset"`
+	ViewerJWT string `json:"viewer_jwt,omitempty" jsonschema:"user JWT to view as (explorer data is privacy-filtered per viewer; omit for the anonymous view)"`
 }
 
 func registerExplorerBlocks(s *mcp.Server, client *httpClient) {
@@ -49,7 +55,7 @@ func registerExplorerBlocks(s *mcp.Server, client *httpClient) {
 		if limit == 0 {
 			limit = 20
 		}
-		raw, err := client.get(fmt.Sprintf("/api/v1/explorer/blocks?limit=%d&offset=%d", limit, args.Offset))
+		raw, err := client.getAs(fmt.Sprintf("/api/v1/explorer/blocks?limit=%d&offset=%d", limit, args.Offset), args.ViewerJWT)
 		if err != nil {
 			return errorResult("listing blocks: %v", err)
 		}
@@ -64,10 +70,10 @@ func registerExplorerBlocks(s *mcp.Server, client *httpClient) {
 			if !ok {
 				continue
 			}
-			lines += fmt.Sprintf("Block %-8.0f | %s | %.0f txs\n",
+			lines += fmt.Sprintf("Block %-8.0f | ts %.0f | %.0f txs\n",
 				getFloat(block, "number"),
-				getString(block, "timestamp"),
-				getFloat(block, "transaction_count"),
+				getFloat(block, "timestamp"),
+				getFloat(block, "transactionCount"),
 			)
 		}
 
@@ -76,7 +82,8 @@ func registerExplorerBlocks(s *mcp.Server, client *httpClient) {
 }
 
 type blockArgs struct {
-	Number string `json:"number" jsonschema:"block number or 'latest' (required)"`
+	Number    string `json:"number" jsonschema:"block number or 'latest' (required)"`
+	ViewerJWT string `json:"viewer_jwt,omitempty" jsonschema:"user JWT to view as (explorer data is privacy-filtered per viewer; omit for the anonymous view)"`
 }
 
 func registerExplorerBlock(s *mcp.Server, client *httpClient) {
@@ -87,7 +94,7 @@ func registerExplorerBlock(s *mcp.Server, client *httpClient) {
 		if args.Number == "" {
 			return errorResult("number is required")
 		}
-		raw, err := client.get("/api/v1/explorer/blocks/" + url.PathEscape(args.Number))
+		raw, err := client.getAs("/api/v1/explorer/blocks/"+url.PathEscape(args.Number), args.ViewerJWT)
 		if err != nil {
 			return errorResult("getting block: %v", err)
 		}
@@ -104,7 +111,7 @@ func registerExplorerTransactions(s *mcp.Server, client *httpClient) {
 		if limit == 0 {
 			limit = 20
 		}
-		raw, err := client.get(fmt.Sprintf("/api/v1/explorer/transactions?limit=%d&offset=%d", limit, args.Offset))
+		raw, err := client.getAs(fmt.Sprintf("/api/v1/explorer/transactions?limit=%d&offset=%d", limit, args.Offset), args.ViewerJWT)
 		if err != nil {
 			return errorResult("listing transactions: %v", err)
 		}
@@ -135,7 +142,8 @@ func registerExplorerTransactions(s *mcp.Server, client *httpClient) {
 }
 
 type txHashArgs struct {
-	Hash string `json:"hash" jsonschema:"transaction hash (0x-prefixed, required)"`
+	Hash      string `json:"hash" jsonschema:"transaction hash (0x-prefixed, required)"`
+	ViewerJWT string `json:"viewer_jwt,omitempty" jsonschema:"user JWT to view as (explorer data is privacy-filtered per viewer; omit for the anonymous view)"`
 }
 
 func registerExplorerTransaction(s *mcp.Server, client *httpClient) {
@@ -146,7 +154,7 @@ func registerExplorerTransaction(s *mcp.Server, client *httpClient) {
 		if args.Hash == "" {
 			return errorResult("hash is required")
 		}
-		raw, err := client.get("/api/v1/explorer/transactions/" + url.PathEscape(args.Hash))
+		raw, err := client.getAs("/api/v1/explorer/transactions/"+url.PathEscape(args.Hash), args.ViewerJWT)
 		if err != nil {
 			return errorResult("getting transaction: %v", err)
 		}
@@ -155,7 +163,8 @@ func registerExplorerTransaction(s *mcp.Server, client *httpClient) {
 }
 
 type addressArgs struct {
-	Address string `json:"address" jsonschema:"ETH address (0x-prefixed, required)"`
+	Address   string `json:"address" jsonschema:"ETH address (0x-prefixed, required)"`
+	ViewerJWT string `json:"viewer_jwt,omitempty" jsonschema:"user JWT to view as (explorer data is privacy-filtered per viewer; omit for the anonymous view)"`
 }
 
 func registerExplorerAddress(s *mcp.Server, client *httpClient) {
@@ -166,7 +175,7 @@ func registerExplorerAddress(s *mcp.Server, client *httpClient) {
 		if args.Address == "" {
 			return errorResult("address is required")
 		}
-		raw, err := client.get("/api/v1/explorer/addresses/" + url.PathEscape(args.Address) + "/stats")
+		raw, err := client.getAs("/api/v1/explorer/addresses/"+url.PathEscape(args.Address)+"/stats", args.ViewerJWT)
 		if err != nil {
 			return errorResult("getting address stats: %v", err)
 		}
@@ -175,9 +184,10 @@ func registerExplorerAddress(s *mcp.Server, client *httpClient) {
 }
 
 type addressTxsArgs struct {
-	Address string `json:"address" jsonschema:"ETH address (0x-prefixed, required)"`
-	Limit   int    `json:"limit,omitempty" jsonschema:"max entries (default 20)"`
-	Offset  int    `json:"offset,omitempty" jsonschema:"pagination offset"`
+	Address   string `json:"address" jsonschema:"ETH address (0x-prefixed, required)"`
+	Limit     int    `json:"limit,omitempty" jsonschema:"max entries (default 20)"`
+	Offset    int    `json:"offset,omitempty" jsonschema:"pagination offset"`
+	ViewerJWT string `json:"viewer_jwt,omitempty" jsonschema:"user JWT to view as (explorer data is privacy-filtered per viewer; omit for the anonymous view)"`
 }
 
 func registerExplorerAddressTxs(s *mcp.Server, client *httpClient) {
@@ -192,7 +202,7 @@ func registerExplorerAddressTxs(s *mcp.Server, client *httpClient) {
 		if limit == 0 {
 			limit = 20
 		}
-		raw, err := client.get(fmt.Sprintf("/api/v1/explorer/addresses/%s/transactions?limit=%d&offset=%d", url.PathEscape(args.Address), limit, args.Offset))
+		raw, err := client.getAs(fmt.Sprintf("/api/v1/explorer/addresses/%s/transactions?limit=%d&offset=%d", url.PathEscape(args.Address), limit, args.Offset), args.ViewerJWT)
 		if err != nil {
 			return errorResult("getting address transactions: %v", err)
 		}
@@ -208,7 +218,7 @@ func registerExplorerAddressBalance(s *mcp.Server, client *httpClient) {
 		if args.Address == "" {
 			return errorResult("address is required")
 		}
-		raw, err := client.get("/api/v1/explorer/addresses/" + url.PathEscape(args.Address) + "/balance")
+		raw, err := client.getAs("/api/v1/explorer/addresses/"+url.PathEscape(args.Address)+"/balance", args.ViewerJWT)
 		if err != nil {
 			return errorResult("getting balance: %v", err)
 		}
@@ -225,7 +235,7 @@ func registerExplorerTokens(s *mcp.Server, client *httpClient) {
 		if limit == 0 {
 			limit = 20
 		}
-		raw, err := client.get(fmt.Sprintf("/api/v1/explorer/tokens?limit=%d&offset=%d", limit, args.Offset))
+		raw, err := client.getAs(fmt.Sprintf("/api/v1/explorer/tokens?limit=%d&offset=%d", limit, args.Offset), args.ViewerJWT)
 		if err != nil {
 			return errorResult("listing tokens: %v", err)
 		}
@@ -234,26 +244,29 @@ func registerExplorerTokens(s *mcp.Server, client *httpClient) {
 }
 
 type viewableAddressesArgs struct {
-	Wallet string `json:"wallet" jsonschema:"ETH wallet address to check visibility for (required)"`
+	ViewerJWT string `json:"viewer_jwt" jsonschema:"JWT of the user whose visibility set to list (required — the viewer is resolved from the validated JWT only, never from a wallet address)"`
+	Wallet    string `json:"wallet,omitempty" jsonschema:"wallet address, echoed back for display only"`
 }
 
 func registerViewableAddresses(s *mcp.Server, client *httpClient) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "viewable_addresses",
-		Description: "Get all addresses a wallet can see (own + disclosed via grants). Wallet address is required.",
+		Description: "List the addresses a user can see: their own linked wallets plus addresses disclosed to them via active disclosure grants. Requires the user's JWT (viewer_jwt) — the server resolves the viewer only from a validated JWT, so a wallet address alone always yields the empty anonymous view.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args viewableAddressesArgs) (*mcp.CallToolResult, any, error) {
-		wallet := args.Wallet
-		if wallet == "" {
-			return errorResult("wallet address required")
+		if args.ViewerJWT == "" {
+			return errorResult("viewer_jwt is required (the viewer is resolved from the validated JWT; without it the response is always empty)")
 		}
 
-		raw, err := client.get("/api/v1/explorer/viewable-addresses?wallet=" + url.QueryEscape(wallet))
+		path := "/api/v1/explorer/viewable-addresses"
+		if args.Wallet != "" {
+			path += "?wallet=" + url.QueryEscape(args.Wallet)
+		}
+		raw, err := client.getAs(path, args.ViewerJWT)
 		if err != nil {
 			return errorResult("getting viewable addresses: %v", err)
 		}
-		lines := section("Viewable Addresses for " + wallet)
 
-		return textResult(lines, prettyJSON(json.RawMessage(raw)))
+		return textResult(section("Viewable Addresses"), prettyJSON(json.RawMessage(raw)))
 	})
 }
 
