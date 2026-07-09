@@ -843,18 +843,85 @@ func (s *Server) createUserMembership(c *gin.Context) {
 // app's own DID — both are valid iden3 DIDs differing only in the opaque
 // identity-state segment. That mistake is caught only by "the onboarded DID
 // must match the one the user authenticates with" (see operator docs).
-func validateOnboardDID(did string) error {
+// allowRelaxedNonIden3 loosens the W3C-grammar parse for the dev/mock login
+// path only (RD-1187): those DIDs (did:privado:demo_*, mock_*) carry an
+// underscore in the method-specific-id, which the iden3 W3C parser's idchar
+// grammar rejects — so a real, already-provisioned dev user could not be
+// onboarded by DID. It is set from !IsProduction(): AllowMockLogin (the sole
+// producer of those shapes) is force-disabled in production, so this relaxation
+// can never fire in prod, which stays strictly fail-closed. Even when set, the
+// relaxation NEVER applies to the iden3/polygonid methods — those always require
+// a valid parse + checksum, so a malformed iden3 DID can't bypass the checksum
+// and create a dead users row (RD-1098).
+func validateOnboardDID(did string, allowRelaxedNonIden3 bool) error {
 	parsed, err := w3c.ParseDID(did)
-	if err != nil {
+	if err == nil {
+		switch core.DIDMethod(parsed.Method) {
+		case core.DIDMethodIden3, core.DIDMethodPolygonID:
+			if _, err := core.IDFromDID(*parsed); err != nil {
+				return fmt.Errorf("invalid iden3 identifier (bad checksum/network): %w", err)
+			}
+		}
+		return nil
+	}
+	// ParseDID failed. Only relax in non-production, only for non-iden3/polygonid
+	// methods (keep the checksum a hard wall), and only for a bounded generic-DID
+	// syntax (permitting the '_' the dev path emits).
+	if !allowRelaxedNonIden3 {
 		return fmt.Errorf("not a valid DID: %w", err)
 	}
-	switch core.DIDMethod(parsed.Method) {
-	case core.DIDMethodIden3, core.DIDMethodPolygonID:
-		if _, err := core.IDFromDID(*parsed); err != nil {
-			return fmt.Errorf("invalid iden3 identifier (bad checksum/network): %w", err)
-		}
+	if m := didMethodOf(did); m == string(core.DIDMethodIden3) || m == string(core.DIDMethodPolygonID) {
+		return fmt.Errorf("not a valid DID: %w", err)
+	}
+	if !isRelaxedDIDSyntax(did) {
+		return fmt.Errorf("not a valid DID: %w", err)
 	}
 	return nil
+}
+
+// didMethodOf returns the DID method (segment between the first two colons)
+// without full parsing, for the relaxed-acceptance guard. "" if malformed.
+func didMethodOf(did string) string {
+	rest, ok := strings.CutPrefix(did, "did:")
+	if !ok {
+		return ""
+	}
+	method, _, ok := strings.Cut(rest, ":")
+	if !ok {
+		return ""
+	}
+	return method
+}
+
+// isRelaxedDIDSyntax accepts did:<method>:<method-specific-id> where method is
+// 1+ [a-z0-9] and the id is non-empty over a BOUNDED charset: the W3C idchar set
+// (ALPHA / DIGIT / '.' / '-') plus ':' (multi-segment ids) and '_' — the one
+// character the dev/mock login path emits (demo_/mock_) that W3C idchar omits.
+// The bound deliberately rejects whitespace and DID-URL path/query/fragment
+// ('/', '?', '#') so a structurally different identifier can't slip through.
+func isRelaxedDIDSyntax(did string) bool {
+	rest, ok := strings.CutPrefix(did, "did:")
+	if !ok {
+		return false
+	}
+	method, id, ok := strings.Cut(rest, ":")
+	if !ok || method == "" || id == "" {
+		return false
+	}
+	for _, r := range method {
+		if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')) {
+			return false
+		}
+	}
+	for _, r := range id {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '.', r == '-', r == ':', r == '_':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // createMembershipByDID is the tier-2 onboarding path: an org admin can pull
@@ -929,7 +996,7 @@ func (s *Server) createMembershipByDID(c *gin.Context) {
 	// error is opaque to the caller (DID format is not org-scoped, but raw
 	// parser internals are never echoed); the real cause is logged server-side.
 	input.DID = strings.TrimSpace(input.DID)
-	if err := validateOnboardDID(input.DID); err != nil {
+	if err := validateOnboardDID(input.DID, !s.config.IsProduction()); err != nil {
 		slog.Warn("onboard-by-did: rejected invalid did", "org_id", orgID, "did", input.DID, "err", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid did"})
 		return
