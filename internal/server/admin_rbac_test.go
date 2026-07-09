@@ -386,8 +386,7 @@ func TestGroupAPI(t *testing.T) {
 	t.Run("SetGroupAccess", func(t *testing.T) {
 		body := map[string]any{
 			"allowed_methods": []string{"eth_call", "eth_getBalance"},
-			"claims":  []string{"read"},
-			"rate_limit_rps":  100,
+			"claims":          []string{"read"},
 		}
 		jsonBody, _ := json.Marshal(body)
 
@@ -452,8 +451,7 @@ func TestGroupAccessAPI(t *testing.T) {
 	t.Run("SetGroupAccess", func(t *testing.T) {
 		body := map[string]any{
 			"allowed_methods": []string{"eth_call", "eth_getBalance"},
-			"claims":  []string{"read"},
-			"rate_limit_rps":  100,
+			"claims":          []string{"read"},
 		}
 		jsonBody, _ := json.Marshal(body)
 

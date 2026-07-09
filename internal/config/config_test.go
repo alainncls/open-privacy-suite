@@ -1,6 +1,8 @@
 package config
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"strings"
 	"testing"
@@ -259,6 +261,66 @@ func TestConfig_IsProduction(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestConfig_Validate_ProductionWarnings covers RD-1164 #8/#20/#18: in
+// production, missing hardening controls emit a loud slog warning (but do NOT
+// fail startup). All required prod fields are set so Validate reaches the
+// warning block and returns nil.
+func TestConfig_Validate_ProductionWarnings(t *testing.T) {
+	base := func() *Config {
+		return &Config{
+			Environment:      "production",
+			JWTSecret:        "secret",
+			JWTRefreshSecret: "refresh-secret",
+			VerifierID:       "did:test:verifier",
+			AdminAPIToken:    "admin-token",
+			NodeURL:          "https://node.example.com",
+			BaseURL:          "https://api.example.com",
+		}
+	}
+
+	capture := func(t *testing.T, c *Config) string {
+		t.Helper()
+		var buf bytes.Buffer
+		prev := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+		defer slog.SetDefault(prev)
+		if err := c.Validate(); err != nil {
+			t.Fatalf("Validate() returned error: %v", err)
+		}
+		return buf.String()
+	}
+
+	t.Run("warns when hardening controls are unset", func(t *testing.T) {
+		t.Setenv("AUDIT_DATABASE_URL", "") // derived/co-located
+		out := capture(t, base())          // pseudonym key + Redis unset
+		for _, want := range []string{"EXPLORER_PSEUDONYM_KEY", "REDIS_URL", "AUDIT_DATABASE_URL"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("expected a production warning mentioning %s, got:\n%s", want, out)
+			}
+		}
+	})
+
+	t.Run("no warnings when all hardening controls are set", func(t *testing.T) {
+		t.Setenv("AUDIT_DATABASE_URL", "postgres://audit:pw@auditdb:5432/audit?sslmode=disable")
+		c := base()
+		c.ExplorerPseudonymKey = []byte("0123456789abcdef0123456789abcdef")
+		c.RedisURL = "redis://:pw@redis:6379/0"
+		out := capture(t, c)
+		if strings.Contains(out, "WARN") {
+			t.Errorf("expected no production warnings when hardening controls are set, got:\n%s", out)
+		}
+	})
+
+	t.Run("development mode emits no hardening warnings", func(t *testing.T) {
+		c := base()
+		c.Environment = "development"
+		out := capture(t, c)
+		if strings.Contains(out, "WARN") {
+			t.Errorf("development mode should not emit production hardening warnings, got:\n%s", out)
+		}
+	})
 }
 
 func TestConfig_Validate(t *testing.T) {

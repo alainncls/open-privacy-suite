@@ -274,8 +274,7 @@ func TestEffectivePermissions(t *testing.T) {
 				"org_id":"org-1",
 				"claims":["read","write"],
 				"allowed_methods":["eth_call","eth_getBalance"],
-				"contract_access":{"0xDEAD":{"claims":["read"]}},
-				"rate_limit_rps":100
+				"contract_access":{"0xDEAD":{"claims":["read"]}}
 			}`)
 			return
 		}
@@ -300,7 +299,7 @@ func TestEffectivePermissions(t *testing.T) {
 func TestCheckAccess(t *testing.T) {
 	client, cleanup := newTestServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/admin/access/check" {
-			fmt.Fprint(w, `{"allowed":true,"reason":"user has read claim","claims":["read"],"rate_limit_rps":50}`)
+			fmt.Fprint(w, `{"allowed":true,"reason":"user has read claim","claims":["read"]}`)
 			return
 		}
 		http.NotFound(w, r)

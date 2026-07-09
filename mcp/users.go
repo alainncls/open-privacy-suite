@@ -441,8 +441,6 @@ func registerEffectivePermissions(s *mcp.Server, client *httpClient) {
 			kvf("Org ID", getString(perms, "org_id")),
 			kvf("Claims", fmt.Sprintf("%v", getSlice(perms, "claims"))),
 			kvf("Allowed Methods", fmt.Sprintf("%v", getSlice(perms, "allowed_methods"))),
-			kvf("Rate Limit RPS", perms["rate_limit_rps"]),
-			kvf("Rate Limit Daily", perms["rate_limit_daily"]),
 		) + "\n"
 
 		if contracts := getMap(perms, "contract_access"); contracts != nil && len(contracts) > 0 {
@@ -517,7 +515,6 @@ func registerCheckAccess(s *mcp.Server, client *httpClient) {
 			kvf("Allowed", boolYesNo(allowed)),
 			kvf("Reason", getString(result, "reason")),
 			kvf("Claims", fmt.Sprintf("%v", getSlice(result, "claims"))),
-			kvf("Rate Limit RPS", result["rate_limit_rps"]),
 		)
 
 		return textResult(lines)

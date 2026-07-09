@@ -495,6 +495,9 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		database.Close()
 		return nil, fmt.Errorf("failed to create JWT service: %w", err)
 	}
+	// Rotation window: previous secrets validate (never sign) so a secret can be
+	// rotated without logging every session out (RD-1164 #15).
+	jwtService.SetValidationSecrets(cfg.JWTSecretPrevious, cfg.JWTRefreshSecretPrevious)
 
 	// Upstream node connection-pool sizing (RD-1112), shared by the forwarder
 	// and the runtime tracer (both talk to the single node host).
@@ -686,7 +689,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 
 	// Initialize circuit breaker and concurrency limiter for upstream RPC proxy
 	circuitBreaker := NewCircuitBreaker()
-	concurrencyLimiter := NewConcurrencyLimiter(cfg.MaxConcurrentRequests)
+	concurrencyLimiter := NewConcurrencyLimiter(cfg.MaxConcurrentRequests, cfg.MaxConcurrentAnonymousRequests)
 
 	// Initialize JSON-RPC processor with dependencies. RD-1147: the basic
 	// LogAccess fallback (used only when the chained/buffered audit write fails)

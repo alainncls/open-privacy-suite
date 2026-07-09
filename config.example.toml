@@ -86,6 +86,11 @@ RUNTIME_TRACING_INTRA_ORG_GRANTS_ENABLED = false
 # contracts, so weigh privacy vs usability for your deployment.
 ETH_CALL_DENY_WITHOUT_ABI = false
 MAX_CONCURRENT_REQUESTS = 50
+# Shared concurrency cap for ANONYMOUS /rpc traffic (requests with no JWT). The
+# per-user cap above is keyed by identity and cannot bound anonymous callers, so
+# this bounds the total in-flight work an unauthenticated flood can create.
+# Defaults to MAX_CONCURRENT_REQUESTS; set 0 to disable.
+MAX_CONCURRENT_ANONYMOUS_REQUESTS = 50
 # EXTRA_RPC_NAMESPACES_FILE = "./rpc-namespaces.json"
 
 # -----------------------------------------------------------------------------

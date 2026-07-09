@@ -11,7 +11,10 @@ on:
       - main
 
 env:
-  GO_VERSION: '1.25'
+  # Pinned to the patched toolchain (matches go.mod toolchain directive). The
+  # stdlib CVEs govulncheck flags are fixed across the 1.25.x patch line, so a
+  # floating '1.25' could regress; keep this in lockstep with go.mod.
+  GO_VERSION: '1.25.12'
   NODE_VERSION: '20'
   # Minimum coverage threshold (percentage).
   # Set to 44 because explorer/store.go (954 lines of SQL queries against the
@@ -50,6 +53,33 @@ jobs:
         run: |
           make api-spec
           git diff --exit-code -- internal/server/apispec site/public/openapi.json API_ENDPOINTS.md
+
+  vuln:
+    name: Vulnerability Scan
+    runs-on: ubuntu-latest
+    # govulncheck reports known CVEs in Go module dependencies (and flags whether
+    # the vulnerable symbol is actually reachable). This is the gate that would
+    # have caught the golang-jwt CVE-2025-30204 exposure earlier; pairs with the
+    # gomod dependabot block that opens the bump PRs.
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install govulncheck
+        # Pinned (not @latest) to match this workflow's reproducibility policy
+        # (SHA-pinned actions, pinned GO_VERSION): a govulncheck behavior change
+        # shouldn't flip this gate on an unrelated PR. The vulnerability DATABASE
+        # is still fetched live at run time, so new advisories are still caught;
+        # only the tool version is fixed. Bump deliberately.
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.5.0
+
+      - name: Run govulncheck
+        run: govulncheck ./...
 
   test-go:
     name: Go Tests

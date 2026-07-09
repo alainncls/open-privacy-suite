@@ -110,7 +110,7 @@ func setupProcessorWithMockTracer(t *testing.T, scripted *scriptedTracerServer) 
 		rt,
 		tv,
 		NewCircuitBreaker(),
-		NewConcurrencyLimiter(50),
+		NewConcurrencyLimiter(50, 0),
 		"",
 	)
 	proc.SetEthCallTracing(true, 5*time.Second)

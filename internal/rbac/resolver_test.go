@@ -681,42 +681,6 @@ func TestResolverContractGrantsFlatGroup(t *testing.T) {
 	}
 }
 
-func TestResolverRateLimitsFlatGroup(t *testing.T) {
-	store := NewMockStore()
-	resolver := NewResolver(store, 5*time.Minute)
-
-	org := &Organization{ID: "org1", Slug: "test"}
-	store.organizations["org1"] = org
-
-	group := &Group{ID: "child", OrgID: "org1", Slug: "child", Path: "child", Depth: 0}
-	store.groups["child"] = group
-
-	groupRPS := 50
-
-	store.groupAccess["child"] = &GroupAccess{
-		GroupID:        "child",
-		AllowedMethods: []string{"eth_call"},
-		RateLimitRPS:   &groupRPS,
-	}
-
-	store.groupsByOrg["user1:org1"] = []*MembershipWithDetails{
-		{
-			Membership: &UserMembership{UserID: "user1", GroupID: "child"},
-			Group:      group,
-		},
-	}
-
-	perms, err := resolver.ResolvePermissions(context.Background(), "user1", "org1")
-	if err != nil {
-		t.Fatalf("ResolvePermissions failed: %v", err)
-	}
-
-	// Should have the group's own rate limit (50)
-	if perms.RateLimitRPS == nil || *perms.RateLimitRPS != 50 {
-		t.Errorf("Expected rate limit 50, got %v", perms.RateLimitRPS)
-	}
-}
-
 func TestResolverNoMemberships(t *testing.T) {
 	store := NewMockStore()
 	resolver := NewResolver(store, 5*time.Minute)
@@ -741,55 +705,6 @@ func TestResolverNoMemberships(t *testing.T) {
 	}
 	if len(perms.ContractAccess) != 0 {
 		t.Errorf("Expected 0 contract access for user with no memberships, got %d", len(perms.ContractAccess))
-	}
-}
-
-func TestResolverMultipleMembershipsRateLimitsMax(t *testing.T) {
-	store := NewMockStore()
-	resolver := NewResolver(store, 5*time.Minute)
-
-	org := &Organization{ID: "org1", Slug: "test"}
-	store.organizations["org1"] = org
-
-	groupA := &Group{ID: "groupA", OrgID: "org1", Slug: "groupA", Path: "groupA", Depth: 0}
-	groupB := &Group{ID: "groupB", OrgID: "org1", Slug: "groupB", Path: "groupB", Depth: 0}
-	store.groups["groupA"] = groupA
-	store.groups["groupB"] = groupB
-
-	rpsA := 50
-	rpsB := 100 // Higher
-
-	store.groupAccess["groupA"] = &GroupAccess{
-		GroupID:        "groupA",
-		AllowedMethods: []string{"eth_call"},
-		RateLimitRPS:   &rpsA,
-	}
-	store.groupAccess["groupB"] = &GroupAccess{
-		GroupID:        "groupB",
-		AllowedMethods: []string{"eth_call"},
-		RateLimitRPS:   &rpsB,
-	}
-
-	// User is member of both groups
-	store.groupsByOrg["user1:org1"] = []*MembershipWithDetails{
-		{
-			Membership: &UserMembership{UserID: "user1", GroupID: "groupA"},
-			Group:      groupA,
-		},
-		{
-			Membership: &UserMembership{UserID: "user1", GroupID: "groupB"},
-			Group:      groupB,
-		},
-	}
-
-	perms, err := resolver.ResolvePermissions(context.Background(), "user1", "org1")
-	if err != nil {
-		t.Fatalf("ResolvePermissions failed: %v", err)
-	}
-
-	// Across memberships, should have MAXIMUM rate limit (100)
-	if perms.RateLimitRPS == nil || *perms.RateLimitRPS != 100 {
-		t.Errorf("Expected rate limit 100, got %v", perms.RateLimitRPS)
 	}
 }
 
