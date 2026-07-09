@@ -134,7 +134,7 @@ Set allowed methods, claims, and rate limits. Claims auto-expand (admin includes
 | `org_id` | string | Yes | Organization UUID |
 | `group_id` | string | Yes | Group UUID |
 | `allowed_methods` | string[] | Yes | RPC methods (e.g. `eth_call`, `eth_sendTransaction`) |
-| `claims` | string[] | Yes | Permission claims (`read`, `write`, `deploy`, `upgrade`, `admin`) |
+| `claims` | string[] | Yes | Permission claims (`admin`, `upgrade`, `deploy`) |
 | `rate_limit_rps` | number | No | Requests per second |
 | `rate_limit_daily` | number | No | Daily request limit |
 
