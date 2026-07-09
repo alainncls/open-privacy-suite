@@ -71,7 +71,12 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
 
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        # Pinned (not @latest) to match this workflow's reproducibility policy
+        # (SHA-pinned actions, pinned GO_VERSION): a govulncheck behavior change
+        # shouldn't flip this gate on an unrelated PR. The vulnerability DATABASE
+        # is still fetched live at run time, so new advisories are still caught;
+        # only the tool version is fixed. Bump deliberately.
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.5.0
 
       - name: Run govulncheck
         run: govulncheck ./...

@@ -273,21 +273,21 @@ type Config struct {
 	// SQL on the explorer postgres. Leave empty to use SQL exclusively.
 	// Set this (and point it at the chain-indexer service) to start the
 	// RD-855 Phase 3 cutover.
-	IndexerURL             string
-	PrivadoRPCURL          string
-	IPFSGateway            string
-	JWTSecret              string
-	JWTRefreshSecret       string
+	IndexerURL       string
+	PrivadoRPCURL    string
+	IPFSGateway      string
+	JWTSecret        string
+	JWTRefreshSecret string
 	// Previous JWT secrets accepted for validation only (never signing), for
 	// hitless secret rotation (RD-1164 #15). Comma-separated; empty = no window.
 	JWTSecretPrevious        []string // JWT_SECRET_PREVIOUS
 	JWTRefreshSecretPrevious []string // JWT_REFRESH_SECRET_PREVIOUS
-	VerifierID             string // DID or identifier of the verifier
-	BaseURL                string // Base URL for callback (e.g., https://api.example.com)
-	Port                   string // Server port (e.g., "8080")
-	Environment            string // "production" or "development"
-	BillionsIssuerDID      string // Billions issuer DID for ProofOfHumanity verification
-	RequireProofOfHumanity bool   // Opt-in enforcement of Path B (credential check). Default: false in every environment.
+	VerifierID               string   // DID or identifier of the verifier
+	BaseURL                  string   // Base URL for callback (e.g., https://api.example.com)
+	Port                     string   // Server port (e.g., "8080")
+	Environment              string   // "production" or "development"
+	BillionsIssuerDID        string   // Billions issuer DID for ProofOfHumanity verification
+	RequireProofOfHumanity   bool     // Opt-in enforcement of Path B (credential check). Default: false in every environment.
 
 	// iden3 network resolvers. The verifier resolves each wallet's DID to its
 	// on-chain identity state via a per-network resolver keyed
@@ -428,12 +428,12 @@ type Config struct {
 	FrontendURL string
 
 	// RPC API key for upstream RPC proxy authentication
-	RPCAPIKey              string // RPC_API_KEY — global fallback when no group-specific key is set
-	RPCAPIKeyHeader        string // RPC_API_KEY_HEADER — header name used to send the RPC API key (default "Authorization", which sends "Bearer <key>"); any other value sends the raw key under that header
-	RPCAPIKeyEncryptionKey []byte // RPC_API_KEY_ENCRYPTION_KEY — 32-byte hex key for AES-256 encryption of RPC API keys at rest
-	ExplorerPseudonymKey   []byte // EXPLORER_PSEUDONYM_KEY — HMAC key for explorer address pseudonyms (non-reversible, non-enumerable). Optional; set in production.
-	MaxConcurrentRequests  int    // MAX_CONCURRENT_REQUESTS — per-user concurrency cap (default: 50)
-	MaxConcurrentAnonymousRequests int // MAX_CONCURRENT_ANONYMOUS_REQUESTS — shared concurrency cap for anonymous /rpc traffic (default: = MaxConcurrentRequests; 0 disables)
+	RPCAPIKey                      string // RPC_API_KEY — global fallback when no group-specific key is set
+	RPCAPIKeyHeader                string // RPC_API_KEY_HEADER — header name used to send the RPC API key (default "Authorization", which sends "Bearer <key>"); any other value sends the raw key under that header
+	RPCAPIKeyEncryptionKey         []byte // RPC_API_KEY_ENCRYPTION_KEY — 32-byte hex key for AES-256 encryption of RPC API keys at rest
+	ExplorerPseudonymKey           []byte // EXPLORER_PSEUDONYM_KEY — HMAC key for explorer address pseudonyms (non-reversible, non-enumerable). Optional; set in production.
+	MaxConcurrentRequests          int    // MAX_CONCURRENT_REQUESTS — per-user concurrency cap (default: 50)
+	MaxConcurrentAnonymousRequests int    // MAX_CONCURRENT_ANONYMOUS_REQUESTS — shared concurrency cap for anonymous /rpc traffic (default: = MaxConcurrentRequests; 0 disables)
 
 	// Azure AD / Microsoft Entra ID authentication
 	AzureADClientID     string // AZURE_AD_CLIENT_ID
@@ -772,9 +772,9 @@ func Load() *Config {
 		JWTRefreshSecret:                    getEnv("JWT_REFRESH_SECRET", ""),                              // If empty, will be auto-generated (dev only)
 		JWTSecretPrevious:                   getSliceEnv("JWT_SECRET_PREVIOUS", ","),
 		JWTRefreshSecretPrevious:            getSliceEnv("JWT_REFRESH_SECRET_PREVIOUS", ","),
-		VerifierID:                          getEnv("VERIFIER_ID", ""),                                     // Required in production
-		BaseURL:                             getEnv("BASE_URL", "http://localhost:8080"),                   // Base URL for callback
-		Port:                                getEnv("PORT", "8080"),                                        // Server port
+		VerifierID:                          getEnv("VERIFIER_ID", ""),                   // Required in production
+		BaseURL:                             getEnv("BASE_URL", "http://localhost:8080"), // Base URL for callback
+		Port:                                getEnv("PORT", "8080"),                      // Server port
 		Environment:                         env,
 		BillionsIssuerDID:                   getEnv("BILLIONS_ISSUER_DID", ""), // Billions issuer DID for PoH
 		RequireProofOfHumanity:              requirePoHBool,
