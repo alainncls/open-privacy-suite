@@ -11,8 +11,8 @@ import (
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/explorer"
 
-	"github.com/google/uuid"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
