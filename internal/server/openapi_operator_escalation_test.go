@@ -32,9 +32,10 @@ import (
 // recovered by gin) or 400 — anything but 403. So a non-403 here is proof the
 // operator reached past the intended boundary.
 //
-// STATUS: expected to FAIL until RD-1173 lands. The failing cases ARE the
-// confirmed escalations; each flips to pass when its guard is added. This is
-// the regression guard that ships with the fix.
+// STATUS: passes on this branch — RD-1173's operator-token guards ship in this
+// same PR. Each tenant/fleet case below WAS a confirmed escalation before those
+// guards were added; this is the regression guard that ships with the fix and
+// keeps them closed (it would fail again if any guard were removed).
 func TestOperatorTokenDeniedOnTenantAndFleetEndpoints_RD1173(t *testing.T) {
 	const operatorToken = "operator-token-under-test"
 
