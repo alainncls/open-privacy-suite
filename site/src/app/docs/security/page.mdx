@@ -556,6 +556,6 @@ A standalone verifier CLI is planned.
 | Parameter validation | Only method/contract validated | Upstream node validation |
 | Token revocation | Database lookup per request | Consider Redis for high volume |
 | Multicall | Only 3 hardcoded addresses blocked | Mitigated by runtime tracing (all calls validated regardless of target) |
-| Method case sensitivity | Methods checked case-sensitively | Ethereum nodes typically reject wrong case |
+| Method case handling | Method names are canonicalized to their standard spelling before access checks and dispatch | Built-in methods match case-insensitively; unknown/vendor methods pass through unchanged and are rejected by the upstream node if mis-cased |
 | Historical state | Historical block queries blocked for anonymous users only | Authenticated users go through full RBAC which gates address access; blocking by block number is redundant and breaks wallets like MetaMask |
 | Response filtering gaps | `eth_getBlockByNumber`/`eth_getBlockByHash` (with full tx objects), `eth_getTransactionByBlockHashAndIndex`/`eth_getTransactionByBlockNumberAndIndex`, and `eth_getBlockReceipts` are not yet response-filtered | See [Response Filtering known gaps](/docs/security/response-filtering) |

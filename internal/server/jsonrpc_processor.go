@@ -630,6 +630,13 @@ func ParseAndValidateBody(body []byte) (string, []any, *ProcessError) {
 func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *ProcessResult {
 	start := time.Now()
 
+	// RD-1180: canonicalize the method name ONCE at ingress so the special
+	// validation dispatch below (and target/selector extraction + RBAC gates
+	// downstream) can't be skipped by mixed-case method names. The upstream
+	// node still receives req.Body verbatim; only the internal method string is
+	// normalized. Unknown methods (linea_*, wildcard passthrough) pass through.
+	req.Method = rbac.CanonicalizeMethod(req.Method)
+
 	// Handle eth_sendRawTransaction specially - requires runtime tracing
 	if req.Method == "eth_sendRawTransaction" {
 		return p.processRawTransaction(ctx, req)
