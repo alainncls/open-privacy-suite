@@ -267,7 +267,7 @@ print_step "Step 4: Deploying Proxies"
 
 # Create proxy bytecode helper
 cat > "$BUILD_DIR/src/DeployProxy.sol" << 'EOF'
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";

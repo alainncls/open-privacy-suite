@@ -3,4 +3,4 @@
 	url = https://github.com/foundry-rs/forge-std
 [submodule "tools/wallet-emulator-js"]
 	path = tools/wallet-emulator-js
-	url = git@github.com:gateway-fm/wallet-emulator-js.git
+	url = https://github.com/gateway-fm/wallet-emulator-js.git
