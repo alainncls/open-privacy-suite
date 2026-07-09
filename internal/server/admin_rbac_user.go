@@ -1045,6 +1045,124 @@ func (s *Server) createMembershipByDID(c *gin.Context) {
 	})
 }
 
+// deleteMembershipByDID removes a user (by DID) from a group in the path org —
+// the symmetric counterpart of createMembershipByDID (RD-1182). It lets the
+// operator token complete the org-admin lifecycle (mint AND remove) without a
+// tenant-confidential read: the other removal route
+// (DELETE /users/:user_id/memberships/:membership_id) needs a membership_id the
+// operator can only discover via GET reads that denyOperatorTenantRead blocks.
+// Gated exactly like the onboard; performs no tenant read (org-scoped by-DID
+// resolution only). No anti-lockout guard — matches the existing removal route
+// (removing the last org admin is possible on both; see RD-1125 for governance).
+//
+// @Summary      Remove a DID from a group
+// @Description  Removes a user identified by DID from a group in the path org (the symmetric counterpart of onboard-by-did). Body: did (required), group_id (required). Requires full (is_org_admin) scope over the path org; the target group must belong to that org (opaque 403 otherwise). Removing from an is_org_admin group is super-admin-only; a regular group is rejected for the operator token. A DID that is unknown, or has no membership in the target group, returns the SAME opaque 403 as a foreign-org group — no existence oracle. No tenant read is performed.
+// @Tags         Admin: RBAC
+// @Accept       json
+// @Produce      json
+// @Param        org_id path string true "Organization ID (UUID)"
+// @Param        request body membershipByDIDRemovalRequest true "removal request"
+// @Success      200 {object} APIMessage "membership deleted"
+// @Failure      400 {object} APIError "invalid body"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "source address not on the private network, path org outside the caller's full-admin scope, target group not in the path org / DID not found / no membership (all opaque), tier-2 JWT removing from an org-admin group, or operator token removing from a regular group"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/memberships/by-did [delete]
+func (s *Server) deleteMembershipByDID(c *gin.Context) {
+	orgID := c.Param("org_id")
+
+	var input struct {
+		DID     string `json:"did" binding:"required"`
+		GroupID string `json:"group_id" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+	input.DID = strings.TrimSpace(input.DID)
+
+	// Cross-org gate (mirror onboard): full admin in :org_id; super-admin / dev /
+	// operator bypass here. For the operator, the group.OrgID==orgID check below
+	// is the SOLE cross-org binding (orgScopingMiddleware also bypasses the
+	// operator), so it must run before the deny gates read group.IsOrgAdmin.
+	if allowedOrgIDs, isSuperOrDev := jwtAdminFullAdminOrgIDs(c); !isSuperOrDev {
+		if !slices.Contains(allowedOrgIDs, orgID) {
+			c.JSON(http.StatusForbidden, gin.H{"error": errTargetForeignOrg})
+			return
+		}
+	}
+
+	// Target group must live in :org_id (opaque foreign-org — collapses
+	// "exists elsewhere" with "does not exist").
+	group, err := s.db.GetGroup(c.Request.Context(), input.GroupID)
+	if err != nil {
+		slog.Error("remove-by-did: get group failed", "group_id", input.GroupID, "org_id", orgID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to remove membership"})
+		return
+	}
+	if group == nil || group.OrgID != orgID {
+		c.JSON(http.StatusForbidden, gin.H{"error": errMembershipForeignOrg})
+		return
+	}
+
+	// Escalation gates, onboard order: tier-2 JWT cannot touch org-admin groups
+	// (super-admin only); the operator is confined to admin-tier groups.
+	if denyJWTAdminTouchOrgAdminGroup(c, group) {
+		return
+	}
+	if denyOperatorRegularGroup(c, group) {
+		return
+	}
+
+	// DID → user → membership. A malformed/unknown DID, or a DID with no
+	// membership in this group, returns the SAME opaque 403 as a foreign-org
+	// group: the caller learns nothing about DID existence or tenant membership
+	// beyond the group tier it already manages. No strict DID parse is needed
+	// (removal provisions nothing) — a bad DID simply resolves to no user.
+	user, err := s.db.GetUserByExternalID(c.Request.Context(), input.DID)
+	if err != nil {
+		slog.Error("remove-by-did: get user failed", "org_id", orgID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to remove membership"})
+		return
+	}
+	if user == nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": errMembershipForeignOrg})
+		return
+	}
+	membership, err := s.db.GetMembershipByUserAndGroup(c.Request.Context(), user.ID, input.GroupID)
+	if err != nil {
+		slog.Error("remove-by-did: get membership failed", "org_id", orgID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to remove membership"})
+		return
+	}
+	if membership == nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": errMembershipForeignOrg})
+		return
+	}
+
+	s.rbacAccessCtrl.InvalidateUser(c.Request.Context(), user.ID)
+
+	if err := s.db.DeleteMembership(c.Request.Context(), membership.ID); err != nil {
+		slog.Error("remove-by-did: delete membership failed", "membership_id", membership.ID, "org_id", orgID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to remove membership"})
+		return
+	}
+
+	// Audit: detail as oldValue, nil newValue (revoke), matching deleteUserMembership.
+	s.recordAuditActionScoped(c, rbac.AuditActionRevoke, rbac.ResourceTypeMembership, membership.ID, group.Name, group.OrgID,
+		map[string]any{
+			"user_id":     user.ID,
+			"group_id":    group.ID,
+			"org_id":      group.OrgID,
+			"did":         input.DID,
+			"removed_via": "by-did",
+		},
+		nil)
+
+	c.JSON(http.StatusOK, gin.H{"message": "membership deleted"})
+}
+
 // deleteUserMembership removes a user from a group.
 //
 // @Summary      Remove a membership
