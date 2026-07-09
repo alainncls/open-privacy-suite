@@ -53,9 +53,22 @@ jobs:
           GH_TOKEN: ${{ secrets.CROSS_REPO_READ_TOKEN || secrets.GITHUB_TOKEN }}
           IS_CANONICAL: ${{ github.repository == 'gateway-fm/privacy-proxy' }}
         run: |
+          # Retry before declaring a repo unreadable: this signal gates a
+          # loud failure in the canonical repo (below), so a transient GitHub
+          # API blip (5xx / secondary rate-limit) must not be mistaken for a
+          # genuine, persistent permission failure. Only a repo that fails all
+          # attempts is treated as unreadable.
           unreadable=""
           for repo in gateway-fm/chain-indexer gateway-fm/block-explorer; do
-            if ! gh api "repos/$repo" --silent; then
+            ok=""
+            for attempt in 1 2 3; do
+              if gh api "repos/$repo" --silent; then
+                ok="yes"
+                break
+              fi
+              [ "$attempt" -lt 3 ] && sleep "$((attempt * 5))"
+            done
+            if [ -z "$ok" ]; then
               unreadable="$unreadable $repo"
             fi
           done
