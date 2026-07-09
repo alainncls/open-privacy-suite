@@ -326,10 +326,9 @@ func (s *Server) pseudonym(address string) string {
 // filterTxsByGrantScope drops disclosed transactions that fall outside the
 // grant's own scope (RD-1164 #9): a grant scoped to a DateRange or a set of
 // contract addresses must not disclose transactions beyond it. An unset scope
-// dimension imposes no restriction. Filtering is applied to the already-fetched
-// page, so has_more reflects the post-filter page — conservative (it may
-// under-report additional in-scope rows on later pages, but never
-// over-discloses). Proper server-side time/keyset bounds are tracked in RD-1149.
+// dimension imposes no restriction. It fail-closes: a tx with a missing (0) or
+// out-of-range timestamp, or whose from/to is not in the address scope, is
+// excluded — never over-discloses.
 func filterTxsByGrantScope(txs []explorer.Transaction, scope disclosure.Scope) []explorer.Transaction {
 	if scope.DateRange == nil && len(scope.Addresses) == 0 {
 		return txs
@@ -372,6 +371,73 @@ func filterTxsByGrantScope(txs []explorer.Transaction, scope disclosure.Scope) [
 		out = append(out, tx)
 	}
 	return out
+}
+
+// collectGrantScopeTxs pages through an address's transactions applying the
+// grant's scope filter per page, accumulating in-scope txs until it has `want`
+// of them (want = limit+1, to peek has_more), the address's tx feed is
+// exhausted, or maxScan rows have been fetched (RD-1167). Filtering only the
+// first limit+1 fetched rows (the old behaviour) made in-scope txs deeper than
+// the first page unreachable and computed has_more from a pre-filter page size.
+//
+// Mirrors countAcrossPages: dedupe by tx hash + advance the cursor by the page
+// minimum block, so a non-paginating or re-serving backend under-returns rather
+// than loops. perPage is large (1000) precisely so the bare-block cursor never
+// splits a real block (no address has ~1000 txs in one block) — a small page
+// would reintroduce the RD-1148 block-boundary drop, which dedupe cannot fix
+// (excluded rows are never re-fetched). Under-discloses at the deep tail beyond
+// maxScan (safe direction); the complete fix is server-side scoped querying /
+// keyset pagination (RD-1149).
+//
+// Returns the in-scope txs (may exceed want; caller trims) and feedExhausted =
+// true when the address's raw tx feed ran out within maxScan (vs the cap
+// stopping the scan early).
+func (s *Server) collectGrantScopeTxs(ctx context.Context, address string, scope disclosure.Scope, want int, beforeBlock *uint64) (inScope []explorer.Transaction, feedExhausted bool, err error) {
+	const (
+		perPage = 1000  // SQL honors fully; gRPC backend clamps to the indexer max (~100)
+		maxScan = 10000 // safety bound (matches countVisibleAddressTxs)
+	)
+	seen := make(map[string]struct{})
+	before := beforeBlock
+	scanned := 0
+	for scanned < maxScan {
+		page, ferr := s.explorerStore.GetTransactionsByAddress(ctx, address, perPage, before)
+		if ferr != nil {
+			return nil, false, ferr
+		}
+		if len(page) == 0 {
+			return inScope, true, nil // raw feed exhausted
+		}
+		fresh := make([]explorer.Transaction, 0, len(page))
+		var minCursor uint64
+		for i, tx := range page {
+			if i == 0 || tx.BlockNumber < minCursor {
+				minCursor = tx.BlockNumber
+			}
+			if _, dup := seen[tx.Hash]; dup {
+				continue
+			}
+			seen[tx.Hash] = struct{}{}
+			fresh = append(fresh, tx)
+		}
+		if len(fresh) == 0 {
+			return inScope, true, nil // backend re-served only dups — can't advance
+		}
+		scanned += len(page) // bound by rows FETCHED, mirroring countAcrossPages
+		inScope = append(inScope, filterTxsByGrantScope(fresh, scope)...)
+		if len(inScope) >= want {
+			return inScope, false, nil // enough to fill the page (+1 to peek has_more)
+		}
+		if minCursor == 0 {
+			return inScope, true, nil // reached genesis
+		}
+		if len(page) < perPage {
+			return inScope, true, nil // short page — no rows below this
+		}
+		bb := minCursor
+		before = &bb
+	}
+	return inScope, false, nil // maxScan cap hit; feed not exhausted
 }
 
 // getGrantTransactions returns transactions for a disclosed address, pseudonymized
@@ -494,20 +560,27 @@ func (s *Server) getGrantTransactions(c *gin.Context) {
 		}
 	}
 
-	// Fetch one extra to detect has_more
-	txs, err := s.explorerStore.GetTransactionsByAddress(c.Request.Context(), realAddress, limit+1, beforeBlock)
+	// RD-1167: page through the address's txs applying the grant's scope filter
+	// per page (bounded overfetch), so in-scope txs deeper than the first page
+	// are reachable and has_more is computed from the in-scope set — not from a
+	// pre-filter page that scope filtering may have mostly emptied. want =
+	// limit+1 to peek whether a further in-scope tx exists.
+	txs, feedExhausted, err := s.collectGrantScopeTxs(c.Request.Context(), realAddress, grant.Scope, limit+1, beforeBlock)
 	if err != nil {
 		respondInternalError(c, "failed to get transactions")
 		return
 	}
 
-	// RD-1164 #9: enforce the grant's own scope (date range / contract
-	// addresses) on the disclosed transactions before pagination.
-	txs = filterTxsByGrantScope(txs, grant.Scope)
-
 	hasMore := len(txs) > limit
 	if hasMore {
 		txs = txs[:limit]
+	} else {
+		// Fewer than limit+1 in-scope found. If the raw feed was exhausted we've
+		// seen everything (has_more=false); if the maxScan cap stopped us first,
+		// there may be more in-scope txs deeper — report has_more so the client
+		// keeps paging (it advances by the min returned block). Under-discloses
+		// only at the deep tail beyond maxScan (RD-1149 is the complete fix).
+		hasMore = !feedExhausted
 	}
 
 	realAddrLower := strings.ToLower(realAddress)
