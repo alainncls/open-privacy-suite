@@ -1611,6 +1611,13 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 			}
 			redacted.Input = nil
 			redacted.Output = nil
+			// Strip the trace error: a revert string can embed the hidden
+			// counterparty's address or a private reason (e.g. "execution
+			// reverted: caller 0xABCD... not authorized"). Top-level
+			// RedactTransactions already nils Error on its one-side-hidden
+			// branch; this closes the matching gap for internal txs.
+			// (REDACTION_SPEC G4 / RD-1177 F2)
+			redacted.Error = nil
 			result = append(result, redacted)
 			continue
 		}

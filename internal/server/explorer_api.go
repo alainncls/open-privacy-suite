@@ -3130,6 +3130,15 @@ func (s *Server) getExplorerTokens(c *gin.Context) {
 			return
 		}
 
+		// RD-1177 F3: for Full tokens the list previously returned GetTokens'
+		// RAW HolderCount/TransferCount aggregates, while the single-token
+		// endpoint (getExplorerToken) recomputes them as visible-survivor counts
+		// (RD-1154). §3.9 blesses grant/Full holders *seeing* these counts, not
+		// seeing RAW over-reporting counts that reveal how many holders/transfers
+		// are hidden. Recompute here so the list agrees with its single-item
+		// sibling. Fail-safe to 0 on error via visibleCountOrZero.
+		ctx := c.Request.Context()
+		opts := s.buildRedactOptsForViewer(ctx, viewerDID)
 		var filtered []explorer.Token
 		for _, t := range tokens {
 			level := visMap[strings.ToLower(t.Address)]
@@ -3160,7 +3169,13 @@ func (s *Server) getExplorerTokens(c *gin.Context) {
 				t.L1Address = nil
 				t.USDPrice = nil
 				t.IconURL = nil
-				// VisibilityFull or unrecognized: return as-is
+			default:
+				// VisibilityFull (or unrecognized — recomputing is fail-safe):
+				// replace raw counts with visibility-aware survivor counts.
+				tc, tcErr := s.countVisibleTokenTransfers(ctx, t.Address, viewerDID, opts)
+				t.TransferCount = visibleCountOrZero(tc, tcErr, "token_transfers", t.Address)
+				hc, hcErr := s.countVisibleTokenHolders(ctx, t.Address, viewerDID)
+				t.HolderCount = visibleCountOrZero(hc, hcErr, "token_holders", t.Address)
 			}
 			filtered = append(filtered, t)
 		}
@@ -3491,19 +3506,49 @@ func (s *Server) getExplorerAccounts(c *gin.Context) {
 				"viewer_did", viewerDID, "err", err)
 			return
 		}
+		// RD-1177 F1: the per-address activity counts on explorer.AddressStats
+		// (TxCount / TokenTransferCount / InternalTxCount) are RAW aggregates
+		// that ignore the viewer's visibility — identical count-disclosure to
+		// RD-1154/G22, which was fixed for the single-address /addresses/:address/stats
+		// endpoint (getExplorerAddressStats) but missed here. Worse, this list is
+		// ordered by raw tx_count DESC, so even the ranking leaks. Recompute all
+		// three counts for Full rows via the SAME helpers + shared opts the
+		// single-address endpoint uses (fail-safe to 0 on error via
+		// visibleCountOrZero), and zero them for pseudonymous rows — a
+		// pseudonymised party's activity volume is not the viewer's to see, and
+		// the single-address endpoint never serves pseudonymous (it 404s).
+		//
+		// Cost note: this recomputes up to pageSize (≤100) × 3 visibility-aware
+		// counts, each bounded by its helper's maxScan. Matches the accepted cost
+		// of getExplorerAddressStats, multiplied by the page size.
+		ctx := c.Request.Context()
+		opts := s.buildRedactOptsForViewer(ctx, viewerDID)
 		filtered := accounts[:0]
 		for _, a := range accounts {
 			level := visMap[strings.ToLower(a.Address)]
 			switch level {
 			case explorer.VisibilityFull:
+				txCount, txErr := s.countVisibleAddressTxs(ctx, a.Address, viewerDID, opts)
+				a.TxCount = visibleCountOrZero(txCount, txErr, "transactions", a.Address)
+				trCount, trErr := s.countVisibleAddressTransfers(ctx, a.Address, viewerDID, opts)
+				a.TokenTransferCount = visibleCountOrZero(trCount, trErr, "token_transfers", a.Address)
+				inCount, inErr := s.countVisibleAddressInternalTxs(ctx, a.Address, viewerDID, opts)
+				a.InternalTxCount = visibleCountOrZero(inCount, inErr, "internal_transactions", a.Address)
 				filtered = append(filtered, a)
 			case explorer.VisibilityPseudonymous:
 				a.Address = s.pseudonym(a.Address)
+				// Do not leak a pseudonymised party's raw activity volume.
+				a.TxCount = 0
+				a.TokenTransferCount = 0
+				a.InternalTxCount = 0
 				filtered = append(filtered, a)
 				// VisibilityHidden, VisibilityRedacted: drop this account
 			}
 		}
 		accounts = filtered
+		// One audit entry for any rows revealed under ORG_ADMIN_VIEW_USER_TXS
+		// across the recompute passes (no-op under the default posture).
+		s.auditAdminUserTxView(c, viewerDID, "accounts", "", opts.Stats)
 	}
 
 	// Never expose raw DB total — it reveals how many rows were redacted (private data)
