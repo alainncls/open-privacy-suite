@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { Shield, ExternalLink, Loader2, AlertCircle, CheckCircle2, FlaskConical } from 'lucide-react';
@@ -60,11 +60,6 @@ interface TestIdentity {
 const AUTH_POLL_INTERVAL_MS = 2000;
 const AUTH_MAX_POLLS = 150;
 
-// Detect OAuth mode: block-explorer redirected us here via /oauth/authorize -> /login?oauth_session=XXX
-const searchParams = new URLSearchParams(window.location.search);
-const oauthSessionId = searchParams.get('oauth_session') || null;
-const isOAuthMode = !!oauthSessionId;
-
 type AuthStep = 'init' | 'loading' | 'ready' | 'success' | 'error' | 'humanity_required' | 'timed_out';
 type AuthProvider = 'privado' | 'azuread';
 
@@ -80,8 +75,15 @@ interface AuthState {
 export function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { login, isAuthenticated, isLoading, userDID, accessToken } = useAuth();
+  const { login, isAuthenticated, isLoading, userDID } = useAuth();
   const from = (location.state as { from?: string } | null)?.from || '/link-wallet';
+  // OAuth mode: the block-explorer redirected here via /oauth/authorize -> /login?oauth_session=XXX.
+  // Read from the router location (not module-scope window.location) so it is reactive and testable.
+  const oauthSessionId = useMemo(
+    () => new URLSearchParams(location.search).get('oauth_session'),
+    [location.search]
+  );
+  const isOAuthMode = !!oauthSessionId;
   const [testIdentities, setTestIdentities] = useState<TestIdentity[]>([]);
   const [providers, setProviders] = useState<string[]>(['privado']);
   const [activeProvider, setActiveProvider] = useState<AuthProvider>('privado');
@@ -100,7 +102,7 @@ export function LoginPage() {
     if (!isOAuthMode && isAuthenticated) {
       navigate(from, { replace: true });
     }
-  }, [isAuthenticated, navigate, isLoading, from]);
+  }, [isAuthenticated, navigate, isLoading, from, isOAuthMode]);
 
   // Load available providers (silently ignore errors — default to privado only)
   useEffect(() => {
@@ -172,7 +174,7 @@ export function LoginPage() {
     } catch {
       setState(prev => ({ ...prev, step: 'error', error: 'Failed to load authentication session' }));
     }
-  }, []);
+  }, [oauthSessionId]);
 
   // Mock login for development (requires explicit opt-in)
   const handleMockLogin = useCallback(async () => {
@@ -225,7 +227,7 @@ export function LoginPage() {
       const errorMessage = err instanceof Error ? err.message : 'Mock login failed';
       setState(prev => ({ ...prev, step: 'error', error: errorMessage }));
     }
-  }, [login, navigate, from, userDID]);
+  }, [login, navigate, from, userDID, isOAuthMode, oauthSessionId]);
 
   // Mock login as a specific test identity (dev identity picker)
   const handleMockLoginAs = useCallback(async (did: string) => {
@@ -264,27 +266,33 @@ export function LoginPage() {
       const errorMessage = err instanceof Error ? err.message : 'Mock login failed';
       setState(prev => ({ ...prev, step: 'error', error: errorMessage }));
     }
-  }, [login, navigate, from]);
+  }, [login, navigate, from, isOAuthMode, oauthSessionId]);
 
-  // RD-993: first-party silent SSO. When the user already has a valid PP
-  // session AND the OAuth flow lands here, ask the backend to silent-complete
-  // (auth code issued without showing the QR / mock-login picker). Backend
-  // gates this on:
-  //   - JWT-validated caller DID matching the session's InitiatorDID
+  // First-party silent SSO. When the OAuth flow lands here, ask the backend to
+  // silent-complete (auth code issued without showing the QR / mock-login
+  // picker). This is attempted even when this tab holds no session in
+  // sessionStorage: silent-complete authenticates via the access-token cookie,
+  // which rides along on this same-origin request. The backend gates on:
+  //   - the cookie's DID matching the OAuth session's initiator DID
   //     (defends against pre-created session-id lures)
-  //   - session's ClientID in the OAUTH_FIRST_PARTY_CLIENTS allowlist
+  //   - the session's client on the first-party allowlist
   // On 4xx (any precondition fails) the function returns false and we fall
-  // through to the next branch — RD-928's dev-mock auto-complete, or the
-  // interactive picker.
+  // through to the next branch — dev-mock auto-complete, or the interactive
+  // picker.
   const trySilentSSO = useCallback(async (): Promise<boolean> => {
-    if (!isOAuthMode || !oauthSessionId || !isAuthenticated || !accessToken) {
+    if (!isOAuthMode || !oauthSessionId) {
       return false;
     }
     setState(prev => ({ ...prev, step: 'loading', error: null }));
     try {
+      // Cookie-only: no Authorization header. The middleware prefers a Bearer
+      // header over the cookie, so sending a possibly-stale in-tab token could
+      // authenticate as a different DID than the cookie the initiator was
+      // recorded from, breaking the initiator-match check. The cookie is the
+      // authoritative source here.
       const res = await fetch(`/oauth/session/${oauthSessionId}/silent-complete`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${accessToken}` },
+        credentials: 'include',
       });
       if (!res.ok) {
         // 401 / 403 / 404 / 409: ineligible for silent SSO. Reset state.step
@@ -305,66 +313,48 @@ export function LoginPage() {
       setState(prev => ({ ...prev, step: 'init', error: null }));
       return false;
     }
-    // isOAuthMode / oauthSessionId are module-scope constants derived once from
-    // window.location.search — they never change after load, so they are not
-    // reactive deps (eslint flags listing them as unnecessary).
-  }, [isAuthenticated, accessToken]);
+  }, [isOAuthMode, oauthSessionId]);
 
-  // Auto-start on mount. Branches, evaluated in priority order:
-  //
-  //   1. OAuth mode + authenticated: try RD-993 silent SSO first (prod-safe
-  //      path — gated server-side by first-party allowlist + initiator
-  //      binding + audit log). On success, redirect away — done.
-  //   2. OAuth mode + authenticated + silent SSO refused + dev mock-login
-  //      enabled: fall back to RD-928's mock-complete auto-trigger so devs
-  //      who haven't configured OAUTH_FIRST_PARTY_CLIENTS still get a
-  //      no-friction View-as flow. Server-side gated by IsProduction.
-  //   3. OAuth mode + not authenticated (or silent paths refused with no
-  //      mock fallback): fetch the OAuth-session details and render the
-  //      QR / picker (state.step → 'ready').
-  //   4. Plain login mode: kick off a fresh Privado auth request.
-  //
-  // Wait on isLoading so AuthProvider has restored the session from
-  // sessionStorage before we evaluate isAuthenticated — without the gate
-  // the first render sees false and we'd drop into the picker before the
-  // session restore completes.
-  //
-  // The `userDID` destructured above is used by handleMockLogin to pass the
-  // existing PP user's DID to /oauth/session/:id/mock-complete instead of
-  // letting the backend mint a fresh mock_<timestamp> identity (RD-928).
-  void userDID;
+  // Wait on isLoading so AuthProvider has restored any sessionStorage session
+  // before we read isAuthenticated below. autoStartedFor makes auto-start a
+  // one-shot: trySilentSSO resets state.step to 'init' on refusal, and without
+  // this guard the effect would re-enter and race its own fall-through
+  // (startOAuthAuth / handleMockLogin). The login target (oauth_session id, or
+  // 'plain') only ever arrives via a full-page redirect from the block-explorer
+  // (/oauth/authorize -> /login?oauth_session=…), so each target is a fresh
+  // mount; keying the guard on the target rather than a bare boolean just keeps
+  // it correct if that ever stops holding. Explicit "Try again" goes through
+  // startAuth directly.
+  const autoStartedFor = useRef<string | null>(null);
   useEffect(() => {
-    if (state.step !== 'init') return;
     if (isLoading) return;
+    if (state.step !== 'init') return;
+    const startKey = oauthSessionId ?? 'plain';
+    if (autoStartedFor.current === startKey) return;
+    autoStartedFor.current = startKey;
 
-    if (isOAuthMode && isAuthenticated) {
-      // Try silent SSO first (RD-993). If the server refuses (not on the
-      // first-party allowlist, etc.) drop to dev-mock fallback or the
-      // interactive picker.
+    if (isOAuthMode) {
+      // Cookie-based silent SSO first (works cross-tab). On refusal: reuse the
+      // current DID if this tab is authenticated + mock enabled, else show the
+      // interactive picker — never silently mint a random DID.
       void trySilentSSO().then(success => {
         if (success) return;
-        if (allowMockLogin && oauthSessionId) {
+        if (isAuthenticated && allowMockLogin && oauthSessionId) {
           handleMockLogin();
           return;
         }
-        if (isOAuthMode) {
-          startOAuthAuth();
-        }
+        startOAuthAuth();
       });
       return;
     }
 
-    if (isOAuthMode) {
-      startOAuthAuth();
-    } else {
-      startAuth();
-    }
-    // isOAuthMode / oauthSessionId are module-scope constants (see note at the
-    // trySilentSSO dep array) — not reactive, so they are intentionally omitted.
+    startAuth();
   }, [
     state.step,
     isLoading,
     isAuthenticated,
+    isOAuthMode,
+    oauthSessionId,
     trySilentSSO,
     handleMockLogin,
     startAuth,
@@ -440,7 +430,7 @@ export function LoginPage() {
       mounted = false;
       clearTimeout(timer);
     };
-  }, [state.step, state.sessionId, login, navigate, from]);
+  }, [state.step, state.sessionId, login, navigate, from, isOAuthMode, oauthSessionId]);
 
   // Handle mobile deep link
   const handleMobileAuth = () => {

@@ -617,9 +617,11 @@ func (s *Server) getExplorerBlock(c *gin.Context) {
 	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID)
 	if filter != nil {
 		filteredCount, err := s.explorerStore.GetBlockTransactionCountFiltered(c.Request.Context(), num, filter)
-		if err == nil {
-			block.TransactionCount = filteredCount
+		if err != nil {
+			// RD-1176: fail-safe to 0, don't fall back to the raw chain-wide count.
+			filteredCount = 0
 		}
+		block.TransactionCount = filteredCount
 	}
 	c.JSON(http.StatusOK, block)
 }
@@ -658,9 +660,11 @@ func (s *Server) getExplorerBlockByHash(c *gin.Context) {
 	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID)
 	if filter != nil {
 		filteredCount, err := s.explorerStore.GetBlockTransactionCountFiltered(c.Request.Context(), block.Number, filter)
-		if err == nil {
-			block.TransactionCount = filteredCount
+		if err != nil {
+			// RD-1176: fail-safe to 0, don't fall back to the raw chain-wide count.
+			filteredCount = 0
 		}
+		block.TransactionCount = filteredCount
 	}
 	c.JSON(http.StatusOK, block)
 }
@@ -981,24 +985,29 @@ func (s *Server) getExplorerTransaction(c *gin.Context) {
 	c.JSON(http.StatusOK, redactedTxs[0])
 }
 
-// countAcrossPages walks a newest-first item feed in pages and sums a per-page
-// count, bounded by maxScan total items. It exists because privacy/gRPC mode
+// countAcrossPages pages through an item feed and sums a per-page count over
+// the DISTINCT items, bounded by maxScan rows fetched. It exists because privacy/gRPC mode
 // clamps each indexer fetch to a small max page size (~100), so a single fetch
-// cannot count an active address's transactions — we must page through them.
+// cannot count an active address's transactions.
 //
-// fetch(before) returns the page strictly older than the given block cursor
-// (nil = newest first); cursorOf extracts a page item's block for the next
-// cursor; perPageCount returns how many items in the page should be counted
-// (e.g. redaction survivors). It stops at an empty page, when maxScan items have
-// been scanned, or when the cursor stops decreasing (a single block larger than
-// one page — a safety break so the loop is always bounded and terminates).
+// fetch(before) returns the page older than the given block cursor (nil = newest
+// first); cursorOf extracts an item's block; keyOf returns a stable per-item
+// identity; perPageCount counts the countable items in a page (e.g. redaction
+// survivors). Dedup by identity keeps the count correct even when the backend
+// ignores `before` and re-serves or reorders rows (the gRPC indexer maps
+// `before` to an inclusive block-range bound and does not guarantee order):
+// already-seen rows are dropped, and the cursor advances by the page minimum, so
+// a non-paginating backend under-reports rather than double-counts. It stops at
+// an empty page, when a page yields no new items, at genesis, or at maxScan.
 func countAcrossPages[T any](
 	fetch func(before *uint64) ([]T, error),
 	cursorOf func(T) uint64,
+	keyOf func(T) string,
 	perPageCount func([]T) (int, error),
 	maxScan int,
 ) (int, error) {
 	count, scanned := 0, 0
+	seen := make(map[string]struct{})
 	var before *uint64
 	for scanned < maxScan {
 		page, err := fetch(before)
@@ -1008,23 +1017,36 @@ func countAcrossPages[T any](
 		if len(page) == 0 {
 			break
 		}
-		// Pages are cursor-descending; if the top of this page hasn't moved
-		// below the previous cursor, the backend ignored `before` and is
-		// re-serving counted rows. Stop before counting to avoid duplicates.
-		if before != nil && cursorOf(page[0]) >= *before {
+		fresh := make([]T, 0, len(page))
+		var minCursor uint64
+		for i, item := range page {
+			if c := cursorOf(item); i == 0 || c < minCursor {
+				minCursor = c
+			}
+			k := keyOf(item)
+			if _, dup := seen[k]; dup {
+				continue
+			}
+			seen[k] = struct{}{}
+			fresh = append(fresh, item)
+		}
+		if len(fresh) == 0 {
 			break
 		}
+		// Bound by rows FETCHED, not distinct rows kept: a backend that heavily
+		// re-serves or overlaps pages must not be able to drive far more than
+		// maxScan/pageSize fetches (mirrors countAcrossOffsetPages' offset
+		// bound). count still sums perPageCount over the distinct items only.
 		scanned += len(page)
-		n, err := perPageCount(page)
+		n, err := perPageCount(fresh)
 		if err != nil {
 			return 0, err
 		}
 		count += n
-		last := cursorOf(page[len(page)-1])
-		if last == 0 {
-			break // reached genesis
+		if minCursor == 0 {
+			break
 		}
-		bb := last
+		bb := minCursor
 		before = &bb
 	}
 	return count, nil
@@ -1046,6 +1068,7 @@ func (s *Server) countVisibleAddressTxs(ctx context.Context, address, viewerDID 
 			return s.explorerStore.GetTransactionsByAddress(ctx, address, perPage, before)
 		},
 		func(t explorer.Transaction) uint64 { return t.BlockNumber },
+		func(t explorer.Transaction) string { return t.Hash },
 		func(page []explorer.Transaction) (int, error) {
 			redacted, err := s.explorerRedactor.RedactTransactions(ctx, page, viewerDID, opts)
 			if err != nil {
@@ -1120,6 +1143,7 @@ func (s *Server) countVisibleAddressTransfers(ctx context.Context, address, view
 			return s.explorerStore.GetTransfersByAddress(ctx, address, perPage, before)
 		},
 		func(t explorer.TokenTransfer) uint64 { return t.BlockNumber },
+		func(t explorer.TokenTransfer) string { return t.TxHash + ":" + strconv.Itoa(t.LogIndex) },
 		func(page []explorer.TokenTransfer) (int, error) {
 			redacted, err := s.explorerRedactor.RedactTransfers(ctx, page, viewerDID, opts)
 			if err != nil {
@@ -2139,9 +2163,12 @@ func (s *Server) getExplorerAddressContract(c *gin.Context) {
 	if contract.Creator != "" {
 		viewerDID := s.getViewerDIDFromRequest(c)
 		redactedCreator, err := s.explorerRedactor.RedactAddress(c.Request.Context(), contract.Creator, viewerDID)
-		if err == nil {
-			contract.Creator = redactedCreator
+		if err != nil {
+			// RD-1176: fail closed — never keep the raw deployer EOA on a
+			// redaction error (it may be a private foreign user).
+			redactedCreator = "[REDACTED]"
 		}
+		contract.Creator = redactedCreator
 	}
 	c.JSON(http.StatusOK, contract)
 }
@@ -2361,6 +2388,15 @@ func (s *Server) getExplorerTokens(c *gin.Context) {
 			return
 		}
 
+		// RD-1177 F3: for Full tokens the list previously returned GetTokens'
+		// RAW HolderCount/TransferCount aggregates, while the single-token
+		// endpoint (getExplorerToken) recomputes them as visible-survivor counts
+		// (RD-1154). §3.9 blesses grant/Full holders *seeing* these counts, not
+		// seeing RAW over-reporting counts that reveal how many holders/transfers
+		// are hidden. Recompute here so the list agrees with its single-item
+		// sibling. Fail-safe to 0 on error via visibleCountOrZero.
+		ctx := c.Request.Context()
+		opts := s.buildRedactOptsForViewer(ctx, viewerDID)
 		var filtered []explorer.Token
 		for _, t := range tokens {
 			level := visMap[strings.ToLower(t.Address)]
@@ -2391,7 +2427,13 @@ func (s *Server) getExplorerTokens(c *gin.Context) {
 				t.L1Address = nil
 				t.USDPrice = nil
 				t.IconURL = nil
-				// VisibilityFull or unrecognized: return as-is
+			default:
+				// VisibilityFull (or unrecognized — recomputing is fail-safe):
+				// replace raw counts with visibility-aware survivor counts.
+				tc, tcErr := s.countVisibleTokenTransfers(ctx, t.Address, viewerDID, opts)
+				t.TransferCount = visibleCountOrZero(tc, tcErr, "token_transfers", t.Address)
+				hc, hcErr := s.countVisibleTokenHolders(ctx, t.Address, viewerDID)
+				t.HolderCount = visibleCountOrZero(hc, hcErr, "token_holders", t.Address)
 			}
 			filtered = append(filtered, t)
 		}
@@ -2722,19 +2764,49 @@ func (s *Server) getExplorerAccounts(c *gin.Context) {
 				"viewer_did", viewerDID, "err", err)
 			return
 		}
+		// RD-1177 F1: the per-address activity counts on explorer.AddressStats
+		// (TxCount / TokenTransferCount / InternalTxCount) are RAW aggregates
+		// that ignore the viewer's visibility — identical count-disclosure to
+		// RD-1154/G22, which was fixed for the single-address /addresses/:address/stats
+		// endpoint (getExplorerAddressStats) but missed here. Worse, this list is
+		// ordered by raw tx_count DESC, so even the ranking leaks. Recompute all
+		// three counts for Full rows via the SAME helpers + shared opts the
+		// single-address endpoint uses (fail-safe to 0 on error via
+		// visibleCountOrZero), and zero them for pseudonymous rows — a
+		// pseudonymised party's activity volume is not the viewer's to see, and
+		// the single-address endpoint never serves pseudonymous (it 404s).
+		//
+		// Cost note: this recomputes up to pageSize (≤100) × 3 visibility-aware
+		// counts, each bounded by its helper's maxScan. Matches the accepted cost
+		// of getExplorerAddressStats, multiplied by the page size.
+		ctx := c.Request.Context()
+		opts := s.buildRedactOptsForViewer(ctx, viewerDID)
 		filtered := accounts[:0]
 		for _, a := range accounts {
 			level := visMap[strings.ToLower(a.Address)]
 			switch level {
 			case explorer.VisibilityFull:
+				txCount, txErr := s.countVisibleAddressTxs(ctx, a.Address, viewerDID, opts)
+				a.TxCount = visibleCountOrZero(txCount, txErr, "transactions", a.Address)
+				trCount, trErr := s.countVisibleAddressTransfers(ctx, a.Address, viewerDID, opts)
+				a.TokenTransferCount = visibleCountOrZero(trCount, trErr, "token_transfers", a.Address)
+				inCount, inErr := s.countVisibleAddressInternalTxs(ctx, a.Address, viewerDID, opts)
+				a.InternalTxCount = visibleCountOrZero(inCount, inErr, "internal_transactions", a.Address)
 				filtered = append(filtered, a)
 			case explorer.VisibilityPseudonymous:
 				a.Address = s.pseudonym(a.Address)
+				// Do not leak a pseudonymised party's raw activity volume.
+				a.TxCount = 0
+				a.TokenTransferCount = 0
+				a.InternalTxCount = 0
 				filtered = append(filtered, a)
 				// VisibilityHidden, VisibilityRedacted: drop this account
 			}
 		}
 		accounts = filtered
+		// One audit entry for any rows revealed under ORG_ADMIN_VIEW_USER_TXS
+		// across the recompute passes (no-op under the default posture).
+		s.auditAdminUserTxView(c, viewerDID, "accounts", "", opts.Stats)
 	}
 
 	// Never expose raw DB total — it reveals how many rows were redacted (private data)

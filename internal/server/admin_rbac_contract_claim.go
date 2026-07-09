@@ -34,6 +34,9 @@ import (
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/contracts/claim [post]
 func (s *Server) claimUnregisteredContract(c *gin.Context) {
+	if denyOperatorOrgScoped(c) { // RD-1173: operator token must not register contracts into a tenant org
+		return
+	}
 	orgID := c.Param("org_id")
 
 	var input struct {

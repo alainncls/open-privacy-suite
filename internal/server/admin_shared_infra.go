@@ -219,7 +219,10 @@ func (s *Server) createSharedInfrastructure(c *gin.Context) {
 	}
 	addr, codehash, vErr := validateSharedInfraInput(input.Address, input.Codehash)
 	if vErr != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": vErr.Error()})
+		// Opaque client message; the specific validation detail goes to slog.
+		// (RD-1178 / RD-934: never echo an error value to the client.)
+		slog.Warn("admin_shared_infra: invalid input", "err", vErr)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid address or codehash"})
 		return
 	}
 	if strings.TrimSpace(input.Name) == "" {
@@ -322,7 +325,10 @@ func (s *Server) updateSharedInfrastructure(c *gin.Context) {
 	// Empty/omitted is allowed (clears the pin).
 	_, codehash, vErr := validateSharedInfraInput(addr, input.Codehash)
 	if vErr != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": vErr.Error()})
+		// Opaque client message; the specific validation detail goes to slog.
+		// (RD-1178 / RD-934: never echo an error value to the client.)
+		slog.Warn("admin_shared_infra: invalid input", "err", vErr)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid address or codehash"})
 		return
 	}
 

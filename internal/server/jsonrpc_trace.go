@@ -655,7 +655,10 @@ func (p *JSONRPCProcessor) processDebugTrace(ctx context.Context, req *ProcessRe
 
 	if traceErr != nil {
 		p.logAccess(ctx, req, http.StatusForbidden)
-		return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusForbidden, Message: fmt.Sprintf("trace execution failed: %v", traceErr)}}
+		// RD-1178: opaque to the client — never echo the raw upstream node
+		// error (matches the eth_call/send opaque-constant convention, KD-3).
+		slog.Warn("jsonrpc: trace execution failed", "method", req.Method, "err", traceErr)
+		return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusForbidden, Message: "trace execution failed"}}
 	}
 	if traceResult == nil {
 		p.logAccess(ctx, req, http.StatusForbidden)

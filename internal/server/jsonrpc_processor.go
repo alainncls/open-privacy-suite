@@ -612,9 +612,12 @@ func ParseAndValidateBody(body []byte) (string, []any, *ProcessError) {
 				Message:    "batch JSON-RPC requests are not supported for security reasons",
 			}
 		}
+		// Opaque client message; raw parse error (echoes offsets / body shape)
+		// stays in slog. (RD-1178 / RD-934)
+		slog.Warn("invalid JSON-RPC request", slog.Any("err", err))
 		return "", nil, &ProcessError{
 			StatusCode: http.StatusBadRequest,
-			Message:    "invalid JSON-RPC request: " + err.Error(),
+			Message:    "invalid JSON-RPC request",
 		}
 	}
 
@@ -902,10 +905,13 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 		p.recordRPCOutcome(req.Method, "forward_error", start)
 		req.denialReason = ReasonUpstreamError // RD-1137
 		p.logAccess(ctx, req, http.StatusBadGateway)
+		// Opaque client message; the raw upstream error (node URL, dial/TLS
+		// internals) stays in slog. (RD-1178 / RD-934)
+		slog.Warn("failed to forward request", slog.String("method", req.Method), slog.String("user", req.UserID), slog.Any("err", err))
 		return &ProcessResult{
 			Error: &ProcessError{
 				StatusCode: http.StatusBadGateway,
-				Message:    fmt.Sprintf("failed to forward request: %v", err),
+				Message:    "failed to forward request",
 			},
 		}
 	}
@@ -1143,7 +1149,12 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		strings.EqualFold(m, rbac.MethodGetBlockByNumber):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
 		if err != nil {
-			return responseBody // pass through on error
+			// RD-1176: fail CLOSED. nil addrs match nothing, so the block's
+			// transactions are filtered out rather than served unfiltered
+			// (matches the sibling getBlockTransactionCount/getTransactionByHash
+			// handlers). Previously this returned the raw block on a transient
+			// linked-address DB error, leaking every participant's txs.
+			addrs = nil
 		}
 
 		originalFull := false // JSON-RPC defaults false
@@ -1165,7 +1176,9 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 	case strings.EqualFold(m, rbac.MethodGetBlockReceipts):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
 		if err != nil {
-			return responseBody
+			// RD-1176: fail CLOSED (nil addrs match nothing) rather than
+			// serving the raw receipts of every participant in the block.
+			addrs = nil
 		}
 		return FilterBlockReceipts(responseBody, addrs)
 
@@ -1375,10 +1388,12 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	// Extract and decode the raw transaction
 	rawTxHex, err := extractRawTxHex(req.Params)
 	if err != nil {
+		// Opaque client message; raw extract/RLP error stays in slog. (RD-1178 / RD-934)
+		slog.Warn("invalid raw transaction", slog.String("user", req.UserID), slog.Any("err", err))
 		return &ProcessResult{
 			Error: &ProcessError{
 				StatusCode: http.StatusBadRequest,
-				Message:    "invalid raw transaction: " + err.Error(),
+				Message:    "invalid raw transaction",
 			},
 		}
 	}
@@ -1386,10 +1401,11 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	// Decode RLP to get transaction details
 	from, to, data, value, txNonce, err := decodeRawTransaction(rawTxHex)
 	if err != nil {
+		slog.Warn("failed to decode raw transaction", slog.String("user", req.UserID), slog.Any("err", err))
 		return &ProcessResult{
 			Error: &ProcessError{
 				StatusCode: http.StatusBadRequest,
-				Message:    "failed to decode raw transaction: " + err.Error(),
+				Message:    "failed to decode raw transaction",
 			},
 		}
 	}
@@ -1668,10 +1684,12 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 			}
 		}
 		p.logAccess(ctx, req, http.StatusBadGateway)
+		// Opaque client message; raw upstream error stays in slog. (RD-1178 / RD-934)
+		slog.Warn("failed to forward raw transaction", slog.String("method", req.Method), slog.String("user", req.UserID), slog.Any("err", err))
 		return &ProcessResult{
 			Error: &ProcessError{
 				StatusCode: http.StatusBadGateway,
-				Message:    fmt.Sprintf("failed to forward request: %v", err),
+				Message:    "failed to forward request",
 			},
 		}
 	}
