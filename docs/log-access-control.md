@@ -87,8 +87,9 @@ This covers:
   (`computeOrgAdminPermissions`) grants `AllClaims()` (which includes `admin`)
   on every contract in the org.
 
-Only the `admin` claim triggers the bypass. Users with `deploy`, `write`, `read`,
-or `upgrade` claims are subject to normal filtering.
+Only the `admin` claim triggers the bypass. Users with `deploy` or `upgrade`
+claims (but not `admin`) are subject to normal filtering — those are operational
+claims (contract creation / proxy upgrade), not log-visibility grants.
 
 ---
 

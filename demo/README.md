@@ -189,14 +189,14 @@ export PRIVATE_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4
 
 ```
 Claims hierarchy:
-  admin   -> read + write + deploy + upgrade
-  deploy  -> read + write
-  upgrade -> read + write
-  read, write -> independent
+  admin   -> full bypass (implies deploy + upgrade)
+  deploy  -> may deploy new contracts
+  upgrade -> may upgrade proxy contracts
 
 Access rules:
+  Method access           -> per-group method allowlist (allowed_methods)
+  Contract visibility     -> a contract grant linking the group to the contract
   Unregistered contracts  -> deploy/admin users only
-  Registered (own org)    -> deploy/admin via default claims, read/write need grants
   Registered (other org)  -> always denied (cross-org isolation)
 ```
 
@@ -208,7 +208,7 @@ docker-compose up -d   # Starts Anvil with --steps-tracing
 ```
 
 ### "missing required deploy claim"
-The user's group needs the `deploy` claim. The `deploy` claim automatically includes `read` and `write`.
+The user's group needs the `deploy` claim (set on the group's access claims).
 
 ### "User belongs to N organizations - ORG_ID required"
 Multi-org users must specify which org to use:
