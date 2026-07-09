@@ -269,11 +269,13 @@ func TestFilterReceiptLogsWithEventRules_NoEventRules_DenyAll(t *testing.T) {
 	}
 }
 
-// TestFilterReceiptLogsWithEventRules_NonParticipant_ReturnsNull verifies
-// that non-admin, non-participant viewers get null even with event rules
-// configured. Admin-claim holders bypass this — see
-// TestFilterReceiptLogsWithEventRules_NonParticipantAdmin_ReturnsReceipt.
-func TestFilterReceiptLogsWithEventRules_NonParticipant_ReturnsNull(t *testing.T) {
+// TestFilterReceiptLogsWithEventRules_NonParticipantEntitledViaEventRule_ReturnsReceipt_RD1183
+// verifies the RD-1183 fix: a viewer who is NOT the tx's from/to/visibleTo/admin
+// but IS entitled to a log under their group's event rules now gets the receipt
+// envelope (with that log). Before RD-1183 they got null even though eth_getLogs
+// already returned them the same log — an over-restriction, not a protection.
+// (A truly non-entitled non-participant still gets null — see the RD-1183 file.)
+func TestFilterReceiptLogsWithEventRules_NonParticipantEntitledViaEventRule_ReturnsReceipt_RD1183(t *testing.T) {
 	userAddr := "0xabc1234567890123456789012345678901234567"
 	contractAddr := "0xcontract0000000000000000000000000000001"
 
@@ -314,14 +316,22 @@ func TestFilterReceiptLogsWithEventRules_NonParticipant_ReturnsNull(t *testing.T
 	)
 
 	var resp struct {
-		Result *json.RawMessage `json:"result"`
+		Result *struct {
+			Logs      []json.RawMessage `json:"logs"`
+			LogsBloom string            `json:"logsBloom"`
+		} `json:"result"`
 	}
 	if err := json.Unmarshal(got, &resp); err != nil {
 		t.Fatalf("output not valid JSON: %v", err)
 	}
-	isNull := resp.Result == nil || string(*resp.Result) == "null"
-	if !isNull {
-		t.Errorf("non-participant should get null result, got: %s", got)
+	if resp.Result == nil {
+		t.Fatalf("RD-1183: log-entitled non-participant should get the receipt, got null: %s", got)
+	}
+	if len(resp.Result.Logs) != 1 {
+		t.Errorf("expected 1 entitled log in the receipt, got %d", len(resp.Result.Logs))
+	}
+	if resp.Result.LogsBloom != "0x"+strings.Repeat("0", 512) {
+		t.Errorf("logsBloom must be zeroed on an admitted receipt, got %s", resp.Result.LogsBloom)
 	}
 }
 
@@ -1516,8 +1526,12 @@ func TestFilterReceipt_I21_FiltersReceiptLogs(t *testing.T) {
 	}
 }
 
-func TestFilterReceipt_I22_NonParticipant_Null(t *testing.T) {
-	// I22: Non-participant gets null result even with rules.
+func TestFilterReceipt_I22_NonParticipantEntitled_ReturnsReceipt_RD1183(t *testing.T) {
+	// I22 (updated for RD-1183): a non-participant whose group's event rules
+	// allowlist this event (Transfer) is entitled to the log — eth_getLogs
+	// already returns it — so eth_getTransactionReceipt now returns the receipt
+	// with that log instead of null. (Was: asserted null, the pre-RD-1183
+	// over-restriction.)
 	userAddr := "0xabc1234567890123456789012345678901234567"
 	contractAddr := "0xcontract0000000000000000000000000000001"
 
@@ -1547,15 +1561,12 @@ func TestFilterReceipt_I22_NonParticipant_Null(t *testing.T) {
 		nil,
 	)
 
-	var resp struct {
-		Result *json.RawMessage `json:"result"`
+	logs := parseReceiptLogs(t, got)
+	if logs == nil {
+		t.Fatalf("RD-1183: log-entitled non-participant should get the receipt, got null: %s", got)
 	}
-	if err := json.Unmarshal(got, &resp); err != nil {
-		t.Fatalf("output not valid JSON: %v", err)
-	}
-	isNull := resp.Result == nil || string(*resp.Result) == "null"
-	if !isNull {
-		t.Errorf("I22: non-participant should get null result, got: %s", got)
+	if len(*logs) != 1 {
+		t.Errorf("expected 1 entitled log, got %d", len(*logs))
 	}
 }
 
