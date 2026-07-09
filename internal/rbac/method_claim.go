@@ -95,14 +95,29 @@ var DeployMethods = TraceMethods
 // are intentionally excluded — their canonical form is operator-defined and they
 // pass through verbatim.
 var canonicalMethodByLower = func() map[string]string {
-	m := make(map[string]string, len(ReadMethods)+len(WriteMethods)+len(TraceMethods))
+	m := make(map[string]string, len(ReadMethods)+len(WriteMethods)+len(TraceMethods)+len(canonicalExtraMethods))
 	for _, set := range []map[string]bool{ReadMethods, WriteMethods, TraceMethods} {
 		for name := range set {
 			m[strings.ToLower(name)] = name
 		}
 	}
+	for _, name := range canonicalExtraMethods {
+		m[strings.ToLower(name)] = name
+	}
 	return m
 }()
+
+// canonicalExtraMethods are methods NOT in the Read/Write/Trace sets that are
+// still consumed case-sensitively downstream — GetTargetAddress /
+// GetFunctionSelector switch on them (access.go), and they are per-address
+// cross-org gated (ReadOpsMap). Without canonicalizing them, a mixed-case
+// eth_getProof / eth_createAccessList would pass through unchanged, yield an
+// empty TargetAddress, and skip the per-address isolation check — the same
+// bypass CanonicalizeMethod closes for eth_call / eth_getLogs.
+var canonicalExtraMethods = []string{
+	"eth_getProof",
+	"eth_createAccessList",
+}
 
 // CanonicalizeMethod normalizes a JSON-RPC method name to its canonical
 // camelCase spelling for internal dispatch and access-control decisions

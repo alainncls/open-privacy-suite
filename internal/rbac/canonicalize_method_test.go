@@ -17,6 +17,10 @@ func TestCanonicalizeMethod(t *testing.T) {
 		{"eth_CALL", "eth_call"},
 		{"ETH_GETLOGS", "eth_getLogs"},
 		{"eth_getbalance", "eth_getBalance"},
+		// Per-address-gated read-ops not in Read/Write/Trace, added explicitly
+		// (Copilot review): a mixed-case form would otherwise skip target extraction.
+		{"eth_GETPROOF", "eth_getProof"},
+		{"ETH_CREATEACCESSLIST", "eth_createAccessList"},
 		// Already-canonical stays canonical.
 		{"eth_sendRawTransaction", "eth_sendRawTransaction"},
 		{"eth_call", "eth_call"},
