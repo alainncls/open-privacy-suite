@@ -211,7 +211,9 @@ The bypass does NOT apply to users with `deploy`, `write`, `read`, or `upgrade` 
 |-------|----------|-------------|--------|-------|
 | `miner` | Not redacted | N/A | N/A | Accepted: block producer is consensus-layer infrastructure metadata, not user identity; no grant/visibility mechanism for blocks |
 | `logsBloom` | All-zero (256 bytes) on every response, every viewer | Yes | Yes | **G6 closed (RD-873).** Bloom previously leaked address/topic membership in O(1) to anyone who already knew the target address. Now overwritten unconditionally on the way out — no per-block address scanning needed because the field carries no useful information for clients of a privacy proxy. |
-| `number`, `hash`, `timestamp`, `gasUsed`, `gasLimit`, `difficulty`, `size`, `parentHash`, `nonce`, `extraData`, `baseFeePerGas`, `withdrawalsRoot` | Public; not redacted | N/A | N/A | Block header fields are consensus-layer public data |
+| `gasUsed`, `blobGasUsed` | All-zero (`0x0`) on every block response, every viewer | Yes | Yes | **RD-929.** Block-aggregate gas is the sum over every tx in the block, including ones hidden by the transactions[] filter — passing it through leaks the presence/weight of other-org activity. Per-tx gas is still available via the caller's own receipts. |
+| `size` | RPC: zeroed (`0x0`) on every block response, every viewer. Explorer API: field omitted entirely. | Yes | Yes | **RD-1052.** Block serialized byte-length is a per-block aggregate over every tx (including hidden ones), leaking other-org block volume — same class as `gasUsed`. `0x0` is never a real block size, so it carries no information. |
+| `number`, `hash`, `timestamp`, `gasLimit`, `difficulty`, `parentHash`, `nonce`, `extraData`, `baseFeePerGas`, `withdrawalsRoot` | Public; not redacted | N/A | N/A | Block header fields are consensus-layer public data |
 | `transactions` (full objects, `fullTxObjects=true`) | Non-participant txs removed from array | Yes | Yes | Per-tx participant check; block-level fields preserved |
 | `transactions` (hashes only, `fullTxObjects=false`) | Passed through | Yes | Yes | Tx hashes alone are not sensitive |
 

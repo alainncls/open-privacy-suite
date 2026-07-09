@@ -20,7 +20,11 @@ type Block struct {
 	GasLimit         uint64    `json:"gasLimit"`
 	BaseFeePerGas    *uint64   `json:"baseFeePerGas,omitempty"`
 	TransactionCount int       `json:"transactionCount"`
-	Size             uint64    `json:"size"`
+	// Size (block serialized byte-length) is a per-block aggregate over every
+	// tx — including ones hidden from the viewer — so it leaks other-org block
+	// activity/volume. Never serialized to the explorer API (RD-1052); the DB
+	// scan / gRPC mapper still populate the struct field for internal use.
+	Size uint64 `json:"-"`
 	Difficulty       string    `json:"difficulty"`
 	TotalDifficulty  string    `json:"totalDifficulty"`
 	Nonce            string    `json:"nonce"`

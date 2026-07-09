@@ -309,6 +309,14 @@ var zeroLogsBloomJSON = json.RawMessage(`"0x` + strings.Repeat("0", 512) + `"`)
 // docstring for the threat model (RD-929).
 var zeroGasUsedJSON = json.RawMessage(`"0x0"`)
 
+// zeroSizeJSON is the canonical hex-zero value used to overwrite a block's
+// `size` field (RD-1052). Block size is the serialized byte length of the whole
+// block — a per-block aggregate over every tx, including ones hidden from the
+// viewer, so it leaks the presence/volume of other-org activity in the block.
+// Mirrors the logsBloom / gasUsed treatment: zeroed unconditionally on the way
+// out (0x0 is never a real block size, so it carries no information).
+var zeroSizeJSON = json.RawMessage(`"0x0"`)
+
 // FilterBlockTransactions filters an eth_getBlockByNumber or eth_getBlockByHash response.
 // Removes non-participant transactions. If the user originally requested hashes, maps the
 // filtered full tx objects back to the transaction hashes.
@@ -368,6 +376,9 @@ func FilterBlockTransactions(responseBody []byte, userAddresses []string, origin
 	}
 	if _, ok := block["blobGasUsed"]; ok {
 		block["blobGasUsed"] = zeroGasUsedJSON
+	}
+	if _, ok := block["size"]; ok {
+		block["size"] = zeroSizeJSON // RD-1052
 	}
 
 	if txsRaw, ok := block["transactions"]; ok {
