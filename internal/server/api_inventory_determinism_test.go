@@ -3,8 +3,12 @@ package server
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // RD-1190: BuildInventory must produce byte-identical output on every run so
@@ -68,4 +72,90 @@ func TestMapIterationIsNonDeterministic_NegativeControl(t *testing.T) {
 		t.Fatal("sorted render should be stable")
 	}
 	t.Skip("map iteration did not diverge in 200 tries (unlikely with 64 keys); negative control inconclusive but sorted render is stable")
+}
+
+// methodCount is one "METHOD n" entry parsed from the rendered method-totals line.
+type methodCount struct {
+	method string
+	count  int
+}
+
+// parseMethodTotals extracts the "Registered routes by method:" line from a
+// BuildInventory rendering and returns its entries in the order rendered.
+func parseMethodTotals(t *testing.T, content string) []methodCount {
+	t.Helper()
+	const marker = "**Registered routes by method:** "
+	i := strings.Index(content, marker)
+	require.GreaterOrEqual(t, i, 0, "method-totals line not found in inventory")
+	line := content[i+len(marker):]
+	if nl := strings.IndexByte(line, '\n'); nl >= 0 {
+		line = line[:nl]
+	}
+	var out []methodCount
+	for _, part := range strings.Split(line, ", ") {
+		f := strings.Fields(part)
+		require.Len(t, f, 2, "unexpected method-totals part %q", part)
+		n, err := strconv.Atoi(f[1])
+		require.NoError(t, err, "non-numeric count in %q", part)
+		out = append(out, methodCount{f[0], n})
+	}
+	return out
+}
+
+// assertMethodTotalsOrdered pins the RD-1172 ordering contract EXPLICITLY (not
+// probabilistically): entries must be strictly descending by count, ties broken
+// by ascending method name. Fails deterministically if the tie-break sort is
+// ever dropped — unlike a byte-identical N-run check, whose detection depends on
+// map-iteration randomness manifesting for what may be a small map.
+func assertMethodTotalsOrdered(t *testing.T, pairs []methodCount) {
+	t.Helper()
+	for i := 1; i < len(pairs); i++ {
+		prev, cur := pairs[i-1], pairs[i]
+		if prev.count == cur.count {
+			assert.Less(t, prev.method, cur.method,
+				"tied-count methods must be alphabetical: %q(%d) precedes %q(%d)",
+				prev.method, prev.count, cur.method, cur.count)
+		} else {
+			assert.Greater(t, prev.count, cur.count,
+				"counts must be strictly descending: %q(%d) precedes %q(%d)",
+				prev.method, prev.count, cur.method, cur.count)
+		}
+	}
+}
+
+// RD-1190 (Copilot follow-up): assert the method-totals ORDER explicitly — on
+// the real route table AND a synthetic input with forced count ties. The
+// forced-tie case guarantees the tie-break branch is exercised regardless of
+// how the real table evolves, closing the gap that the probabilistic N-run
+// byte-identical check leaves open for small maps.
+func TestBuildInventory_MethodTotalsOrderingExplicit(t *testing.T) {
+	realPairs := parseMethodTotals(t, mustInventory(RoutesForSpec(true), RoutesForSpec(false)))
+	require.NotEmpty(t, realPairs)
+	assertMethodTotalsOrdered(t, realPairs)
+
+	// GET leads at 3; DELETE, POST, PUT tie at 2 → must render alphabetically.
+	routes := []RouteEntry{
+		{Method: "GET", Path: "/api/v1/x/a", Handler: "h"},
+		{Method: "GET", Path: "/api/v1/x/b", Handler: "h"},
+		{Method: "GET", Path: "/api/v1/x/c", Handler: "h"},
+		{Method: "PUT", Path: "/api/v1/x/d", Handler: "h"},
+		{Method: "PUT", Path: "/api/v1/x/e", Handler: "h"},
+		{Method: "DELETE", Path: "/api/v1/x/f", Handler: "h"},
+		{Method: "DELETE", Path: "/api/v1/x/g", Handler: "h"},
+		{Method: "POST", Path: "/api/v1/x/h", Handler: "h"},
+		{Method: "POST", Path: "/api/v1/x/i", Handler: "h"},
+	}
+	synthPairs := parseMethodTotals(t, mustInventory(routes, routes))
+	assertMethodTotalsOrdered(t, synthPairs)
+	got := make([]string, len(synthPairs))
+	for i, p := range synthPairs {
+		got[i] = p.method
+	}
+	require.Equal(t, []string{"GET", "DELETE", "POST", "PUT"}, got,
+		"forced-tie ordering must be GET(3) then the 2-count methods alphabetically")
+}
+
+func mustInventory(all, prod []RouteEntry) string {
+	content, _ := BuildInventory(all, prod)
+	return content
 }
