@@ -35,7 +35,8 @@ jobs:
             | select((.parents | length) == 1)
             | select(((.author.login // "" | endswith("[bot]"))
                       or (.commit.author.name // "" | endswith("[bot]"))) | not)
-            | select((.commit.message | test("^Signed-off-by: .+ <.+@.+>$"; "m")) | not)
+            | select((.commit.message | split("\n")
+                      | any(test("^Signed-off-by: .+ <.+@.+>$"))) | not)
             | "\(.sha[0:7]) \(.commit.message | split("\n")[0])"
           ')
           if [ -n "$unsigned" ]; then
