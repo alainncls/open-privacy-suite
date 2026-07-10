@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"testing"
 
+	"privacy-proxy/internal/rbac"
+
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -123,4 +125,45 @@ func TestRemoveByDID_CrossOrgGroupSubstitution_403_RD1182(t *testing.T) {
 		map[string]any{"did": did, "group_id": gidA})
 	assert.Equal(t, http.StatusForbidden, w.Code, "group from another org must be opaque 403")
 	assert.Contains(t, w.Body.String(), errMembershipForeignOrg)
+}
+
+// A malformed (non-UUID) group_id is client input, not an internal fault, so it
+// must return 400 — not a 500 from the uuid-column driver error. (Copilot #403.)
+func TestRemoveByDID_MalformedGroupID_400_RD1182(t *testing.T) {
+	srv, router := setupTieredAdminTestServer(t, "secret")
+	orgID, _ := createOrgWithOrgAdminGroup(t, srv)
+
+	w := operatorReq(t, router, http.MethodDelete, "/api/v1/admin/orgs/"+orgID+"/memberships/by-did",
+		map[string]any{"did": "did:test:x", "group_id": "not-a-uuid"})
+	assert.Equal(t, http.StatusBadRequest, w.Code, "malformed group_id must be 400 not 500: %s", w.Body.String())
+	assert.Contains(t, w.Body.String(), "invalid group_id")
+}
+
+// The operator token is a distinct principal from the super-admin token, so its
+// revoke must be attributed to "__operator__" in the audit trail — never
+// misreported as "__super_admin__" (change-management fidelity). (Copilot #403.)
+func TestRemoveByDID_OperatorAuditActor_RD1182(t *testing.T) {
+	srv, router := setupTieredAdminTestServer(t, "secret")
+	ctx := t.Context()
+	orgID, gid := createOrgWithOrgAdminGroup(t, srv)
+	did := "did:test:" + uuid.New().String()[:8]
+
+	w := operatorReq(t, router, http.MethodPost, "/api/v1/admin/orgs/"+orgID+"/memberships/by-did",
+		map[string]any{"did": did, "group_id": gid})
+	require.Equal(t, http.StatusCreated, w.Code, "operator mint: %s", w.Body.String())
+	w = operatorReq(t, router, http.MethodDelete, "/api/v1/admin/orgs/"+orgID+"/memberships/by-did",
+		map[string]any{"did": did, "group_id": gid})
+	require.Equal(t, http.StatusOK, w.Code, "operator remove: %s", w.Body.String())
+
+	entries, err := srv.db.ListAuditLogs(ctx, rbac.ResourceTypeMembership, nil, 50, 0)
+	require.NoError(t, err)
+	var revoke *rbac.AuditLogEntry
+	for _, e := range entries {
+		if e.Action == rbac.AuditActionRevoke {
+			revoke = e
+			break
+		}
+	}
+	require.NotNil(t, revoke, "expected a revoke audit entry for the operator removal")
+	assert.Equal(t, "__operator__", revoke.ActorExternalID, "operator revoke must not be misattributed to super-admin")
 }

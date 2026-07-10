@@ -737,6 +737,13 @@ func (s *Server) createUserMembership(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}
+	// group_id is a Postgres uuid column; a non-UUID string would otherwise
+	// surface as a 500 from the driver's invalid-input-syntax error. Reject it
+	// as a 400 here (client input, not an internal fault).
+	if _, err := uuid.Parse(input.GroupID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid group_id"})
+		return
+	}
 
 	// Cross-org isolation (RD-917 §3): the route is /users/:user_id/memberships
 	// — no :org_id, so orgScopingMiddleware cannot enforce. Look up the target
@@ -807,7 +814,9 @@ func (s *Server) createUserMembership(c *gin.Context) {
 		return
 	}
 
-	s.rbacAccessCtrl.InvalidateUser(c.Request.Context(), userID)
+	if err := s.rbacAccessCtrl.InvalidateUser(c.Request.Context(), userID); err != nil {
+		slog.Error("create membership: cache invalidation failed", "user_id", userID, "err", err)
+	}
 
 	s.recordAuditActionScoped(c, rbac.AuditActionAssign, rbac.ResourceTypeMembership, membership.ID, group.Name, group.OrgID,
 		nil,
@@ -910,6 +919,13 @@ func (s *Server) createMembershipByDID(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+	// group_id is a Postgres uuid column; a non-UUID string would otherwise
+	// surface as a 500 from the driver's invalid-input-syntax error. Reject it
+	// as a 400 here (client input, not an internal fault).
+	if _, err := uuid.Parse(input.GroupID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid group_id"})
 		return
 	}
 
@@ -1026,7 +1042,9 @@ func (s *Server) createMembershipByDID(c *gin.Context) {
 		return
 	}
 
-	s.rbacAccessCtrl.InvalidateUser(c.Request.Context(), user.ID)
+	if err := s.rbacAccessCtrl.InvalidateUser(c.Request.Context(), user.ID); err != nil {
+		slog.Error("onboard-by-did: cache invalidation failed", "user_id", user.ID, "err", err)
+	}
 
 	s.recordAuditActionScoped(c, rbac.AuditActionAssign, rbac.ResourceTypeMembership, membership.ID, group.Name, group.OrgID,
 		nil,
@@ -1081,6 +1099,13 @@ func (s *Server) deleteMembershipByDID(c *gin.Context) {
 		return
 	}
 	input.DID = strings.TrimSpace(input.DID)
+	// group_id is a Postgres uuid column; a non-UUID string would otherwise
+	// surface as a 500 from the driver's invalid-input-syntax error. Reject it
+	// as a 400 here (client input, not an internal fault).
+	if _, err := uuid.Parse(input.GroupID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid group_id"})
+		return
+	}
 
 	// Cross-org gate (mirror onboard): full admin in :org_id; super-admin / dev /
 	// operator bypass here. For the operator, the group.OrgID==orgID check below
@@ -1141,12 +1166,20 @@ func (s *Server) deleteMembershipByDID(c *gin.Context) {
 		return
 	}
 
-	s.rbacAccessCtrl.InvalidateUser(c.Request.Context(), user.ID)
-
+	// Delete the membership FIRST, then invalidate the cache. Invalidating before
+	// the row is gone leaves a window where a concurrent permission resolution
+	// re-reads the still-present membership and re-caches the revoked access.
 	if err := s.db.DeleteMembership(c.Request.Context(), membership.ID); err != nil {
 		slog.Error("remove-by-did: delete membership failed", "membership_id", membership.ID, "org_id", orgID, "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to remove membership"})
 		return
+	}
+	// Best-effort invalidation (matches eth_link's pattern): the delete is
+	// authoritative and the resolver cache self-heals at its TTL, so a failure
+	// here must not report the revoke as failed — but log it loudly, since a
+	// revoked org admin could otherwise retain cached privileges until the TTL.
+	if err := s.rbacAccessCtrl.InvalidateUser(c.Request.Context(), user.ID); err != nil {
+		slog.Error("remove-by-did: cache invalidation failed after revoke", "user_id", user.ID, "org_id", orgID, "err", err)
 	}
 
 	// Audit: detail as oldValue, nil newValue (revoke), matching deleteUserMembership.
@@ -1223,12 +1256,16 @@ func (s *Server) deleteUserMembership(c *gin.Context) {
 		return
 	}
 
-	s.rbacAccessCtrl.InvalidateUser(c.Request.Context(), userID)
-
+	// Delete FIRST, then invalidate — see deleteMembershipByDID for the race
+	// rationale (invalidating before the row is gone lets a concurrent resolve
+	// re-cache the revoked access). Invalidation is best-effort (TTL backstop).
 	if err := s.db.DeleteMembership(c.Request.Context(), membershipID); err != nil {
 		slog.Error("delete membership: db delete failed", "membership_id", membershipID, "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete membership"})
 		return
+	}
+	if err := s.rbacAccessCtrl.InvalidateUser(c.Request.Context(), userID); err != nil {
+		slog.Error("delete membership: cache invalidation failed after revoke", "user_id", userID, "membership_id", membershipID, "err", err)
 	}
 
 	s.recordAuditActionScoped(c, rbac.AuditActionRevoke, rbac.ResourceTypeMembership, membershipID, group.Name, group.OrgID,
