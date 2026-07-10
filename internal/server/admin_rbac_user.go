@@ -854,6 +854,13 @@ func (s *Server) createUserMembership(c *gin.Context) {
 // a valid parse + checksum, so a malformed iden3 DID can't bypass the checksum
 // and create a dead users row (RD-1098).
 func validateOnboardDID(did string, allowRelaxedNonIden3 bool) error {
+	// external_id is a VARCHAR(255) column (001_initial_schema.sql). Reject an
+	// over-long DID here as a 400 rather than letting it pass validation and
+	// then fail the downstream insert as a 500. DIDs are ASCII, so byte length
+	// equals character count.
+	if len(did) > 255 {
+		return fmt.Errorf("DID exceeds the 255-character limit")
+	}
 	parsed, err := w3c.ParseDID(did)
 	if err == nil {
 		switch core.DIDMethod(parsed.Method) {
@@ -894,11 +901,14 @@ func didMethodOf(did string) string {
 }
 
 // isRelaxedDIDSyntax accepts did:<method>:<method-specific-id> where method is
-// 1+ [a-z0-9] and the id is non-empty over a BOUNDED charset: the W3C idchar set
-// (ALPHA / DIGIT / '.' / '-') plus ':' (multi-segment ids) and '_' — the one
-// character the dev/mock login path emits (demo_/mock_) that W3C idchar omits.
-// The bound deliberately rejects whitespace and DID-URL path/query/fragment
-// ('/', '?', '#') so a structurally different identifier can't slip through.
+// 1+ [a-z0-9] and the id is one or more ':'-separated segments, each a non-empty
+// run over a BOUNDED charset: the W3C idchar set (ALPHA / DIGIT / '.' / '-')
+// plus '_' — the one character the dev/mock login path emits (demo_/mock_) that
+// W3C idchar omits. ':' is only a segment separator (multi-segment ids like
+// did:foo:a:b): a leading, trailing, or doubled colon leaves an EMPTY segment
+// and is rejected, so structurally malformed values such as did:test:: or
+// did:privado:demo_: do not slip through. The bound also rejects whitespace and
+// DID-URL path/query/fragment ('/', '?', '#').
 func isRelaxedDIDSyntax(did string) bool {
 	rest, ok := strings.CutPrefix(did, "did:")
 	if !ok {
@@ -913,12 +923,17 @@ func isRelaxedDIDSyntax(did string) bool {
 			return false
 		}
 	}
-	for _, r := range id {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-		case r == '.', r == '-', r == ':', r == '_':
-		default:
-			return false
+	for _, seg := range strings.Split(id, ":") {
+		if seg == "" {
+			return false // leading / trailing / doubled colon → empty segment
+		}
+		for _, r := range seg {
+			switch {
+			case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			case r == '.', r == '-', r == '_':
+			default:
+				return false
+			}
 		}
 	}
 	return true

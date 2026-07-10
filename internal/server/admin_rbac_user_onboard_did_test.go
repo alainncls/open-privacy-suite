@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"privacy-proxy/internal/rbac"
@@ -62,6 +63,19 @@ func TestValidateOnboardDID(t *testing.T) {
 		{"relaxed rejects uppercase method", "did:Privado:demo_1", true, true},
 		// (did:privado:demo#frag / demo/x parse as valid DID-URLs via ParseDID —
 		// accepted pre-RD-1187, unchanged here; not exercised by the fallback.)
+
+		// A trailing / doubled / leading colon leaves an EMPTY id segment — must
+		// be rejected even when relaxed, or a dead row like "did:privado:demo_:"
+		// would be provisioned.
+		{"relaxed rejects trailing colon", "did:privado:demo_:", true, true},
+		{"relaxed rejects doubled colon", "did:test::", true, true},
+		{"relaxed rejects leading colon in id", "did:privado::demo", true, true},
+		// Multi-segment ids stay valid — each ':'-separated segment is non-empty.
+		{"relaxed accepts multi-segment id", "did:foo:aa:bb:cc", true, false},
+		// Length bound: external_id is VARCHAR(255). Enforced before ParseDID, so
+		// it applies to both the relaxed and the strict path.
+		{"over-255 DID rejected (relaxed)", "did:privado:" + strings.Repeat("a", 260), true, true},
+		{"over-255 DID rejected (strict)", "did:privado:" + strings.Repeat("a", 260), false, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
