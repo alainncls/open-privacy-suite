@@ -3,7 +3,8 @@ name: DCO
 # Enforces the Developer Certificate of Origin documented in
 # CONTRIBUTING.md: every non-merge, human-authored commit in a PR must
 # carry a "Signed-off-by: Name <email>" line (git commit -s).
-# Merge commits and bot commits (dependabot etc.) are exempt.
+# Merge commits and bot-account commits (dependabot etc.) are exempt —
+# by the GitHub account type, not by author name, which anyone can set.
 #
 # Fixing a PR that fails this check:
 #   git rebase --signoff origin/main && git push --force-with-lease
@@ -33,8 +34,7 @@ jobs:
           unsigned=$(gh api --paginate "repos/$REPO/pulls/$PR/commits" --jq '
             .[]
             | select((.parents | length) == 1)
-            | select(((.author.login // "" | endswith("[bot]"))
-                      or (.commit.author.name // "" | endswith("[bot]"))) | not)
+            | select(((.author.type // "") == "Bot") | not)
             | select((.commit.message | split("\n")
                       | any(test("^Signed-off-by: .+ <.+@.+>$"))) | not)
             | "\(.sha[0:7]) \(.commit.message | split("\n")[0])"
