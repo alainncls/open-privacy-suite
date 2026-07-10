@@ -19,6 +19,17 @@ git commit -s
 The sign-off certifies that you have the right to submit the contribution under
 the project license.
 
+CI enforces this on every pull request (the `DCO` check). Merge commits and bot
+commits are exempt. If a commit is missing the sign-off:
+
+```bash
+git rebase --signoff origin/main
+git push --force-with-lease
+```
+
+(Force-push works on fork branches. Branches inside this repository are
+force-push-protected — re-create the branch and open a fresh PR instead.)
+
 ## Development
 
 Before opening a pull request:
