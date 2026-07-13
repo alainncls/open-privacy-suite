@@ -177,7 +177,9 @@ var GlobalBlockedMethods = map[string]bool{
 
 // orgFreeMetadataMethods are chain-level metadata methods that carry no user or org state.
 // Authenticated users may call these on /rpc without an org_id in the path — the same set
-// the anonymous group allows. Banning and KYC still gate access above this check.
+// the anonymous group allows. Banning remains a blanket gate above this check; KYC is
+// exempt for exactly this set (RD-1197) — anonymous callers get these methods with no
+// account at all, so a KYC deny would make signing in stricter than staying anonymous.
 var orgFreeMetadataMethods = map[string]bool{
 	"eth_blocknumber":    true,
 	"eth_chainid":        true,
