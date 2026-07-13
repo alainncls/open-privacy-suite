@@ -12948,7 +12948,7 @@
         },
         "/api/v1/admin/users": {
             "get": {
-                "description": "Returns a paginated list of RBAC users, each with a scoped summary of their group memberships. Results are scoped to the caller: a super-admin sees all users, a tier-2 org-admin JWT sees only users in the orgs it administers (full or read-only), and cardinality cannot be used as a cross-org enumeration oracle. Optional filters: org_id, search, one or more group_id, and role. Tenant-confidential: rejected for the operator token (403).",
+                "description": "Returns a paginated list of RBAC users, each with a scoped summary of their group memberships. Results are scoped to the caller: a super-admin sees all users, a tier-2 org-admin JWT sees only users in the orgs it administers (full or read-only), and cardinality cannot be used as a cross-org enumeration oracle. The per-user group summary is bounded by the caller's administered orgs, and when org_id is supplied it is further narrowed to that org, so the summary never lists a user's memberships in other orgs. Optional filters: org_id, search, one or more group_id, and role. Tenant-confidential: rejected for the operator token (403).",
                 "parameters": [
                     {
                         "description": "Restrict to users in this organization",
