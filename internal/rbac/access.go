@@ -698,9 +698,11 @@ func (c *AccessController) checkHistoricalStateQuery(ctx context.Context, req *A
 // callerOrgForDenial best-effort resolves the org to attribute a denial to
 // when the check fails before an org has been selected (RD-1199): the
 // explicitly requested org if the caller is a member of it, else the caller's
-// only org. Ambiguous (multi-org, no explicit org) or lookup failure returns
-// "" — the row stays NULL / super-admin-only, matching pre-org denials. It
-// never returns an org the caller is not a member of.
+// only org — including when the caller supplied a foreign org id, since their
+// own org's auditor should still see their member's denied probe. Ambiguous
+// (multi-org, no usable explicit org) or lookup failure returns "" — the row
+// stays NULL / super-admin-only, matching pre-org denials. It never returns
+// an org the caller is not a member of.
 func (c *AccessController) callerOrgForDenial(ctx context.Context, req *AccessCheckRequest, user *User) string {
 	memberships, err := c.store.ListUserMembershipsWithDetails(ctx, user.ID)
 	if err != nil || len(memberships) == 0 {
@@ -712,11 +714,8 @@ func (c *AccessController) callerOrgForDenial(ctx context.Context, req *AccessCh
 			orgIDs[m.Group.OrgID] = true
 		}
 	}
-	if req.OrgID != "" {
-		if orgIDs[req.OrgID] {
-			return req.OrgID
-		}
-		return ""
+	if req.OrgID != "" && orgIDs[req.OrgID] {
+		return req.OrgID
 	}
 	if len(orgIDs) == 1 {
 		for id := range orgIDs {

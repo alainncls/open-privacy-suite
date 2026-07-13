@@ -46,12 +46,28 @@ func TestDenyResultsCarryResolvedOrg(t *testing.T) {
 			},
 		},
 		{
-			// checkEthGetLogsAccess: filter contains another org's address.
-			"eth_getLogs address deny",
+			// checkEthGetLogsAccess (post-resolution choke point): multi-address
+			// filter containing another org's address. No single TargetAddress,
+			// so org resolution succeeds and the deny comes from the getLogs
+			// phase — not from NewOrgContext like the contract case above.
+			"eth_getLogs multi-address deny",
 			&AccessCheckRequest{
 				UserExternalID: "did:test:user-a",
 				Method:         "eth_getLogs",
-				Params:         []any{map[string]any{"address": contractB, "fromBlock": "0x0", "toBlock": "latest"}},
+				Params:         []any{map[string]any{"address": []any{contractA, contractB}, "fromBlock": "0x0", "toBlock": "latest"}},
+			},
+		},
+		{
+			// callerOrgForDenial fallback: the caller supplied a foreign org id
+			// with a foreign target; the denial is still attributed to the
+			// caller's only org so their own auditor sees the probe — never to
+			// the foreign org.
+			"cross-org deny with foreign explicit org id",
+			&AccessCheckRequest{
+				UserExternalID: "did:test:user-a",
+				OrgID:          "org-b",
+				Method:         "eth_call",
+				Params:         []any{map[string]any{"to": contractB, "data": "0x"}, "latest"},
 				TargetAddress:  contractB,
 			},
 		},
