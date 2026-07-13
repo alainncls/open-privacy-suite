@@ -440,6 +440,32 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		return res, err
 	}
 
+	// From here on the org is resolved, so every outcome — allow or deny — is
+	// attributed to it at this single choke point. The deny sites in the
+	// phases below used to return without OrgID/UserID, which logged
+	// access_logs rows with a NULL org_id and made an org's own RBAC denials
+	// (method_not_allowed, eth_getLogs address denials, claim and
+	// contract-access denials) invisible in the tier-2 per-org audit view —
+	// only the fleet-wide super-admin scope matched NULL (RD-1199).
+	result, err := c.checkWithResolvedOrg(ctx, req, user, org, orgCtx)
+	if result != nil {
+		if result.OrgID == "" {
+			result.OrgID = org.ID
+		}
+		if result.UserID == "" {
+			result.UserID = user.ID
+		}
+	}
+	return result, err
+}
+
+// checkWithResolvedOrg runs the post-org-resolution phases of CheckAccess:
+// permission resolution, method allowlist, eth_getLogs multi-address
+// validation, carve-outs, contract-access/claim checks, and the final allow.
+// Pure structural extraction from CheckAccess (RD-1199) — order of checks,
+// conditions, reason strings, errors, and result fields are unchanged; the
+// caller stamps OrgID/UserID onto every result.
+func (c *AccessController) checkWithResolvedOrg(ctx context.Context, req *AccessCheckRequest, user *User, org *Organization, orgCtx *OrgContext) (*AccessCheckResult, error) {
 	// Resolve effective permissions (in-memory cache, DB cache, or compute).
 	perms, err := c.resolvePermissionsForRequest(ctx, req, user, org)
 	if err != nil {
@@ -669,16 +695,54 @@ func (c *AccessController) checkHistoricalStateQuery(ctx context.Context, req *A
 // isolation from the start) and determines which org to evaluate permissions
 // against. handled=true means the check terminated with the returned result/err.
 // When handled=false, both org and orgCtx are valid for downstream phases.
+// callerOrgForDenial best-effort resolves the org to attribute a denial to
+// when the check fails before an org has been selected (RD-1199): the
+// explicitly requested org if the caller is a member of it, else the caller's
+// only org. Ambiguous (multi-org, no explicit org) or lookup failure returns
+// "" — the row stays NULL / super-admin-only, matching pre-org denials. It
+// never returns an org the caller is not a member of.
+func (c *AccessController) callerOrgForDenial(ctx context.Context, req *AccessCheckRequest, user *User) string {
+	memberships, err := c.store.ListUserMembershipsWithDetails(ctx, user.ID)
+	if err != nil || len(memberships) == 0 {
+		return ""
+	}
+	orgIDs := make(map[string]bool, len(memberships))
+	for _, m := range memberships {
+		if m.Group != nil && m.Group.OrgID != "" {
+			orgIDs[m.Group.OrgID] = true
+		}
+	}
+	if req.OrgID != "" {
+		if orgIDs[req.OrgID] {
+			return req.OrgID
+		}
+		return ""
+	}
+	if len(orgIDs) == 1 {
+		for id := range orgIDs {
+			return id
+		}
+	}
+	return ""
+}
+
 func (c *AccessController) resolveOrgContextForRequest(ctx context.Context, req *AccessCheckRequest, user *User) (*Organization, *OrgContext, *AccessCheckResult, bool, error) {
 	// Create OrgContext - handles cross-org isolation from the start
 	// This replaces the scattered getUserOrganizationIDs + getOrgContextForTarget calls
 	targetAddr := strings.ToLower(strings.TrimSpace(req.TargetAddress))
 	orgCtx, err := NewOrgContext(ctx, c.store, user, targetAddr)
 	if err != nil {
-		// Cross-org violation detected (e.g., contract belongs to org user is not member of)
+		// Cross-org violation detected (e.g., contract belongs to org user is not member of).
+		// Attribute the denial to the caller's own org when unambiguous
+		// (RD-1199) so the tier-2 per-org audit view shows the org its own
+		// members' contract-access denials. Never attributed to the probed
+		// contract's org — a foreign user's probe must not surface in another
+		// tenant's audit view.
 		return nil, nil, &AccessCheckResult{
 			Allowed: false,
 			Reason:  ErrContractAccessDenied,
+			OrgID:   c.callerOrgForDenial(ctx, req, user),
+			UserID:  user.ID,
 		}, true, nil
 	}
 
