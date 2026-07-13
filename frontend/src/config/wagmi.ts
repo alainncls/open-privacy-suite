@@ -46,34 +46,6 @@ export const wagmiConfig = createConfig({
   ssr: false,
 });
 
-// Get RPC endpoint URL for the backend.
-// The frontend dev server (port 5173) is NOT the RPC endpoint — the backend
-// runs on a different port (default 8080). Use VITE_BACKEND_URL when set,
-// otherwise infer by replacing the current origin's port with 8080.
-export function getRpcEndpoint(): string {
-  const backendUrl = import.meta.env.VITE_BACKEND_URL;
-  if (backendUrl) {
-    return `${backendUrl}/rpc`;
-  }
-  // Default: backend runs on port 8080 on the same host
-  const url = new URL(window.location.origin);
-  url.port = '8080';
-  return `${url.origin}/rpc`;
-}
-
-// Generate Add to MetaMask params
-export function getAddNetworkParams() {
-  const rpcUrl = getRpcEndpoint();
-
-  return {
-    chainId: '0x1', // Mainnet - adjust based on actual chain
-    chainName: 'Open Privacy Suite (Mainnet)',
-    nativeCurrency: {
-      name: 'Ether',
-      symbol: 'ETH',
-      decimals: 18,
-    },
-    rpcUrls: [rpcUrl],
-    blockExplorerUrls: ['https://etherscan.io'],
-  };
-}
+// The user-facing RPC endpoint helpers (getRpcEndpoint, getAddNetworkParams)
+// live in ./rpc — kept out of this module so they can be unit-tested without
+// importing the wagmi/rainbowkit configuration (RD-1198).

@@ -7,8 +7,8 @@ import { server } from '@/test/mocks/server';
 import { SuccessPage } from '../SuccessPage';
 import { AuthProvider } from '@/contexts/AuthContext';
 
-// Mock wagmi config functions
-vi.mock('@/config/wagmi', () => ({
+// Mock RPC endpoint helpers
+vi.mock('@/config/rpc', () => ({
   getRpcEndpoint: () => 'http://localhost:3000/rpc',
   getAddNetworkParams: () => ({
     chainId: '0x1',
