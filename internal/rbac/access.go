@@ -612,8 +612,12 @@ func (c *AccessController) resolveAndValidateUser(ctx context.Context, req *Acce
 		}, true, nil
 	}
 
-	// Check KYC requirement
-	if !user.KYC {
+	// Check KYC requirement. Org-free metadata methods are exempt: the
+	// anonymous allowlist serves the same methods with no user at all, so a
+	// blanket deny here would make signing in strictly more restrictive than
+	// staying anonymous (RD-1197). The ban check above stays a blanket deny
+	// on purpose — it is an explicit administrative action.
+	if !user.KYC && !orgFreeMetadataMethods[strings.ToLower(strings.TrimSpace(req.Method))] {
 		return nil, &AccessCheckResult{
 			Allowed: false,
 			Reason:  "KYC verification required",
