@@ -2030,6 +2030,11 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 		return
 	}
 
+	// RD-1180: canonicalize the method so this preview path matches the live
+	// /rpc dispatch (which canonicalizes at ingress). Without this, a mixed-case
+	// method would report a different target/selector/verdict here than in prod.
+	input.Method = rbac.CanonicalizeMethod(input.Method)
+
 	// Use synthetic identity for test requests or extract from JWT token
 	testIdentity := "test:dashboard"
 	if input.JWTToken != "" {
