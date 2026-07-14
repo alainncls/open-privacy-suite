@@ -3386,7 +3386,7 @@ func TestEventHasDynamicNonIndexedParam_TypeMatrix(t *testing.T) {
 
 // --- RD-1162: participant/sender admission of address-less own-tx logs ---
 
-// paymentCompletedABI mirrors the partior PaymentCompleted event: an indexed
+// paymentCompletedABI mirrors the workflow PaymentCompleted event: an indexed
 // bytes32 key plus a NON-indexed dynamic string — no stakeholder address in the
 // event, and a dynamic non-indexed param that trips the M15 gate.
 const paymentCompletedABI = `[{"type":"event","name":"PaymentCompleted","inputs":[{"name":"paymentKey","type":"bytes32","indexed":true},{"name":"paymentIdentifier","type":"string","indexed":false}]}]`
