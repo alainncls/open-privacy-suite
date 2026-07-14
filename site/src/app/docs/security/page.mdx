@@ -347,18 +347,32 @@ graph TD
     D --> E["5. Resolve permissions"]
     E --> F["6. Check method allowlist"]
     F --> G["7. Check contract allowlist"]
-    G --> H["8. Check rate limits"]
-    H --> I["9. Forward request"]
+    G --> H["8. Acquire local concurrency slot"]
+    H --> I["9. Forward with group/fallback API key"]
     I --> J["10. Apply response filters"]
     J --> K["11. Return response"]
 ```
 
 ### Rate Limiting
 
-- Per-user sliding window (requests per second)
-- Per-user daily counter (resets at UTC midnight)
-- Limits configurable per group
-- Returns HTTP 429 when exceeded
+Ordinary JSON-RPC request-rate quotas are enforced by the upstream RPC proxy,
+not duplicated inside privacy-proxy. Privacy-proxy resolves the caller's group
+API key (or the global fallback key), forwards it upstream, and uses a per-key
+circuit breaker to shed requests after the upstream returns `429`.
+
+Privacy-proxy separately limits **concurrent in-flight work** because JWT, RBAC,
+compliance, and runtime-trace processing consume local resources before a request
+reaches the upstream quota:
+
+- authenticated callers have a per-identity concurrency ceiling;
+- anonymous callers share one aggregate concurrency ceiling;
+- authentication endpoints have a separate IP-based brute-force limiter;
+- fixed request-body, pagination, and batch limits prevent one request from
+  amplifying into unbounded local or upstream work.
+
+Concurrency limiting is intentionally not requests-per-second rate limiting.
+Keeping these responsibilities separate avoids inconsistent quota accounting
+between privacy-proxy and the upstream service that owns node capacity.
 
 ### Anonymous (Unauthenticated) Access
 
@@ -556,6 +570,6 @@ A standalone verifier CLI is planned.
 | Parameter validation | Only method/contract validated | Upstream node validation |
 | Token revocation | Database lookup per request | Consider Redis for high volume |
 | Multicall | Only 3 hardcoded addresses blocked | Mitigated by runtime tracing (all calls validated regardless of target) |
-| Method case sensitivity | Methods checked case-sensitively | Ethereum nodes typically reject wrong case |
+| Method case handling | Method names are canonicalized to their standard spelling before access checks and dispatch | Built-in methods match case-insensitively; unknown/vendor methods pass through unchanged and are rejected by the upstream node if mis-cased |
 | Historical state | Historical block queries blocked for anonymous users only | Authenticated users go through full RBAC which gates address access; blocking by block number is redundant and breaks wallets like MetaMask |
 | Response filtering gaps | `eth_getBlockByNumber`/`eth_getBlockByHash` (with full tx objects), `eth_getTransactionByBlockHashAndIndex`/`eth_getTransactionByBlockNumberAndIndex`, and `eth_getBlockReceipts` are not yet response-filtered | See [Response Filtering known gaps](/docs/security/response-filtering) |

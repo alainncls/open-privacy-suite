@@ -4,7 +4,7 @@
       "command": "go",
       "args": ["run", "./mcp"],
       "env": {
-        "PRIVACY_URL": "http://localhost:18300",
+        "PRIVACY_URL": "http://localhost:8080",
         "PRIVACY_ADMIN_TOKEN": ""
       }
     }
