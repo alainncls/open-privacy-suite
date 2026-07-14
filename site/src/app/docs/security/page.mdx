@@ -347,18 +347,32 @@ graph TD
     D --> E["5. Resolve permissions"]
     E --> F["6. Check method allowlist"]
     F --> G["7. Check contract allowlist"]
-    G --> H["8. Check rate limits"]
-    H --> I["9. Forward request"]
+    G --> H["8. Acquire local concurrency slot"]
+    H --> I["9. Forward with group/fallback API key"]
     I --> J["10. Apply response filters"]
     J --> K["11. Return response"]
 ```
 
 ### Rate Limiting
 
-- Per-user sliding window (requests per second)
-- Per-user daily counter (resets at UTC midnight)
-- Limits configurable per group
-- Returns HTTP 429 when exceeded
+Ordinary JSON-RPC request-rate quotas are enforced by the upstream RPC proxy,
+not duplicated inside privacy-proxy. Privacy-proxy resolves the caller's group
+API key (or the global fallback key), forwards it upstream, and uses a per-key
+circuit breaker to shed requests after the upstream returns `429`.
+
+Privacy-proxy separately limits **concurrent in-flight work** because JWT, RBAC,
+compliance, and runtime-trace processing consume local resources before a request
+reaches the upstream quota:
+
+- authenticated callers have a per-identity concurrency ceiling;
+- anonymous callers share one aggregate concurrency ceiling;
+- authentication endpoints have a separate IP-based brute-force limiter;
+- fixed request-body, pagination, and batch limits prevent one request from
+  amplifying into unbounded local or upstream work.
+
+Concurrency limiting is intentionally not requests-per-second rate limiting.
+Keeping these responsibilities separate avoids inconsistent quota accounting
+between privacy-proxy and the upstream service that owns node capacity.
 
 ### Anonymous (Unauthenticated) Access
 

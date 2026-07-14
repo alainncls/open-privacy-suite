@@ -734,6 +734,13 @@ func (s *Server) deleteStaleContracts(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "no contract IDs provided"})
 		return
 	}
+	// RD-1179: cap the batch — each ID does a DB read + an upstream eth_getCode
+	// forward, so an uncapped list fans out into unbounded DB + node RPC load
+	// (and can DoS the chain node). Mirrors batchMoveContracts' 200 cap.
+	if len(input.ContractIDs) > 200 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "too many contract_ids (max 200)"})
+		return
+	}
 
 	// Verify all contracts belong to this org and re-check they're still missing
 	var deleted []string
@@ -1008,6 +1015,34 @@ func expectedByteLength(abiType string) int {
 	}
 }
 
+// maxCustomAddressParamRules caps the total number of custom-hex address
+// param rules in a single contract grant (RD-1179). Each such rule triggers up
+// to 2 DB lookups in validateCrossOrgParamRules (GetContractOwnerOrgID +
+// GetOrgIDsForEthAddress), so an uncapped grant turns one admin request into
+// unbounded sequential DB load. Realistic grants have a handful; 100 is generous.
+const maxCustomAddressParamRules = 100
+
+// capCustomAddressParamRules returns a non-empty error message when the grant's
+// event rules contain more than maxCustomAddressParamRules custom-hex address
+// param rules across all rules (RD-1179). Counting the "0x"-prefixed rules is a
+// cheap string check that bounds the DB fan-out before it happens. Shared by
+// createContractGrant and updateContractGrant; call it before per-rule
+// validation so the request is rejected up front (400).
+func capCustomAddressParamRules(rules []rbac.EventRule) string {
+	n := 0
+	for _, rule := range rules {
+		for _, pr := range rule.ParamRules {
+			if strings.HasPrefix(pr.MustBe, "0x") {
+				n++
+			}
+		}
+	}
+	if n > maxCustomAddressParamRules {
+		return fmt.Sprintf("too many custom-address param rules across the grant (max %d)", maxCustomAddressParamRules)
+	}
+	return ""
+}
+
 // addressOrgResolver is the minimal interface needed by validateCrossOrgParamRules
 // to check whether a hex address belongs to a given organization.
 // rbac.Store (and *db.DB) satisfy this interface.
@@ -1273,6 +1308,12 @@ func (s *Server) createContractGrant(c *gin.Context) {
 	if input.EventRules != nil && !input.EventRules.IsWildcard() {
 		rules := input.EventRules.GetRules()
 		if len(rules) > 0 {
+			// RD-1179: bound the DB fan-out before any per-rule work.
+			if errMsg := capCustomAddressParamRules(rules); errMsg != "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+				return
+			}
+
 			if errMsg := validateEventRules(rules); errMsg != "" {
 				c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
 				return
@@ -1440,6 +1481,12 @@ func (s *Server) updateContractGrant(c *gin.Context) {
 				grant.EventRules = nil
 			} else {
 				rules := erf.GetRules()
+
+				// RD-1179: bound the DB fan-out before any per-rule work.
+				if errMsg := capCustomAddressParamRules(rules); errMsg != "" {
+					c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+					return
+				}
 
 				// Validate topic0 hashes and param rules
 				if errMsg := validateEventRules(rules); errMsg != "" {
