@@ -273,17 +273,21 @@ type Config struct {
 	// SQL on the explorer postgres. Leave empty to use SQL exclusively.
 	// Set this (and point it at the chain-indexer service) to start the
 	// RD-855 Phase 3 cutover.
-	IndexerURL             string
-	PrivadoRPCURL          string
-	IPFSGateway            string
-	JWTSecret              string
-	JWTRefreshSecret       string
-	VerifierID             string // DID or identifier of the verifier
-	BaseURL                string // Base URL for callback (e.g., https://api.example.com)
-	Port                   string // Server port (e.g., "8080")
-	Environment            string // "production" or "development"
-	BillionsIssuerDID      string // Billions issuer DID for ProofOfHumanity verification
-	RequireProofOfHumanity bool   // Opt-in enforcement of Path B (credential check). Default: false in every environment.
+	IndexerURL       string
+	PrivadoRPCURL    string
+	IPFSGateway      string
+	JWTSecret        string
+	JWTRefreshSecret string
+	// Previous JWT secrets accepted for validation only (never signing), for
+	// hitless secret rotation (RD-1164 #15). Comma-separated; empty = no window.
+	JWTSecretPrevious        []string // JWT_SECRET_PREVIOUS
+	JWTRefreshSecretPrevious []string // JWT_REFRESH_SECRET_PREVIOUS
+	VerifierID               string   // DID or identifier of the verifier
+	BaseURL                  string   // Base URL for callback (e.g., https://api.example.com)
+	Port                     string   // Server port (e.g., "8080")
+	Environment              string   // "production" or "development"
+	BillionsIssuerDID        string   // Billions issuer DID for ProofOfHumanity verification
+	RequireProofOfHumanity   bool     // Opt-in enforcement of Path B (credential check). Default: false in every environment.
 
 	// iden3 network resolvers. The verifier resolves each wallet's DID to its
 	// on-chain identity state via a per-network resolver keyed
@@ -340,12 +344,6 @@ type Config struct {
 	// read side (eth_call / debug_traceCall) and the send side
 	// (eth_sendTransaction / eth_sendRawTransaction / deploy).
 	RuntimeTracingIntraOrgGrantsEnabled bool
-
-	// EthCallDenyWithoutABI sets the RD-1144 posture for eth_call return data
-	// from contracts with no resolvable ABI. false (default) passes the raw
-	// return through; true blanks it (fail-closed). Address-typed returns of
-	// ABI-registered contracts are field-level redacted regardless of this flag.
-	EthCallDenyWithoutABI bool
 
 	// Travel rule compliance configuration
 	EnableTravelRule   bool          // If true, enable travel rule enforcement (default: false)
@@ -424,11 +422,12 @@ type Config struct {
 	FrontendURL string
 
 	// RPC API key for upstream RPC proxy authentication
-	RPCAPIKey              string // RPC_API_KEY — global fallback when no group-specific key is set
-	RPCAPIKeyHeader        string // RPC_API_KEY_HEADER — header name used to send the RPC API key (default "Authorization", which sends "Bearer <key>"); any other value sends the raw key under that header
-	RPCAPIKeyEncryptionKey []byte // RPC_API_KEY_ENCRYPTION_KEY — 32-byte hex key for AES-256 encryption of RPC API keys at rest
-	ExplorerPseudonymKey   []byte // EXPLORER_PSEUDONYM_KEY — HMAC key for explorer address pseudonyms (non-reversible, non-enumerable). Optional; set in production.
-	MaxConcurrentRequests  int    // MAX_CONCURRENT_REQUESTS — per-user concurrency cap (default: 50)
+	RPCAPIKey                      string // RPC_API_KEY — global fallback when no group-specific key is set
+	RPCAPIKeyHeader                string // RPC_API_KEY_HEADER — header name used to send the RPC API key (default "Authorization", which sends "Bearer <key>"); any other value sends the raw key under that header
+	RPCAPIKeyEncryptionKey         []byte // RPC_API_KEY_ENCRYPTION_KEY — 32-byte hex key for AES-256 encryption of RPC API keys at rest
+	ExplorerPseudonymKey           []byte // EXPLORER_PSEUDONYM_KEY — HMAC key for explorer address pseudonyms (non-reversible, non-enumerable). Optional; set in production.
+	MaxConcurrentRequests          int    // MAX_CONCURRENT_REQUESTS — per-user concurrency cap (default: 50)
+	MaxConcurrentAnonymousRequests int    // MAX_CONCURRENT_ANONYMOUS_REQUESTS — shared concurrency cap for anonymous /rpc traffic (default: = MaxConcurrentRequests; 0 disables)
 
 	// Azure AD / Microsoft Entra ID authentication
 	AzureADClientID     string // AZURE_AD_CLIENT_ID
@@ -538,13 +537,6 @@ func Load() *Config {
 	// operators opt in when they want grants to gate composition within an
 	// org too. Cross-org isolation is unaffected either way.
 	intraOrgGrantsTracingEnabled := getEnv("RUNTIME_TRACING_INTRA_ORG_GRANTS_ENABLED", "false") == "true"
-	// RD-1144: eth_call return-data redaction posture for contracts with NO
-	// resolvable ABI. Default false = passthrough (current behaviour; the
-	// address-typed return of an ABI-registered contract is still redacted
-	// regardless of this flag). true = fail-closed blank of every no-ABI
-	// eth_call return — safest, but breaks reads of unregistered contracts.
-	// A privacy-vs-usability operator decision (see docs/security/response-filtering).
-	ethCallDenyWithoutABI := getEnv("ETH_CALL_DENY_WITHOUT_ABI", "false") == "true"
 	ethCallTraceTimeout := 5 * time.Second
 	if t := getEnv("ETH_CALL_TRACE_TIMEOUT", ""); t != "" {
 		if d, err := time.ParseDuration(t); err == nil {
@@ -641,6 +633,20 @@ func Load() *Config {
 	if mcStr := getEnv("MAX_CONCURRENT_REQUESTS", ""); mcStr != "" {
 		if n, err := strconv.Atoi(mcStr); err == nil && n > 0 {
 			maxConcurrentRequests = n
+		}
+	}
+
+	// Shared concurrency cap for anonymous /rpc traffic (RD-1164 #3). The
+	// per-user cap above is keyed by DID and cannot bound anonymous callers
+	// (no identity), so anonymous floods were previously uncapped and still did
+	// JWT/RBAC/compliance DB work per request. All anonymous requests draw from
+	// one shared bucket (not per-IP: IPs are spoofable and shared behind the
+	// ingress, so per-IP would let one client starve the rest). Defaults to the
+	// per-user cap; set 0 to disable.
+	maxConcurrentAnonymousRequests := maxConcurrentRequests
+	if maStr := getEnv("MAX_CONCURRENT_ANONYMOUS_REQUESTS", ""); maStr != "" {
+		if n, err := strconv.Atoi(maStr); err == nil && n >= 0 {
+			maxConcurrentAnonymousRequests = n
 		}
 	}
 
@@ -751,9 +757,11 @@ func Load() *Config {
 		IPFSGateway:                         getEnv("IPFS_GATEWAY", "https://ipfs-proxy-cache.privado.id"), // IPFS gateway for schema resolution
 		JWTSecret:                           getEnv("JWT_SECRET", ""),                                      // If empty, will be auto-generated (dev only)
 		JWTRefreshSecret:                    getEnv("JWT_REFRESH_SECRET", ""),                              // If empty, will be auto-generated (dev only)
-		VerifierID:                          getEnv("VERIFIER_ID", ""),                                     // Required in production
-		BaseURL:                             getEnv("BASE_URL", "http://localhost:8080"),                   // Base URL for callback
-		Port:                                getEnv("PORT", "8080"),                                        // Server port
+		JWTSecretPrevious:                   getSliceEnv("JWT_SECRET_PREVIOUS", ","),
+		JWTRefreshSecretPrevious:            getSliceEnv("JWT_REFRESH_SECRET_PREVIOUS", ","),
+		VerifierID:                          getEnv("VERIFIER_ID", ""),                   // Required in production
+		BaseURL:                             getEnv("BASE_URL", "http://localhost:8080"), // Base URL for callback
+		Port:                                getEnv("PORT", "8080"),                      // Server port
 		Environment:                         env,
 		BillionsIssuerDID:                   getEnv("BILLIONS_ISSUER_DID", ""), // Billions issuer DID for PoH
 		RequireProofOfHumanity:              requirePoHBool,
@@ -781,7 +789,6 @@ func Load() *Config {
 		RuntimeTracingEthCallEnabled:        ethCallTracingEnabled,
 		EthCallTraceTimeout:                 ethCallTraceTimeout,
 		RuntimeTracingIntraOrgGrantsEnabled: intraOrgGrantsTracingEnabled,
-		EthCallDenyWithoutABI:               ethCallDenyWithoutABI,
 		EnableTravelRule:                    enableTravelRule,
 		TravelRecordExpiry:                  travelRecordExpiry,
 		ComplianceDefaultMode:               complianceDefaultMode,
@@ -820,6 +827,7 @@ func Load() *Config {
 		RPCAPIKeyEncryptionKey:              rpcAPIKeyEncKey,
 		ExplorerPseudonymKey:                pseudonymKey,
 		MaxConcurrentRequests:               maxConcurrentRequests,
+		MaxConcurrentAnonymousRequests:      maxConcurrentAnonymousRequests,
 		AzureADClientID:                     getEnv("AZURE_AD_CLIENT_ID", ""),
 		AzureADClientSecret:                 getEnv("AZURE_AD_CLIENT_SECRET", ""),
 		AzureADTenantID:                     getEnv("AZURE_AD_TENANT_ID", "common"),
@@ -980,6 +988,20 @@ func (c *Config) Validate() error {
 		if parsed.Scheme != "https" && !isLocal {
 			return errors.New("FRONTEND_URL must use HTTPS in production (localhost and private networks are exempt)")
 		}
+	}
+
+	// Production hardening warnings (RD-1164 #8/#20/#18). These are safer-by-default
+	// controls that are not hard-required (a deliberate single-replica or
+	// infra-provisioned deployment may legitimately omit them), so they warn
+	// loudly rather than fail — belt-and-suspenders over the shipped prod compose.
+	if len(c.ExplorerPseudonymKey) == 0 {
+		slog.Warn("EXPLORER_PSEUDONYM_KEY is not set in production: explorer address pseudonyms are unkeyed — non-reversible but offline-ENUMERABLE (an attacker with a candidate address set can correlate pseudonyms back to real addresses). Set EXPLORER_PSEUDONYM_KEY to a 32-byte hex key (RD-1164 #8).")
+	}
+	if c.RedisURL == "" {
+		slog.Warn("REDIS_URL is not set in production: state stores fall back to in-memory, which is NOT safe across multiple replicas (rate-limit counters, sessions and caches are per-process). Configure Redis for any multi-replica deployment (RD-1164 #20).")
+	}
+	if getEnv("AUDIT_DATABASE_URL", "") == "" {
+		slog.Warn("AUDIT_DATABASE_URL is not set in production: the append-only audit database is DERIVED on the same server reusing DATABASE_URL's owner credentials, so the INSERT-only seal is not enforced. Provision a separate audit DB and set AUDIT_DATABASE_URL to its restricted-role DSN (RD-1164 #18).")
 	}
 
 	return nil

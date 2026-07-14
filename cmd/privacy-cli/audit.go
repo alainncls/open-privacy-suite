@@ -27,6 +27,8 @@ func runAudit(args []string) {
 	switch args[0] {
 	case "verify":
 		runAuditVerify(args[1:])
+	case "re-anchor":
+		runAuditReAnchor(args[1:])
 	case "help", "-h", "--help":
 		printAuditUsage()
 	default:
@@ -43,10 +45,14 @@ Usage:
   privacy-cli audit <subcommand> [options]
 
 Subcommands:
-  verify   Walk an audit hash chain and report the first integrity
-           mismatch (or confirm the chain is intact).
+  verify     Walk an audit hash chain and report the first integrity
+             mismatch (or confirm the chain is intact).
+  re-anchor  Break-glass: record an authorized audit-chain discontinuity and
+             move the verifier's baseline to the current head, after a restore.
+             access_logs chain only; dry-run by default, --confirm to write.
 
-Run 'privacy-cli audit verify --help' for verify-specific options.
+Run 'privacy-cli audit verify --help' or 'privacy-cli audit re-anchor --help'
+for subcommand-specific options.
 `)
 }
 

@@ -797,47 +797,6 @@ func TestHelperFunctions(t *testing.T) {
 			t.Errorf("Expected 3 elements, got %d: %v", len(result), result)
 		}
 	})
-
-	t.Run("minIntPtr both non-nil", func(t *testing.T) {
-		a := 10
-		b := 5
-		result := minIntPtr(&a, &b)
-		if result == nil || *result != 5 {
-			t.Errorf("Expected 5, got %v", result)
-		}
-	})
-
-	t.Run("minIntPtr one nil", func(t *testing.T) {
-		a := 10
-		result := minIntPtr(&a, nil)
-		if result == nil || *result != 10 {
-			t.Errorf("Expected 10, got %v", result)
-		}
-	})
-
-	t.Run("minIntPtr both nil", func(t *testing.T) {
-		result := minIntPtr(nil, nil)
-		if result != nil {
-			t.Errorf("Expected nil, got %v", result)
-		}
-	})
-
-	t.Run("maxIntPtr both non-nil", func(t *testing.T) {
-		a := 10
-		b := 5
-		result := maxIntPtr(&a, &b)
-		if result == nil || *result != 10 {
-			t.Errorf("Expected 10, got %v", result)
-		}
-	})
-
-	t.Run("maxIntPtr one nil (unlimited)", func(t *testing.T) {
-		a := 10
-		result := maxIntPtr(&a, nil)
-		if result != nil {
-			t.Errorf("Expected nil (unlimited), got %v", result)
-		}
-	})
 }
 
 func TestExtractGetLogsAddresses(t *testing.T) {

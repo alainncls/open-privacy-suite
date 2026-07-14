@@ -426,13 +426,20 @@ func TestHandleAuthCallback_VerifierIDMismatch(t *testing.T) {
 	w2 := httptest.NewRecorder()
 	router.ServeHTTP(w2, req2)
 
-	// Should fail with unauthorized due to verifier ID mismatch
+	// Should fail with unauthorized due to verifier ID mismatch.
 	assert.Equal(t, http.StatusUnauthorized, w2.Code)
 
+	// RD-1178: the body must be OPAQUE to this unauthenticated caller — it
+	// must not echo the raw verifier error, which carries the server's
+	// verifier DID and iden3 internals (proof-forgery / config-enumeration
+	// aid). The detail goes to slog only.
 	var errorResp map[string]interface{}
 	err := json.Unmarshal(w2.Body.Bytes(), &errorResp)
 	require.NoError(t, err)
-	assert.Contains(t, errorResp["error"].(string), "verifier ID mismatch")
+	assert.Equal(t, "verification failed", errorResp["error"].(string))
+	body := w2.Body.String()
+	assert.NotContains(t, body, "verifier ID mismatch")
+	assert.NotContains(t, body, "did:privado:other_verifier")
 }
 
 func TestHandleRefresh_Success(t *testing.T) {

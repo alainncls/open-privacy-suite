@@ -268,9 +268,14 @@ docker-compose pull
 
 If you are receiving `429 Too Many Requests`:
 
-- Check your group's rate limit configuration in the admin UI.
-- Per-user sliding window (RPS) and daily counters are enforced.
-- Wait for the rate limit window to reset, or ask your org admin to adjust limits.
+- Determine whether the response is a local concurrency rejection or an
+  upstream rate-limit/circuit-breaker rejection by checking proxy metrics and logs.
+- For a local concurrency rejection, reduce simultaneous in-flight requests and
+  retry after existing requests finish.
+- For an upstream rejection, check the rate tier associated with the group's
+  `rpc_api_key` (or the global fallback key) in the upstream RPC proxy.
+- Respect `Retry-After` when present. Changing group permissions inside
+  privacy-proxy does not change the upstream API key's quota.
 
 ---
 

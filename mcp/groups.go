@@ -78,7 +78,6 @@ func registerListGroups(s *mcp.Server, client *httpClient) {
 				lines += "\n" + joinLines(
 					kvf("Claims", fmt.Sprintf("%v", claims)),
 					kvf("Allowed Methods", fmt.Sprintf("%d methods", len(methods))),
-					kvf("Rate Limit RPS", access["rate_limit_rps"]),
 				)
 			}
 			lines += "\n"
@@ -281,8 +280,6 @@ func registerGetGroupAccess(s *mcp.Server, client *httpClient) {
 			kvf("Effective Claims", fmt.Sprintf("%v", getSlice(access, "effective_claims"))),
 			kvf("Narrowed By Parent", boolYesNo(getBool(access, "narrowed_by_parent"))),
 			kvf("Allowed Methods", fmt.Sprintf("%v", getSlice(access, "allowed_methods"))),
-			kvf("Rate Limit RPS", access["rate_limit_rps"]),
-			kvf("Rate Limit Daily", access["rate_limit_daily"]),
 		)
 	})
 }
@@ -292,14 +289,12 @@ type setGroupAccessArgs struct {
 	GroupID        string   `json:"group_id" jsonschema:"group ID (UUID, required)"`
 	AllowedMethods []string `json:"allowed_methods" jsonschema:"list of allowed RPC methods (e.g. eth_call, eth_sendTransaction)"`
 	Claims         []string `json:"claims" jsonschema:"permission claims (read, write, deploy, upgrade, admin)"`
-	RateLimitRPS   *int     `json:"rate_limit_rps,omitempty" jsonschema:"requests per second limit"`
-	RateLimitDaily *int     `json:"rate_limit_daily,omitempty" jsonschema:"daily request limit"`
 }
 
 func registerSetGroupAccess(s *mcp.Server, client *httpClient) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "set_group_access",
-		Description: "Set a group's access permissions: allowed RPC methods, claims, and rate limits. Claims are auto-expanded (admin includes all).",
+		Description: "Set a group's access permissions: allowed RPC methods and claims. Claims are auto-expanded (admin includes all).",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args setGroupAccessArgs) (*mcp.CallToolResult, any, error) {
 		if args.OrgID == "" || args.GroupID == "" {
 			return errorResult("org_id and group_id are required")
@@ -307,12 +302,6 @@ func registerSetGroupAccess(s *mcp.Server, client *httpClient) {
 		body := map[string]any{
 			"allowed_methods": args.AllowedMethods,
 			"claims":          args.Claims,
-		}
-		if args.RateLimitRPS != nil {
-			body["rate_limit_rps"] = *args.RateLimitRPS
-		}
-		if args.RateLimitDaily != nil {
-			body["rate_limit_daily"] = *args.RateLimitDaily
 		}
 
 		raw, err := client.put(fmt.Sprintf("/api/v1/admin/orgs/%s/groups/%s/access", args.OrgID, args.GroupID), body)
@@ -329,7 +318,6 @@ func registerSetGroupAccess(s *mcp.Server, client *httpClient) {
 			kvf("Claims", fmt.Sprintf("%v", getSlice(access, "claims"))),
 			kvf("Effective Claims", fmt.Sprintf("%v", getSlice(access, "effective_claims"))),
 			kvf("Allowed Methods", fmt.Sprintf("%v", getSlice(access, "allowed_methods"))),
-			kvf("Rate Limit RPS", access["rate_limit_rps"]),
 		)
 	})
 }

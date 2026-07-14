@@ -12,6 +12,20 @@ name: Privacy-Mode Bypass Closure (RD-855 Phase 4b)
 # When architectural changes touch the compose file, the Dockerfile,
 # nginx config, or the indexer's gRPC surface, dispatch this workflow
 # manually before merging to confirm the bypass is still closed.
+#
+# Public-fork behavior: the test needs the gateway-fm/chain-indexer and
+# gateway-fm/block-explorer repos. A preflight job probes whether they
+# are readable with the available token (CROSS_REPO_READ_TOKEN, falling
+# back to GITHUB_TOKEN — sufficient once the sibling repos are public).
+# On forks without access the test is skipped with a notice instead of
+# failing. In the canonical gateway-fm/privacy-proxy repo a missing
+# token FAILS the run on purpose: this is a scheduled security
+# regression check and must not be silently disabled.
+#
+# Running the full test as a maintainer: either dispatch this workflow
+# in the canonical repo, or locally clone chain-indexer and
+# block-explorer as siblings of privacy-proxy and run
+# `make test-privacy-bypass`.
 
 on:
   workflow_dispatch:
@@ -26,8 +40,52 @@ env:
   GO_VERSION: '1.25'
 
 jobs:
+  preflight:
+    name: Sibling-repo access check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run-test: ${{ steps.check.outputs.run-test }}
+    steps:
+      - name: Check sibling repo readability
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.CROSS_REPO_READ_TOKEN || secrets.GITHUB_TOKEN }}
+          IS_CANONICAL: ${{ github.repository == 'gateway-fm/privacy-proxy' }}
+        run: |
+          # Retry before declaring a repo unreadable: this signal gates a
+          # loud failure in the canonical repo (below), so a transient GitHub
+          # API blip (5xx / secondary rate-limit) must not be mistaken for a
+          # genuine, persistent permission failure. Only a repo that fails all
+          # attempts is treated as unreadable.
+          unreadable=""
+          for repo in gateway-fm/chain-indexer gateway-fm/block-explorer; do
+            ok=""
+            for attempt in 1 2 3; do
+              if gh api "repos/$repo" --silent; then
+                ok="yes"
+                break
+              fi
+              [ "$attempt" -lt 3 ] && sleep "$((attempt * 5))"
+            done
+            if [ -z "$ok" ]; then
+              unreadable="$unreadable $repo"
+            fi
+          done
+          if [ -z "$unreadable" ]; then
+            echo "run-test=true" >> "$GITHUB_OUTPUT"
+          elif [ "$IS_CANONICAL" = "true" ]; then
+            echo "::error::Sibling repos not readable:$unreadable. This scheduled security regression check must not be silently skipped in the canonical repo — restore the CROSS_REPO_READ_TOKEN secret (read-only access to the sibling repos)."
+            exit 1
+          else
+            echo "::notice::Sibling repos not readable with the available token:$unreadable. Skipping the privacy-mode bypass test on this fork. It runs in the canonical gateway-fm/privacy-proxy repo (weekly schedule + manual dispatch); see the workflow header for how to run it locally."
+            echo "run-test=false" >> "$GITHUB_OUTPUT"
+          fi
+
   negative-network:
     name: Privacy-mode trust boundary
+    needs: preflight
+    if: needs.preflight.outputs.run-test == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
 

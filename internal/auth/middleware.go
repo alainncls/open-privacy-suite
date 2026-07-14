@@ -139,7 +139,10 @@ func JWTAuthMiddleware(jwtService *JWTService, db RevocationChecker) gin.Handler
 // BannedChecker extension; the regular *db.DB satisfies both so the
 // production path is upgraded automatically. Implementations that
 // only satisfy RevocationChecker (test fixtures) keep the previous
-// behaviour.
+// behaviour. The production store's conformance to BannedChecker is
+// pinned at compile time (see the `var _ auth.BannedChecker` assertion
+// in internal/server, RD-1164 #14), so the ban check can never be
+// silently skipped in production by a dropped/renamed method.
 func OptionalJWTAuthMiddleware(jwtService *JWTService, db RevocationChecker) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tokenString, malformed := extractAccessToken(c)

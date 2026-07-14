@@ -495,6 +495,9 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		database.Close()
 		return nil, fmt.Errorf("failed to create JWT service: %w", err)
 	}
+	// Rotation window: previous secrets validate (never sign) so a secret can be
+	// rotated without logging every session out (RD-1164 #15).
+	jwtService.SetValidationSecrets(cfg.JWTSecretPrevious, cfg.JWTRefreshSecretPrevious)
 
 	// Upstream node connection-pool sizing (RD-1112), shared by the forwarder
 	// and the runtime tracer (both talk to the single node host).
@@ -686,7 +689,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 
 	// Initialize circuit breaker and concurrency limiter for upstream RPC proxy
 	circuitBreaker := NewCircuitBreaker()
-	concurrencyLimiter := NewConcurrencyLimiter(cfg.MaxConcurrentRequests)
+	concurrencyLimiter := NewConcurrencyLimiter(cfg.MaxConcurrentRequests, cfg.MaxConcurrentAnonymousRequests)
 
 	// Initialize JSON-RPC processor with dependencies. RD-1147: the basic
 	// LogAccess fallback (used only when the chained/buffered audit write fails)
@@ -702,11 +705,6 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	s.jsonrpcProcessor.SetDefaultRPCAPIKeyHeader(cfg.RPCAPIKeyHeader)
 	s.jsonrpcProcessor.SetEthCallTracing(cfg.RuntimeTracingEthCallEnabled, cfg.EthCallTraceTimeout)
 	s.jsonrpcProcessor.SetIntraOrgGrantTracing(cfg.RuntimeTracingIntraOrgGrantsEnabled)
-	// RD-1144: eth_call return-data field redaction reuses the explorer's
-	// DID-based visibility resolver (database satisfies it) so the RPC and
-	// explorer layers agree per (viewer, address).
-	s.jsonrpcProcessor.SetExplorerVisibilityResolver(database)
-	s.jsonrpcProcessor.SetEthCallDenyWithoutABI(cfg.EthCallDenyWithoutABI)
 
 	// Initialize compliance checker for travel rule enforcement
 	if cfg.EnableTravelRule {
@@ -1159,7 +1157,7 @@ func (s *Server) setupRouter() *gin.Engine {
 	{
 		// Admin endpoints - private network + token auth + org scoping
 		admin := apiV1.Group("/admin")
-		admin.Use(s.localhostOnlyMiddleware(), adminAuth, orgScope)
+		admin.Use(bodyLimitMiddleware(MaxRequestBodySize), s.localhostOnlyMiddleware(), adminAuth, orgScope)
 		{
 			admin.GET("/logs", s.getLogs)
 			admin.GET("/status", s.getStatus)
@@ -2104,8 +2102,11 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 		case "eth_sendRawTransaction":
 			rawTxHex, extractErr := extractRawTxHex(input.Params)
 			if extractErr != nil {
+				// Opaque client message; raw decode/RLP errors stay in slog.
+				// (RD-1178 #10 / RD-934)
+				slog.Warn("admin test-request: extract raw transaction failed", "error", extractErr)
 				c.JSON(http.StatusBadRequest, TestRequestResponse{
-					Error:    "failed to extract raw transaction: " + extractErr.Error(),
+					Error:    "failed to extract raw transaction",
 					Identity: testIdentity,
 				})
 				return
@@ -2113,8 +2114,9 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 			var decodeErr error
 			compFrom, compTo, compData, compValue, _, decodeErr = decodeRawTransaction(rawTxHex)
 			if decodeErr != nil {
+				slog.Warn("admin test-request: decode raw transaction failed", "error", decodeErr)
 				c.JSON(http.StatusBadRequest, TestRequestResponse{
-					Error:    "failed to decode raw transaction: " + decodeErr.Error(),
+					Error:    "failed to decode raw transaction",
 					Identity: testIdentity,
 				})
 				return
@@ -2133,16 +2135,22 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 				CorrelationID: getCorrelationID(c),
 			})
 			if compErr != nil {
+				slog.Error("admin test-request: compliance check failed", "method", input.Method, "error", compErr)
 				c.JSON(http.StatusInternalServerError, TestRequestResponse{
-					Error:    "compliance check failed: " + compErr.Error(),
+					Error:    "compliance check failed",
 					Identity: testIdentity,
 				})
 				return
 			}
 			if !compResult.Allowed {
 				auditDB.LogAccess(c.Request.Context(), testIdentity, input.Method, http.StatusForbidden, c.ClientIP())
+				// sanitizeComplianceReason maps the deny reason to a finite,
+				// non-tenant-revealing category; the full reason (which can
+				// carry token addresses / sanction text / thresholds) stays in
+				// compliance_log + slog. Same treatment as the live /rpc path.
+				slog.Info("admin test-request: compliance denied", "method", input.Method, "reason", compResult.Reason)
 				c.JSON(http.StatusForbidden, TestRequestResponse{
-					Error:    "compliance denied: " + compResult.Reason,
+					Error:    "compliance denied: " + sanitizeComplianceReason(compResult.Reason),
 					Identity: testIdentity,
 				})
 				return
@@ -2166,8 +2174,11 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 
 	if err != nil {
 		auditDB.LogAccess(c.Request.Context(), testIdentity, input.Method, http.StatusBadGateway, c.ClientIP())
+		// Opaque client message; the raw upstream forward error (which can
+		// reveal the node URL, dial/TLS internals) stays in slog. (RD-1178 #10 / RD-934)
+		slog.Warn("admin test-request: upstream forward failed", "method", input.Method, "error", err)
 		c.JSON(http.StatusBadGateway, TestRequestResponse{
-			Error:     err.Error(),
+			Error:     "upstream request failed",
 			LatencyMs: latency,
 			Identity:  testIdentity,
 		})

@@ -154,22 +154,4 @@ func TestFactoryAutoAllowSecurityProperties(t *testing.T) {
 			}
 		}
 	})
-
-	t.Run("auto-allow preserves rate limits", func(t *testing.T) {
-		rps := 100
-		daily := 10000
-		perms := &EffectivePermissions{
-			AllowedMethods: []string{"eth_sendTransaction"},
-			Claims:         []Claim{ClaimDeploy},
-			RateLimitRPS:   &rps,
-			RateLimitDaily: &daily,
-		}
-
-		if perms.RateLimitRPS == nil || *perms.RateLimitRPS != 100 {
-			t.Error("Rate limit RPS should be preserved")
-		}
-		if perms.RateLimitDaily == nil || *perms.RateLimitDaily != 10000 {
-			t.Error("Rate limit daily should be preserved")
-		}
-	})
 }

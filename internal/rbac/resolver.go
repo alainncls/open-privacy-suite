@@ -140,7 +140,6 @@ func (r *Resolver) ResolvePermissions(ctx context.Context, userID, orgID string)
 //  2. Check for org admin memberships - if found, grant all claims on all contracts
 //  3. For each membership, get the group's OWN access and contract grants (flat, no hierarchy)
 //  4. Merge permissions across multiple group memberships (UNION - user benefits from all groups)
-//  5. Rate limits: MAXIMUM across memberships
 func (r *Resolver) computePermissions(ctx context.Context, userID, orgID string) (*EffectivePermissions, error) {
 	// Get user's memberships in this org with details
 	memberships, err := r.store.ListUserMembershipsInOrg(ctx, userID, orgID)
@@ -180,8 +179,6 @@ func (r *Resolver) computePermissions(ctx context.Context, userID, orgID string)
 	var finalMethods []string
 	finalContractAccess := make(map[string]ContractAccess)
 	var finalClaims []Claim
-	var finalRateLimitRPS *int
-	var finalRateLimitDaily *int
 	var finalRPCAPIKey string
 	firstMembership := true
 
@@ -197,8 +194,6 @@ func (r *Resolver) computePermissions(ctx context.Context, userID, orgID string)
 			finalMethods = membershipPerms.AllowedMethods
 			finalContractAccess = membershipPerms.ContractAccess
 			finalClaims = membershipPerms.Claims
-			finalRateLimitRPS = membershipPerms.RateLimitRPS
-			finalRateLimitDaily = membershipPerms.RateLimitDaily
 			finalRPCAPIKey = membershipPerms.RPCAPIKey
 			firstMembership = false
 		} else {
@@ -206,10 +201,6 @@ func (r *Resolver) computePermissions(ctx context.Context, userID, orgID string)
 			finalMethods = unionStrings(finalMethods, membershipPerms.AllowedMethods)
 			finalContractAccess = unionContractAccess(finalContractAccess, membershipPerms.ContractAccess)
 			finalClaims = unionClaims(finalClaims, membershipPerms.Claims)
-
-			// For rate limits across memberships, take the MAXIMUM (most permissive)
-			finalRateLimitRPS = maxIntPtr(finalRateLimitRPS, membershipPerms.RateLimitRPS)
-			finalRateLimitDaily = maxIntPtr(finalRateLimitDaily, membershipPerms.RateLimitDaily)
 
 			// RPC API key: use first non-empty key found across memberships.
 			if finalRPCAPIKey == "" && membershipPerms.RPCAPIKey != "" {
@@ -225,8 +216,6 @@ func (r *Resolver) computePermissions(ctx context.Context, userID, orgID string)
 		AllowedMethods: finalMethods,
 		ContractAccess: finalContractAccess,
 		Claims:         ExpandClaims(finalClaims), // expand so admin→deploy etc. are included
-		RateLimitRPS:   finalRateLimitRPS,
-		RateLimitDaily: finalRateLimitDaily,
 		RPCAPIKey:      finalRPCAPIKey,
 		ComputedAt:     time.Now(),
 		ExpiresAt:      r.cacheExpiry(memberships),
@@ -271,9 +260,7 @@ func (r *Resolver) computeOrgAdminPermissions(ctx context.Context, userID, orgID
 		}
 	}
 
-	// Still compute rate limits and API key from memberships (take the most permissive)
-	var finalRateLimitRPS *int
-	var finalRateLimitDaily *int
+	// Still compute methods and API key from memberships (take the most permissive)
 	var finalMethods []string
 	var finalRPCAPIKey string
 
@@ -285,8 +272,6 @@ func (r *Resolver) computeOrgAdminPermissions(ctx context.Context, userID, orgID
 		}
 
 		finalMethods = unionStrings(finalMethods, membershipPerms.AllowedMethods)
-		finalRateLimitRPS = maxIntPtr(finalRateLimitRPS, membershipPerms.RateLimitRPS)
-		finalRateLimitDaily = maxIntPtr(finalRateLimitDaily, membershipPerms.RateLimitDaily)
 		if finalRPCAPIKey == "" && membershipPerms.RPCAPIKey != "" {
 			finalRPCAPIKey = membershipPerms.RPCAPIKey
 		}
@@ -299,8 +284,6 @@ func (r *Resolver) computeOrgAdminPermissions(ctx context.Context, userID, orgID
 		AllowedMethods: finalMethods,
 		ContractAccess: contractAccess,
 		Claims:         allClaims, // Org admins get all default claims too
-		RateLimitRPS:   finalRateLimitRPS,
-		RateLimitDaily: finalRateLimitDaily,
 		RPCAPIKey:      finalRPCAPIKey,
 		ComputedAt:     time.Now(),
 		ExpiresAt:      r.cacheExpiry(memberships),
@@ -328,8 +311,6 @@ func (r *Resolver) computeGroupPermissions(ctx context.Context, groupID string) 
 		if access.Claims != nil {
 			result.Claims = access.Claims
 		}
-		result.RateLimitRPS = access.RateLimitRPS
-		result.RateLimitDaily = access.RateLimitDaily
 
 		// Decrypt RPC API key if present
 		if access.RPCAPIKey != nil && *access.RPCAPIKey != "" {
@@ -383,8 +364,6 @@ type hierarchyPerms struct {
 	AllowedMethods []string
 	ContractAccess map[string]ContractAccess // address -> access
 	Claims         []Claim
-	RateLimitRPS   *int
-	RateLimitDaily *int
 	RPCAPIKey      string // First non-empty key found in hierarchy (deepest group wins)
 }
 
@@ -448,10 +427,6 @@ func (r *Resolver) computeHierarchyPermissions(ctx context.Context, hierarchy []
 			} else if access.Claims != nil {
 				result.Claims = IntersectClaims(result.Claims, access.Claims)
 			}
-
-			// Apply MINIMUM for rate limits (most restrictive wins within hierarchy)
-			result.RateLimitRPS = minIntPtr(result.RateLimitRPS, access.RateLimitRPS)
-			result.RateLimitDaily = minIntPtr(result.RateLimitDaily, access.RateLimitDaily)
 
 			// RPC API key: deepest group in hierarchy wins (last non-empty value).
 			// Decrypt stored value (no-op if encryption is disabled or value is plaintext).
@@ -824,31 +799,6 @@ func unionContractAccess(a, b map[string]ContractAccess) map[string]ContractAcce
 	}
 
 	return result
-}
-
-// minIntPtr returns the minimum of two *int values, treating nil as "unlimited".
-func minIntPtr(a, b *int) *int {
-	if a == nil {
-		return b
-	}
-	if b == nil {
-		return a
-	}
-	if *a < *b {
-		return a
-	}
-	return b
-}
-
-// maxIntPtr returns the maximum of two *int values, treating nil as "unlimited".
-func maxIntPtr(a, b *int) *int {
-	if a == nil || b == nil {
-		return nil // Either is unlimited, so result is unlimited
-	}
-	if *a > *b {
-		return a
-	}
-	return b
 }
 
 // HasClaim is a helper to check if a claim exists in a slice.

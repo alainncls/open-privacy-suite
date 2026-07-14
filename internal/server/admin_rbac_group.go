@@ -604,7 +604,7 @@ func (s *Server) getGroupAccess(c *gin.Context) {
 // setGroupAccess replaces a group's RPC access settings.
 //
 // @Summary      Set group access
-// @Description  Creates or replaces the group's access settings. Body: allowed_methods ([]string; "*" expands to the full method list), claims ([]string of operational claims: deploy/upgrade/admin), rate_limit_rps, rate_limit_daily, rpc_api_key (encrypted at rest, never returned in clear), verbose_errors. is_system group access is super-admin-only (X-Admin-Token). Reshaping an is_org_admin group's access is super-admin-only; reshaping a regular group's access is rejected for the operator token. On is_org_admin groups claims must be empty and at least one method is required. The returned rpc_api_key is masked.
+// @Description  Creates or replaces the group's access settings. Body: allowed_methods ([]string; "*" expands to the full method list), claims ([]string of operational claims: deploy/upgrade/admin), rpc_api_key (encrypted at rest, never returned in clear), verbose_errors. is_system group access is super-admin-only (X-Admin-Token). Reshaping an is_org_admin group's access is super-admin-only; reshaping a regular group's access is rejected for the operator token. On is_org_admin groups claims must be empty and at least one method is required. The returned rpc_api_key is masked.
 // @Tags         Admin: RBAC
 // @Accept       json
 // @Produce      json
@@ -660,8 +660,6 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 	var input struct {
 		AllowedMethods []string     `json:"allowed_methods"`
 		Claims         []rbac.Claim `json:"claims"`
-		RateLimitRPS   *int         `json:"rate_limit_rps"`
-		RateLimitDaily *int         `json:"rate_limit_daily"`
 		RPCAPIKey      *string      `json:"rpc_api_key"`
 		VerboseErrors  bool         `json:"verbose_errors"` // RD-1137 Part A
 	}
@@ -731,8 +729,6 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 		GroupID:        groupID,
 		AllowedMethods: input.AllowedMethods,
 		Claims:         input.Claims,
-		RateLimitRPS:   input.RateLimitRPS,
-		RateLimitDaily: input.RateLimitDaily,
 		RPCAPIKey:      input.RPCAPIKey,
 		VerboseErrors:  input.VerboseErrors,
 	}
@@ -853,6 +849,9 @@ func (s *Server) populateEffectiveClaims(ctx context.Context, group *rbac.Group,
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/groups/batch-delete-preview [post]
 func (s *Server) batchDeletePreview(c *gin.Context) {
+	if denyOperatorTenantRead(c) { // RD-1173: operator token must not enumerate tenant groups
+		return
+	}
 	orgID := c.Param("org_id")
 
 	var input struct {

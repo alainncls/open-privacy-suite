@@ -125,6 +125,12 @@ out/
 # Temporary progress/notes files
 TODO_*.md
 
+# Internal audit reports (do not publish)
+AUDIT_*.md
+*_AUDIT*.md
+OSS_AUDIT*.md
+CONSOLIDATED_CRITICAL_FINDINGS*.md
+
 # Backup files
 *.bak
 
@@ -134,3 +140,6 @@ TODO_*.md
 # Loadtest binary (not the cmd/loadtest/ source)
 /loadtest
 mcp/mcp
+
+# Local MCP config (copy .mcp.json.example and fill in the admin token)
+/.mcp.json

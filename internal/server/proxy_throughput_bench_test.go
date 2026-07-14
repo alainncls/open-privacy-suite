@@ -29,7 +29,7 @@ import (
 // per-request cost end-to-end — decode + ecrecover + RBAC access check + audit
 // + forward — with the Ethereum node MOCKED (instant canned responses), so the
 // number reflects the proxy, not node execution. b.RunParallel simulates
-// concurrent load; NewConcurrencyLimiter(50) mirrors the per-user cap, so keep
+// concurrent load; NewConcurrencyLimiter(50, 0) mirrors the per-user cap, so keep
 // -cpu <= 50 for single-user runs (seed more users to exceed it).
 //
 // CI: run on a LINUX runner against a real Postgres for representative fsync
@@ -155,7 +155,7 @@ func benchProcessor(b *testing.B, async bool) (*JSONRPCProcessor, string, *Proce
 	tv := rbac.NewTraceValidator(database)
 	proc := NewJSONRPCProcessorWithTracing(
 		rbacCtrl, &noopRateLimiter{}, proxy.New(node.URL), database, rt, tv,
-		NewCircuitBreaker(), NewConcurrencyLimiter(50), "",
+		NewCircuitBreaker(), NewConcurrencyLimiter(50, 0), "",
 	)
 
 	var buf *buffer.Buffer

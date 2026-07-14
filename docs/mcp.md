@@ -6,12 +6,14 @@ Privacy Proxy includes an [MCP](https://modelcontextprotocol.io/) (Model Context
 
 ### Claude Code
 
-The `.mcp.json` in the repo root auto-configures the server. Open the project in Claude Code and the tools are available immediately.
+Copy `.mcp.json.example` in the repo root to `.mcp.json` (gitignored), fill in `PRIVACY_ADMIN_TOKEN`, and open the project in Claude Code — the tools are then available. The proxy must be running (`docker-compose up -d`, backend on `localhost:8080` by default).
+
+`PRIVACY_ADMIN_TOKEN` must equal the backend's `ADMIN_API_TOKEN` (empty in a fresh clone — set both to the same value, e.g. `ADMIN_API_TOKEN` in a root `.env` file before `docker-compose up`). If the backend has no admin token configured, admin-backed tools return 401.
 
 ### Manual
 
 ```bash
-PRIVACY_URL=http://localhost:18300 \
+PRIVACY_URL=http://localhost:8080 \
 PRIVACY_ADMIN_TOKEN=your-admin-token \
 go run ./mcp
 ```
@@ -20,7 +22,7 @@ go run ./mcp
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PRIVACY_URL` | `http://localhost:18300` | Privacy proxy base URL (http/https only) |
+| `PRIVACY_URL` | `http://localhost:8080` | Privacy proxy base URL (http/https only) |
 | `PRIVACY_ADMIN_TOKEN` | _(empty)_ | Admin API token (sent as `X-Admin-Token` header) |
 
 ## Tools

@@ -348,6 +348,9 @@ func (s *Server) getRBACUser(c *gin.Context) {
 // @Security     AdminToken
 // @Router       /api/v1/admin/users/{user_id} [put]
 func (s *Server) updateRBACUser(c *gin.Context) {
+	if denyOperatorOrgScoped(c) { // RD-1173: operator token must not mutate tenant users (ban/kyc/note)
+		return
+	}
 	userID := c.Param("user_id")
 	if !s.requireUserInFullAdminScope(c, userID) {
 		return
@@ -505,6 +508,9 @@ func (s *Server) getUserLinkedAddresses(c *gin.Context) {
 // @Security     AdminToken
 // @Router       /api/v1/admin/users/{user_id} [delete]
 func (s *Server) deleteRBACUser(c *gin.Context) {
+	if denyOperatorOrgScoped(c) { // RD-1173: operator token must not delete tenant users
+		return
+	}
 	userID := c.Param("user_id")
 	if !s.requireUserInFullAdminScope(c, userID) {
 		return
@@ -1324,6 +1330,9 @@ func (s *Server) getCacheStats(c *gin.Context) {
 // @Security     AdminToken
 // @Router       /api/v1/admin/eth-addresses/collisions [get]
 func (s *Server) getEthAddressCollisions(c *gin.Context) {
+	if denyOperatorTenantRead(c) { // RD-1173: operator token must not read the cross-org DID↔address collision list
+		return
+	}
 	collisions, err := s.db.GetAddressLinkCollisions(c.Request.Context())
 	if err != nil {
 		slog.Error("collisions: db read failed", "err", err)

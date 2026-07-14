@@ -119,7 +119,7 @@ func TestCircuitBreaker_Integration_FullProcessorFlow(t *testing.T) {
 		tripped:  make(map[string]time.Time),
 		cooldown: 50 * time.Millisecond,
 	}
-	cl := NewConcurrencyLimiter(10)
+	cl := NewConcurrencyLimiter(10, 0)
 	proxyClient := proxy.New(mockRPC.URL)
 	apiKey := "group-a-key"
 	userID := "user-123"
