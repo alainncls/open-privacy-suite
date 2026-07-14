@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { toFunctionSelector } from 'viem';
+import { toFunctionSelector, toFunctionSignature } from 'viem';
 import { rbacApi } from '@/api/rbac';
 import type { Group, ContractGrant, CreateContractGrantInput, FunctionRule, EventRule, ParamRule, EventSignature } from '@/types/rbac';
 import { Button } from '@/components/ui/button';
@@ -299,14 +299,18 @@ export default function ContractGrantForm({
       for (const item of parsed) {
         if (item.type !== 'function') continue;
         const abiInputs = item.inputs || [];
-        const inputTypes = abiInputs.map((input: { type: string }) => input.type).join(',');
-        const signature = `${item.name}(${inputTypes})`;
         try {
-          const selector = toFunctionSelector(signature);
+          // Derive selector + canonical signature from the ABI item via viem,
+          // which expands struct/tuple params to their component types
+          // (e.g. `(string,string)`). Building the signature by hand from
+          // input.type is wrong for tuples: a struct param's type is the
+          // literal "tuple", so `setWorkflowDetails(uint256,tuple)` hashes to a
+          // selector that never matches real calldata.
+          const selector = toFunctionSelector(item);
           results.push({
             selector,
             name: item.name,
-            signature,
+            signature: toFunctionSignature(item),
             stateMutability: item.stateMutability,
             inputs: abiInputs.map((input: { name: string; type: string }, idx: number) => ({
               index: idx,
