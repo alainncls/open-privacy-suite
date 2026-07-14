@@ -213,10 +213,11 @@ export default function ContractGrantsManager({
       for (const item of parsed) {
         if (item.type !== 'function') continue;
         const inputs: { name: string; type: string }[] = item.inputs || [];
-        const inputTypes = inputs.map(input => input.type).join(',');
-        const signature = `${item.name}(${inputTypes})`;
         try {
-          const selector = toFunctionSelector(signature).toLowerCase();
+          // Derive the selector from the ABI item via viem so struct/tuple
+          // params expand to their component types. Hand-joining input.type is
+          // wrong for tuples (type is the literal "tuple") — see RD-1205.
+          const selector = toFunctionSelector(item).toLowerCase();
           names[selector] = item.name;
           const paramMap: Record<number, string> = {};
           inputs.forEach((input, idx) => {
