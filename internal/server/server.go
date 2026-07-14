@@ -1157,7 +1157,7 @@ func (s *Server) setupRouter() *gin.Engine {
 	{
 		// Admin endpoints - private network + token auth + org scoping
 		admin := apiV1.Group("/admin")
-		admin.Use(s.localhostOnlyMiddleware(), adminAuth, orgScope)
+		admin.Use(bodyLimitMiddleware(MaxRequestBodySize), s.localhostOnlyMiddleware(), adminAuth, orgScope)
 		{
 			admin.GET("/logs", s.getLogs)
 			admin.GET("/status", s.getStatus)
