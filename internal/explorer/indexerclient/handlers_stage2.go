@@ -76,23 +76,30 @@ func (b *Backend) listTxFeed(ctx context.Context, limit int, beforeBlock *uint64
 }
 
 // GetTransactionsByAddress — indexer ListTransactions with address filter.
-func (b *Backend) GetTransactionsByAddress(ctx context.Context, address string, limit int, beforeBlock *uint64) ([]explorer.Transaction, error) {
+// RD-1149: the indexer's opaque cursor is round-tripped verbatim, so paging
+// resumes on the exact (block, tx_index) keyset position — bare block-range
+// paging skipped a boundary block's remaining rows, and the indexer clamps
+// PageSize (~100), so next_cursor is the only reliable continuation signal.
+// The legacy exclusive BeforeBlock maps to the proto's INCLUSIVE
+// block_range.to_block as before-1 (first page only; the indexer ignores
+// block_range once a cursor is present).
+func (b *Backend) GetTransactionsByAddress(ctx context.Context, address string, limit int, page explorer.AddressPage) ([]explorer.Transaction, string, error) {
 	req := &indexerv1.ListTransactionsRequest{
-		Page: &indexerv1.PageRequest{PageSize: int32(limit)},
+		Page: &indexerv1.PageRequest{PageSize: int32(limit), Cursor: page.Cursor},
 		Filter: &indexerv1.ListTransactionsRequest_ByAddress{
 			ByAddress: &indexerv1.ListTransactionsRequest_AddressFilter{
 				Address: address,
 			},
 		},
 	}
-	if beforeBlock != nil {
-		req.BlockRange = &indexerv1.BlockRange{ToBlock: *beforeBlock}
+	if page.Cursor == "" && page.BeforeBlock != nil && *page.BeforeBlock > 0 {
+		req.BlockRange = &indexerv1.BlockRange{ToBlock: *page.BeforeBlock - 1}
 	}
 	resp, err := b.client.ListTransactions(ctx, req)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return mapTransactions(resp.GetTransactions()), nil
+	return mapTransactions(resp.GetTransactions()), resp.GetPage().GetNextCursor(), nil
 }
 
 // GetTransactionsByBlock — indexer ListTransactions with block filter.
@@ -177,19 +184,21 @@ func (b *Backend) GetTransfersByTransaction(ctx context.Context, txHash string) 
 	return mapTokenTransfers(resp.GetTransfers()), nil
 }
 
-func (b *Backend) GetTransfersByAddress(ctx context.Context, address string, limit int, beforeBlock *uint64) ([]explorer.TokenTransfer, error) {
+// GetTransfersByAddress — RD-1149 cursor round-trip; see
+// GetTransactionsByAddress for the rationale.
+func (b *Backend) GetTransfersByAddress(ctx context.Context, address string, limit int, page explorer.AddressPage) ([]explorer.TokenTransfer, string, error) {
 	req := &indexerv1.ListTokenTransfersRequest{
 		ByAddress: address,
-		Page:      &indexerv1.PageRequest{PageSize: int32(limit)},
+		Page:      &indexerv1.PageRequest{PageSize: int32(limit), Cursor: page.Cursor},
 	}
-	if beforeBlock != nil {
-		req.BlockRange = &indexerv1.BlockRange{ToBlock: *beforeBlock}
+	if page.Cursor == "" && page.BeforeBlock != nil && *page.BeforeBlock > 0 {
+		req.BlockRange = &indexerv1.BlockRange{ToBlock: *page.BeforeBlock - 1}
 	}
 	resp, err := b.client.ListTokenTransfers(ctx, req)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return mapTokenTransfers(resp.GetTransfers()), nil
+	return mapTokenTransfers(resp.GetTransfers()), resp.GetPage().GetNextCursor(), nil
 }
 
 func (b *Backend) GetTransfersByToken(ctx context.Context, tokenAddress string, limit int, offset int) ([]explorer.TokenTransfer, int64, error) {

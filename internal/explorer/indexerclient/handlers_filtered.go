@@ -157,16 +157,28 @@ func (b *Backend) GetTransactionsPaginatedWithCategoriesFiltered(ctx context.Con
 // loop-fetch; leaving the approximate shape for now with a documented
 // cap. See docs/rd-855-behavioral-shifts.md.
 func (b *Backend) GetAddressTransactionCountFiltered(ctx context.Context, address string, filter *explorer.VisibilityFilter) (int, error) {
-	// Fetch up to the cap and count.
-	txs, err := b.GetTransactionsByAddress(ctx, address, overfetchCap, nil)
-	if err != nil {
-		return 0, err
-	}
-	count := 0
-	for i := range txs {
-		if matchesFilter(&txs[i], filter) {
-			count++
+	// RD-1149: walk the feed on the real cursor instead of sampling a single
+	// clamped page; still bounded by overfetchCap rows fetched in total.
+	count, fetched := 0, 0
+	var cursor string
+	for fetched < overfetchCap {
+		txs, next, err := b.GetTransactionsByAddress(ctx, address, overfetchCap-fetched, explorer.AddressPage{Cursor: cursor})
+		if err != nil {
+			return 0, err
 		}
+		if len(txs) == 0 {
+			break
+		}
+		fetched += len(txs)
+		for i := range txs {
+			if matchesFilter(&txs[i], filter) {
+				count++
+			}
+		}
+		if next == "" {
+			break
+		}
+		cursor = next
 	}
 	return count, nil
 }

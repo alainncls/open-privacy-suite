@@ -1,16 +1,18 @@
 package server
 
 import (
-	"sort"
 	"strconv"
 	"testing"
 )
 
 // TestCountAcrossPages verifies the paged counter sums survivors across ALL
 // pages — not just the first — which is the core of the address-stats fix:
-// privacy/gRPC mode clamps each fetch to ~100 rows, so a single fetch capped the
-// count at 100. It also pins the maxScan bound, termination, and identity dedup
-// against a backend that ignores `before` (re-serving or reordering rows).
+// privacy/gRPC mode clamps each fetch to ~100 rows, so a single fetch capped
+// the count at 100. Since RD-1149 the walk advances on the backend's opaque
+// continuation cursor, so it also pins: full counting through a block larger
+// than one page (the old bare-block advance skipped the remainder), the
+// maxScan bound, dedup against a re-serving backend, and termination on a
+// non-advancing cursor.
 func TestCountAcrossPages(t *testing.T) {
 	type item struct {
 		id    int
@@ -32,22 +34,30 @@ func TestCountAcrossPages(t *testing.T) {
 	}
 
 	const perPage = 100 // simulate the privacy/gRPC indexer page clamp
-	// fetch returns up to perPage items strictly older than `before` (nil=newest),
-	// mirroring GetTransactionsByAddress(... block_number < before ...).
-	fetch := func(before *uint64) ([]item, error) {
-		out := make([]item, 0, perPage)
-		for _, it := range feed {
-			if before != nil && it.block >= *before {
-				continue
+	// keysetFetch pages a feed slice on a positional cursor (the stringified
+	// index of the next row) — the same contract the real backends provide:
+	// up to perPage rows plus a continuation that resumes exactly after the
+	// last returned row ("" = exhausted).
+	keysetFetch := func(f []item) func(cursor string) ([]item, string, error) {
+		return func(cursor string) ([]item, string, error) {
+			start := 0
+			if cursor != "" {
+				start, _ = strconv.Atoi(cursor)
 			}
-			out = append(out, it)
-			if len(out) == perPage {
-				break
+			if start >= len(f) {
+				return nil, "", nil
 			}
+			end := start + perPage
+			if end > len(f) {
+				end = len(f)
+			}
+			next := ""
+			if end < len(f) {
+				next = strconv.Itoa(end)
+			}
+			return f[start:end], next, nil
 		}
-		return out, nil
 	}
-	cursorOf := func(it item) uint64 { return it.block }
 	keyOf := func(it item) string { return strconv.Itoa(it.id) }
 	survivors := func(page []item) (int, error) {
 		n := 0
@@ -60,7 +70,7 @@ func TestCountAcrossPages(t *testing.T) {
 	}
 
 	t.Run("counts across all pages (not capped at one page)", func(t *testing.T) {
-		got, err := countAcrossPages(fetch, cursorOf, keyOf, survivors, 10000)
+		got, err := countAcrossPages(keysetFetch(feed), keyOf, survivors, 100000)
 		if err != nil {
 			t.Fatalf("countAcrossPages: %v", err)
 		}
@@ -75,7 +85,7 @@ func TestCountAcrossPages(t *testing.T) {
 
 	t.Run("respects maxScan bound (rounds up to a page)", func(t *testing.T) {
 		// maxScan=150 with perPage=100 -> scans 2 pages (200 items) then stops.
-		got, err := countAcrossPages(fetch, cursorOf, keyOf, survivors, 150)
+		got, err := countAcrossPages(keysetFetch(feed), keyOf, survivors, 150)
 		if err != nil {
 			t.Fatalf("countAcrossPages: %v", err)
 		}
@@ -93,133 +103,87 @@ func TestCountAcrossPages(t *testing.T) {
 		}
 	})
 
-	t.Run("single block larger than a page terminates (remainder omitted)", func(t *testing.T) {
-		// All items in the same block (block 7). After the first page the cursor
-		// advances to 7; the next fetch (block < 7) is empty, so the loop
-		// terminates. The same-block remainder beyond one page is omitted, but
-		// the loop is always bounded — never infinite.
-		same := make([]item, 500)
-		for i := range same {
-			same[i] = item{id: i, block: 7, vis: true}
+	t.Run("single block larger than a page is fully counted (RD-1149)", func(t *testing.T) {
+		// All 150 items share block 7. The old bare-block advance fetched one
+		// page, moved the cursor to `before block 7`, and silently omitted the
+		// remaining 50. The keyset cursor resumes mid-block, so every row is
+		// counted.
+		sameBlock := make([]item, 0, 150)
+		for i := 1; i <= 150; i++ {
+			sameBlock = append(sameBlock, item{id: 1000 + i, block: 7, vis: true})
 		}
-		fetchSame := func(before *uint64) ([]item, error) {
-			if before != nil && *before <= 7 {
-				return nil, nil
-			}
-			return same[:perPage], nil
-		}
-		got, err := countAcrossPages(fetchSame, cursorOf, keyOf, survivors, 10000)
+		got, err := countAcrossPages(keysetFetch(sameBlock), keyOf, survivors, 100000)
 		if err != nil {
 			t.Fatalf("countAcrossPages: %v", err)
 		}
-		if got != perPage {
-			t.Errorf("count = %d, want %d (one page counted, then bounded break)", got, perPage)
+		if got != len(sameBlock) {
+			t.Errorf("count = %d, want %d (mid-block resume must not drop the block remainder)", got, len(sameBlock))
 		}
 	})
 
-	t.Run("backend that re-serves the identical page is not double-counted", func(t *testing.T) {
-		// The gRPC chain-indexer backend ignores `before` and re-serves the same
-		// page on every call. Identity dedup counts the page once; the second
-		// fetch yields no new rows and breaks.
+	t.Run("re-serving backend with a stuck cursor is counted once and terminates", func(t *testing.T) {
+		// Degenerate backend: always returns the same first page with the same
+		// non-empty cursor. Identity dedup counts the page once; the
+		// non-advancing cursor terminates the walk.
+		calls := 0
+		fetch := func(cursor string) ([]item, string, error) {
+			calls++
+			return feed[:perPage], "stuck", nil
+		}
+		got, err := countAcrossPages(fetch, keyOf, survivors, 100000)
+		if err != nil {
+			t.Fatalf("countAcrossPages: %v", err)
+		}
 		wantFirstPage := 0
 		for _, it := range feed[:perPage] {
 			if it.vis {
 				wantFirstPage++
 			}
 		}
-		calls := 0
-		fetchIgnoresBefore := func(_ *uint64) ([]item, error) {
-			calls++
-			return feed[:perPage], nil
-		}
-		got, err := countAcrossPages(fetchIgnoresBefore, cursorOf, keyOf, survivors, 10000)
-		if err != nil {
-			t.Fatalf("countAcrossPages: %v", err)
-		}
 		if got != wantFirstPage {
 			t.Errorf("count = %d, want %d (re-served page counted once, not doubled)", got, wantFirstPage)
 		}
 		if calls != 2 {
-			t.Errorf("fetch calls = %d, want 2 (count first page, then no new rows breaks)", calls)
+			t.Errorf("fetch calls = %d, want 2 (first page, then the stuck cursor terminates)", calls)
 		}
 	})
 
-	t.Run("backend re-serves an inclusive, reordered page is not double-counted", func(t *testing.T) {
-		// Real gRPC failure the old page[0]>=before guard missed: `before` is
-		// mapped to an INCLUSIVE block bound and rows come back ascending, so the
-		// re-served page's first row is the minimum block (< before) and the last
-		// is the maximum. The old guard advanced the cursor to the max and never
-		// tripped, counting the overlap again. Identity dedup counts each row once.
-		small := []item{
-			{id: 1, block: 50, vis: true},
-			{id: 2, block: 40, vis: true},
-			{id: 3, block: 30, vis: false},
-			{id: 4, block: 20, vis: true},
-			{id: 5, block: 10, vis: true},
-		}
-		wantVis := 0
-		for _, it := range small {
-			if it.vis {
-				wantVis++
+	t.Run("overlapping pages stay bounded by rows fetched and are not double-counted", func(t *testing.T) {
+		// Backend whose pages heavily overlap (the cursor advances by only 10
+		// rows per 100-row page). Dedup keeps the count correct; the maxScan
+		// bound counts FETCHED rows, so overlap cannot drive unbounded work.
+		fetch := func(cursor string) ([]item, string, error) {
+			start := 0
+			if cursor != "" {
+				start, _ = strconv.Atoi(cursor)
 			}
-		}
-		fetchInclusiveAsc := func(before *uint64) ([]item, error) {
-			out := make([]item, 0, len(small))
-			for _, it := range small {
-				if before != nil && it.block > *before { // inclusive: keep block <= before
-					continue
-				}
-				out = append(out, it)
+			if start >= len(feed) {
+				return nil, "", nil
 			}
-			sort.Slice(out, func(i, j int) bool { return out[i].block < out[j].block }) // ascending
-			return out, nil
+			end := start + perPage
+			if end > len(feed) {
+				end = len(feed)
+			}
+			next := ""
+			if end < len(feed) {
+				next = strconv.Itoa(start + 10) // 90-row overlap with the next page
+			}
+			return feed[start:end], next, nil
 		}
-		got, err := countAcrossPages(fetchInclusiveAsc, cursorOf, keyOf, survivors, 10000)
+		got, err := countAcrossPages(fetch, keyOf, survivors, 400)
 		if err != nil {
 			t.Fatalf("countAcrossPages: %v", err)
 		}
-		if got != wantVis {
-			t.Errorf("count = %d, want %d (inclusive reordered re-serve must not double-count)", got, wantVis)
-		}
-	})
-
-	t.Run("heavy page overlap stays bounded by rows fetched, not distinct rows", func(t *testing.T) {
-		// Degenerate backend: every page re-serves a fixed high-block prefix
-		// (all dups after the first page) plus a small moving tail of new, lower
-		// blocks. Each page yields only `newTail` new rows while the cursor keeps
-		// advancing, so the loop never hits the no-new-rows break. The maxScan
-		// bound must therefore count rows FETCHED, not distinct rows kept —
-		// otherwise this runs ~maxScan/newTail backend calls instead of
-		// ~maxScan/pageSize, amplifying backend load by orders of magnitude.
-		const (
-			pageSz  = 100
-			newTail = 5
-			maxScan = 1000
-		)
-		sticky := make([]item, 0, pageSz-newTail)
-		for i := 0; i < pageSz-newTail; i++ {
-			b := uint64(1_000_000 + i)
-			sticky = append(sticky, item{id: int(b), block: b, vis: true})
-		}
-		calls := 0
-		nextBlock := uint64(500_000)
-		fetchSticky := func(_ *uint64) ([]item, error) {
-			calls++
-			page := make([]item, 0, pageSz)
-			page = append(page, sticky...) // re-served on every call
-			for k := 0; k < newTail; k++ {
-				page = append(page, item{id: int(nextBlock), block: nextBlock, vis: true})
-				nextBlock--
+		// 4 fetches of 100 rows hit the 400-row bound: pages start at rows
+		// 0/10/20/30, covering rows 0..129 distinct.
+		want := 0
+		for _, it := range feed[:130] {
+			if it.vis {
+				want++
 			}
-			return page, nil
 		}
-		if _, err := countAcrossPages(fetchSticky, cursorOf, keyOf, survivors, maxScan); err != nil {
-			t.Fatalf("countAcrossPages: %v", err)
-		}
-		// Bound is on fetched rows: ~maxScan/pageSz calls, not ~maxScan/newTail.
-		maxCalls := maxScan/pageSz + 2
-		if calls > maxCalls {
-			t.Errorf("fetch calls = %d, want <= %d (maxScan must bound rows fetched, not distinct rows kept)", calls, maxCalls)
+		if got != want {
+			t.Errorf("count = %d, want %d (overlap deduped, bounded by rows fetched)", got, want)
 		}
 	})
 }

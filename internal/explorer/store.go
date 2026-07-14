@@ -317,20 +317,27 @@ func (s *Store) GetTransactions(ctx context.Context, limit int, beforeBlock *uin
 	return s.scanTransactions(rows)
 }
 
-func (s *Store) GetTransactionsByAddress(ctx context.Context, address string, limit int, beforeBlock *uint64) ([]Transaction, error) {
+func (s *Store) GetTransactionsByAddress(ctx context.Context, address string, limit int, page AddressPage) ([]Transaction, string, error) {
 	address = strings.ToLower(address)
 	var rows *sql.Rows
-	var err error
 
-	if beforeBlock != nil {
+	bound, err := sqlFeedBound(page)
+	if err != nil {
+		return nil, "", err
+	}
+	if bound != nil {
+		// Keyset seek (RD-1149): the exclusive row-value comparison resumes
+		// exactly after the cursor row — a page boundary inside a block cannot
+		// skip the block's remaining rows the way bare `block_number < $2` did.
+		// Fetch limit+1 to learn whether a further page exists.
 		rows, err = s.db.QueryContext(ctx, `
 			SELECT t.hash, t.block_number, b.timestamp, t.tx_index, t.from_address, t.to_address, t.value::text,
 				t.gas_used, t.gas_price, t.gas_limit, t.max_fee_per_gas, t.max_priority_fee_per_gas, t.nonce,
 				t.tx_type, t.input_data, t.status, t.error, t.revert_reason, t.created_at
 			FROM transactions t
 			JOIN blocks b ON t.block_number = b.number
-			WHERE (LOWER(t.from_address) = $1 OR LOWER(t.to_address) = $1) AND t.block_number < $2
-			ORDER BY t.block_number DESC, t.tx_index DESC LIMIT $3`, address, *beforeBlock, limit)
+			WHERE (LOWER(t.from_address) = $1 OR LOWER(t.to_address) = $1) AND (t.block_number, t.tx_index) < ($2, $3)
+			ORDER BY t.block_number DESC, t.tx_index DESC LIMIT $4`, address, bound.Block, bound.Index, limit+1)
 	} else {
 		rows, err = s.db.QueryContext(ctx, `
 			SELECT t.hash, t.block_number, b.timestamp, t.tx_index, t.from_address, t.to_address, t.value::text,
@@ -339,13 +346,23 @@ func (s *Store) GetTransactionsByAddress(ctx context.Context, address string, li
 			FROM transactions t
 			JOIN blocks b ON t.block_number = b.number
 			WHERE LOWER(t.from_address) = $1 OR LOWER(t.to_address) = $1
-			ORDER BY t.block_number DESC, t.tx_index DESC LIMIT $2`, address, limit)
+			ORDER BY t.block_number DESC, t.tx_index DESC LIMIT $2`, address, limit+1)
 	}
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer rows.Close()
-	return s.scanTransactions(rows)
+	txs, err := s.scanTransactions(rows)
+	if err != nil {
+		return nil, "", err
+	}
+	nextCursor := ""
+	if len(txs) > limit {
+		txs = txs[:limit]
+		last := txs[len(txs)-1]
+		nextCursor = encodeFeedCursor(feedCursor{Block: last.BlockNumber, Index: uint32(last.TxIndex)})
+	}
+	return txs, nextCursor, nil
 }
 
 func (s *Store) scanTransactions(rows *sql.Rows) ([]Transaction, error) {
@@ -1030,31 +1047,45 @@ func (s *Store) FindTransferParticipantTxs(ctx context.Context, visibleAddrs []s
 }
 
 // GetTransfersByAddress returns token transfers involving a specific address.
-func (s *Store) GetTransfersByAddress(ctx context.Context, address string, limit int, beforeBlock *uint64) ([]TokenTransfer, error) {
+func (s *Store) GetTransfersByAddress(ctx context.Context, address string, limit int, page AddressPage) ([]TokenTransfer, string, error) {
 	address = strings.ToLower(address)
 	var rows *sql.Rows
-	var err error
 
-	if beforeBlock != nil {
+	bound, err := sqlFeedBound(page)
+	if err != nil {
+		return nil, "", err
+	}
+	if bound != nil {
+		// Keyset seek (RD-1149): see GetTransactionsByAddress.
 		rows, err = s.db.QueryContext(ctx, `
 			SELECT id, tx_hash, log_index, token_address, from_address, to_address, value::text,
 				block_number, timestamp, transfer_type, token_type, token_id, is_internal
 			FROM token_transfers
-			WHERE (LOWER(from_address) = $1 OR LOWER(to_address) = $1) AND block_number < $2
-			ORDER BY block_number DESC, log_index DESC LIMIT $3`, address, *beforeBlock, limit)
+			WHERE (LOWER(from_address) = $1 OR LOWER(to_address) = $1) AND (block_number, log_index) < ($2, $3)
+			ORDER BY block_number DESC, log_index DESC LIMIT $4`, address, bound.Block, bound.Index, limit+1)
 	} else {
 		rows, err = s.db.QueryContext(ctx, `
 			SELECT id, tx_hash, log_index, token_address, from_address, to_address, value::text,
 				block_number, timestamp, transfer_type, token_type, token_id, is_internal
 			FROM token_transfers
 			WHERE LOWER(from_address) = $1 OR LOWER(to_address) = $1
-			ORDER BY block_number DESC, log_index DESC LIMIT $2`, address, limit)
+			ORDER BY block_number DESC, log_index DESC LIMIT $2`, address, limit+1)
 	}
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer rows.Close()
-	return s.scanTokenTransfers(rows)
+	transfers, err := s.scanTokenTransfers(rows)
+	if err != nil {
+		return nil, "", err
+	}
+	nextCursor := ""
+	if len(transfers) > limit {
+		transfers = transfers[:limit]
+		last := transfers[len(transfers)-1]
+		nextCursor = encodeFeedCursor(feedCursor{Block: last.BlockNumber, Index: uint32(last.LogIndex)})
+	}
+	return transfers, nextCursor, nil
 }
 
 // GetInternalTransactionsByAddress returns internal transactions for an address with pagination.

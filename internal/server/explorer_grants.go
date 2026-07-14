@@ -326,10 +326,11 @@ func (s *Server) pseudonym(address string) string {
 // filterTxsByGrantScope drops disclosed transactions that fall outside the
 // grant's own scope (RD-1164 #9): a grant scoped to a DateRange or a set of
 // contract addresses must not disclose transactions beyond it. An unset scope
-// dimension imposes no restriction. Filtering is applied to the already-fetched
-// page, so has_more reflects the post-filter page — conservative (it may
-// under-report additional in-scope rows on later pages, but never
-// over-discloses). Proper server-side time/keyset bounds are tracked in RD-1149.
+// dimension imposes no restriction. It fail-closes: a tx with a missing (0)
+// or out-of-range timestamp, or whose from/to is not in the address scope, is
+// excluded — never over-discloses. collectGrantScopeTxs applies it per raw
+// page while walking the feed cursor (RD-1149/RD-1167), so in-scope rows
+// beyond the first page are reachable.
 func filterTxsByGrantScope(txs []explorer.Transaction, scope disclosure.Scope) []explorer.Transaction {
 	if scope.DateRange == nil && len(scope.Addresses) == 0 {
 		return txs
@@ -374,6 +375,45 @@ func filterTxsByGrantScope(txs []explorer.Transaction, scope disclosure.Scope) [
 	return out
 }
 
+// collectGrantScopeTxs walks an address's tx feed on the backend's opaque
+// continuation cursor (RD-1149), applying the grant's scope filter per fetch,
+// until it has exactly `want` in-scope txs, the feed is exhausted, or a scan
+// bound is hit. Each iteration fetches only the rows still missing
+// (want − len(inScope)), so the result never exceeds `want` and is never
+// trimmed — trimming would drop rows behind the resume cursor, which always
+// positions after the last FETCHED row. Returns the in-scope txs and the
+// resume cursor ("" = feed exhausted, non-empty = advanceable). At the scan
+// bounds the result may be short — even empty — with a non-empty cursor: the
+// caller can always page forward, so a narrowly-scoped grant over a busy
+// address never dead-ends (RD-1167).
+func (s *Server) collectGrantScopeTxs(ctx context.Context, address string, scope disclosure.Scope, want int, page explorer.AddressPage) ([]explorer.Transaction, string, error) {
+	const (
+		maxScan  = 10000 // bound on raw rows fetched (matches the count walkers)
+		maxFetch = 100   // bound on sequential backend calls per request
+	)
+	var inScope []explorer.Transaction
+	cur := page
+	for scanned, fetches := 0, 0; scanned < maxScan && fetches < maxFetch; fetches++ {
+		txs, next, err := s.explorerStore.GetTransactionsByAddress(ctx, address, want-len(inScope), cur)
+		if err != nil {
+			return nil, "", err
+		}
+		scanned += len(txs)
+		inScope = append(inScope, filterTxsByGrantScope(txs, scope)...)
+		if next == "" {
+			return inScope, "", nil // feed exhausted — nothing left to resume
+		}
+		if next == cur.Cursor {
+			return inScope, "", nil // defensive: a non-advancing cursor must terminate
+		}
+		cur = explorer.AddressPage{Cursor: next}
+		if len(inScope) >= want {
+			return inScope, next, nil
+		}
+	}
+	return inScope, cur.Cursor, nil // scan bound hit — resumable
+}
+
 // getGrantTransactions returns transactions for a disclosed address, pseudonymized
 // according to the grant's disclosure level.
 // GET /api/v1/explorer/grant/:grant_id/:address_id/transactions
@@ -386,8 +426,9 @@ func filterTxsByGrantScope(txs []explorer.Transaction, scope disclosure.Scope) [
 // @Produce      json
 // @Param        grant_id path string true "Disclosure grant ID"
 // @Param        address_id path string true "Opaque address identifier from viewable-addresses"
-// @Param        limit query int false "Max rows to return (1-100)" default(25)
-// @Param        before query int false "Return rows strictly older than this block number (pagination cursor)"
+// @Param        limit query int false "Max rows to return (1-100). At the scan bounds a page may come back short — even empty — with has_more=true and a next_cursor to continue from" default(25)
+// @Param        cursor query string false "Opaque continuation cursor from the previous response's next_cursor (RD-1149); takes precedence over before"
+// @Param        before query int false "Legacy: return rows strictly older than this block number (may skip rows of the boundary block — prefer cursor)"
 // @Success      200 {object} GrantTransactionsResponse
 // @Failure      400 {object} APIError "grant_id and address_id are required"
 // @Failure      401 {object} APIError "authentication required"
@@ -487,28 +528,30 @@ func (s *Server) getGrantTransactions(c *gin.Context) {
 		}
 	}
 
-	var beforeBlock *uint64
+	page := explorer.AddressPage{Cursor: c.Query("cursor")}
 	if beforeStr := c.Query("before"); beforeStr != "" {
 		if parsed, err := strconv.ParseUint(beforeStr, 10, 64); err == nil {
-			beforeBlock = &parsed
+			page.BeforeBlock = &parsed
 		}
 	}
 
-	// Fetch one extra to detect has_more
-	txs, err := s.explorerStore.GetTransactionsByAddress(c.Request.Context(), realAddress, limit+1, beforeBlock)
+	// RD-1149/RD-1167: walk the address feed on the backend's real
+	// continuation cursor, applying the grant's scope filter (RD-1164 #9) per
+	// fetch, until `limit` in-scope txs are found, the feed is exhausted, or
+	// a scan bound is hit. The old single limit+1 fetch made in-scope txs
+	// deeper than the first page unreachable and computed has_more from the
+	// pre-filter page size.
+	txs, resumeCursor, err := s.collectGrantScopeTxs(c.Request.Context(), realAddress, grant.Scope, limit, page)
 	if err != nil {
+		if isBadCursorErr(err) {
+			respondBadRequest(c, "invalid pagination cursor")
+			return
+		}
 		respondInternalError(c, "failed to get transactions")
 		return
 	}
 
-	// RD-1164 #9: enforce the grant's own scope (date range / contract
-	// addresses) on the disclosed transactions before pagination.
-	txs = filterTxsByGrantScope(txs, grant.Scope)
-
-	hasMore := len(txs) > limit
-	if hasMore {
-		txs = txs[:limit]
-	}
+	hasMore := resumeCursor != ""
 
 	realAddrLower := strings.ToLower(realAddress)
 	labels := make(map[string]string)
@@ -619,6 +662,7 @@ func (s *Server) getGrantTransactions(c *gin.Context) {
 		DisclosureLevel: disclosureLevel,
 		AddressLabels:   labels,
 		HasMore:         hasMore,
+		NextCursor:      resumeCursor,
 	})
 }
 
