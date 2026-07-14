@@ -61,12 +61,10 @@ func (s *Server) registerComplianceRoutes(adminGroup *gin.RouterGroup) {
 }
 
 // compliancePaginationParams parses and caps pagination parameters.
+// The cap now lives in parsePaginationParams (RD-1179 — applied to all admin
+// list endpoints), so this is a thin alias kept for call-site clarity.
 func compliancePaginationParams(c *gin.Context, defaultLimit int) (int, int) {
-	limit, offset := parsePaginationParams(c, defaultLimit)
-	if limit > maxPaginationLimit {
-		limit = maxPaginationLimit
-	}
-	return limit, offset
+	return parsePaginationParams(c, defaultLimit)
 }
 
 // defaultEnforcementMode returns the cluster-wide default compliance

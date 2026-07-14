@@ -409,6 +409,15 @@ Add `--dry-run` to preview the change without writing. Run it before switching `
 
 The client's IP is forwarded to the upstream node via `X-Forwarded-For` for upstream rate limiting.
 
+### Request size and pagination limits
+
+Fixed limits protect the proxy from oversized or unbounded requests. These are not configurable:
+
+- **Request body size:** admin, explorer, and `/rpc` requests are capped at 1 MB. A declared `Content-Length` above the cap is rejected with `413 Request Entity Too Large`; chunked or under-declared bodies are still bounded and fail with a 4xx response when the handler reads past the cap.
+- **Admin list pagination:** `?limit=` on admin list endpoints is capped at 1000; higher values are clamped down. Non-numeric, zero, or negative values fall back to the endpoint default.
+- **Explorer pagination:** `?limit=` on explorer list endpoints is capped at 100; negative `limit`/`offset` values are treated as the default rather than passed through to the database.
+- **Batch admin operations:** contract sync-delete and batch-move accept at most 200 contract IDs per request; a single contract grant accepts at most 100 custom-address event param rules.
+
 ---
 
 ## Explorer Pseudonyms
