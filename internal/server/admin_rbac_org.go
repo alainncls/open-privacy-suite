@@ -31,7 +31,12 @@ func validateSlug(slug string) string {
 	return ""
 }
 
-// parsePaginationParams extracts limit and offset from query parameters with defaults.
+// parsePaginationParams extracts limit and offset from query parameters with
+// defaults. The limit is clamped to maxPaginationLimit (RD-1179) so an
+// unbounded ?limit= can't turn one admin list request into a full-table scan
+// / memory blow-up. Non-numeric, zero, or negative values fall back to the
+// defaults. This clamp previously lived only in compliancePaginationParams;
+// it now applies to every admin list endpoint (users, orgs, contracts, groups).
 func parsePaginationParams(c *gin.Context, defaultLimit int) (limit, offset int) {
 	limit = defaultLimit
 	offset = 0
@@ -39,6 +44,9 @@ func parsePaginationParams(c *gin.Context, defaultLimit int) (limit, offset int)
 		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
 			limit = parsed
 		}
+	}
+	if limit > maxPaginationLimit {
+		limit = maxPaginationLimit
 	}
 	if o := c.Query("offset"); o != "" {
 		if parsed, err := strconv.Atoi(o); err == nil && parsed >= 0 {

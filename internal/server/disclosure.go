@@ -700,6 +700,18 @@ func (s *Server) checkDisclosureAccess(c *gin.Context) {
 		return
 	}
 
+	// RD-1180: a jwt_admin (tier-2) must not learn whether a disclosure grant
+	// exists over ANOTHER org's user. The lookup is global by DID pair, and the
+	// success body leaks grant ID / scope / level / expiry, so without a scope
+	// clamp this endpoint is a cross-org relationship oracle. When a grant exists
+	// but its org is outside the caller's scope, collapse to the SAME opaque
+	// "no active grant" body as the not-found case so the two are indistinguishable.
+	// inScope bypasses for super-admin (admin_token) and dev; the operator token
+	// is blocked upstream by denyOperatorTenantRead.
+	if grantWithReq != nil && !inScope(c, grantWithReq.Request.OrgID) {
+		grantWithReq = nil
+	}
+
 	if grantWithReq == nil {
 		c.JSON(http.StatusOK, gin.H{
 			"has_access": false,

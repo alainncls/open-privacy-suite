@@ -114,6 +114,7 @@ type GrantTransaction struct {
 // - G15: explorerLogRedactionMiddleware strips Ethereum addresses from logged request paths.
 func (s *Server) registerExplorerRoutes(router *gin.Engine) {
 	explorer := router.Group("/api/v1/explorer")
+	explorer.Use(bodyLimitMiddleware(MaxRequestBodySize))
 	explorer.Use(s.localhostOnlyMiddleware())
 	explorer.Use(auth.OptionalJWTAuthMiddleware(s.jwtService, s.db))
 	// G15: Redact Ethereum addresses from access log paths
@@ -540,6 +541,34 @@ func (s *Server) getExplorerStats(c *gin.Context) {
 	c.JSON(http.StatusOK, stats)
 }
 
+// maxExplorerPageLimit caps the page size of explorer list endpoints (RD-1179).
+const maxExplorerPageLimit = 100
+
+// clampExplorerLimit bounds a parsed explorer page limit to [1, maxExplorerPageLimit],
+// falling back to def for non-positive values (RD-1179). Explorer handlers parse
+// limit with `limit, _ := strconv.Atoi(...)`, which ignores both the parse error
+// and the sign — so without this an unbounded ?limit= reaches SQL directly, and a
+// negative limit becomes Postgres `LIMIT ALL` (a full-table dump).
+func clampExplorerLimit(limit, def int) int {
+	if limit <= 0 {
+		return def
+	}
+	if limit > maxExplorerPageLimit {
+		return maxExplorerPageLimit
+	}
+	return limit
+}
+
+// clampExplorerOffset floors a parsed explorer offset at 0 (RD-1179). A negative
+// OFFSET otherwise reaches SQL, where Postgres rejects it ("OFFSET must not be
+// negative") — turning a bad query param into a 500.
+func clampExplorerOffset(offset int) int {
+	if offset < 0 {
+		return 0
+	}
+	return offset
+}
+
 // getExplorerBlocks returns a page of recent blocks, newest first.
 //
 // @Summary      List recent blocks
@@ -558,6 +587,7 @@ func (s *Server) getExplorerBlocks(c *gin.Context) {
 		return
 	}
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "25"))
+	limit = clampExplorerLimit(limit, 25)
 	var beforeBlock *uint64
 	if b := c.Query("before"); b != "" {
 		if val, err := strconv.ParseUint(b, 10, 64); err == nil {
@@ -877,12 +907,7 @@ func (s *Server) getExplorerTransactions(c *gin.Context) {
 		return
 	}
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "25"))
-	if limit <= 0 {
-		limit = 25
-	}
-	if limit > 100 {
-		limit = 100
-	}
+	limit = clampExplorerLimit(limit, 25)
 	var beforeBlock *uint64
 	if b := c.Query("before"); b != "" {
 		if val, err := strconv.ParseUint(b, 10, 64); err == nil {
@@ -1331,6 +1356,7 @@ func (s *Server) getExplorerAddressTransactions(c *gin.Context) {
 	}
 	address := c.Param("address")
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "25"))
+	limit = clampExplorerLimit(limit, 25)
 	var beforeBlock *uint64
 	if b := c.Query("before"); b != "" {
 		if val, err := strconv.ParseUint(b, 10, 64); err == nil {
@@ -1978,6 +2004,7 @@ func (s *Server) getExplorerAddressTransfers(c *gin.Context) {
 	}
 
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "25"))
+	limit = clampExplorerLimit(limit, 25)
 	var beforeBlock *uint64
 	if b := c.Query("before"); b != "" {
 		if val, err := strconv.ParseUint(b, 10, 64); err == nil {
@@ -2039,7 +2066,9 @@ func (s *Server) getExplorerAddressInternal(c *gin.Context) {
 	}
 
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "25"))
+	limit = clampExplorerLimit(limit, 25)
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	offset = clampExplorerOffset(offset)
 
 	itxs, _, err := s.explorerStore.GetInternalTransactionsByAddress(c.Request.Context(), address, limit, offset)
 	if err != nil {
@@ -2096,7 +2125,9 @@ func (s *Server) getExplorerAddressLogs(c *gin.Context) {
 	}
 
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "25"))
+	limit = clampExplorerLimit(limit, 25)
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	offset = clampExplorerOffset(offset)
 
 	logs, _, err := s.explorerStore.GetLogsByAddress(c.Request.Context(), address, limit, offset)
 	if err != nil {
@@ -2359,6 +2390,7 @@ func (s *Server) getExplorerTokens(c *gin.Context) {
 		}
 	}
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	offset = clampExplorerOffset(offset)
 	tokenType := c.Query("type")
 
 	tokens, _, err := s.explorerStore.GetTokens(c.Request.Context(), limit, offset, tokenType)
@@ -2561,6 +2593,7 @@ func (s *Server) getExplorerTokenHolders(c *gin.Context) {
 		}
 	}
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	offset = clampExplorerOffset(offset)
 
 	holders, _, err := s.explorerStore.GetTokenHolders(c.Request.Context(), address, limit, offset)
 	if err != nil {
@@ -2623,6 +2656,7 @@ func (s *Server) getExplorerTokenTransfers(c *gin.Context) {
 		}
 	}
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	offset = clampExplorerOffset(offset)
 
 	transfers, _, err := s.explorerStore.GetTransfersByToken(c.Request.Context(), address, limit, offset)
 	if err != nil {
@@ -2678,6 +2712,7 @@ func (s *Server) getExplorerAllTransfers(c *gin.Context) {
 		}
 	}
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	offset = clampExplorerOffset(offset)
 
 	transfers, _, err := s.explorerStore.GetAllTransfers(c.Request.Context(), limit, offset)
 	if err != nil {
