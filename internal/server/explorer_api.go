@@ -2,9 +2,7 @@ package server
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -12,7 +10,6 @@ import (
 	"time"
 
 	"privacy-proxy/internal/auth"
-	"privacy-proxy/internal/disclosure"
 	"privacy-proxy/internal/explorer"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
@@ -117,6 +114,7 @@ type GrantTransaction struct {
 // - G15: explorerLogRedactionMiddleware strips Ethereum addresses from logged request paths.
 func (s *Server) registerExplorerRoutes(router *gin.Engine) {
 	explorer := router.Group("/api/v1/explorer")
+	explorer.Use(bodyLimitMiddleware(MaxRequestBodySize))
 	explorer.Use(s.localhostOnlyMiddleware())
 	explorer.Use(auth.OptionalJWTAuthMiddleware(s.jwtService, s.db))
 	// G15: Redact Ethereum addresses from access log paths
@@ -201,745 +199,6 @@ func (s *Server) bindExplorerEndpoints(rg *gin.RouterGroup) {
 
 	// Indexing
 	rg.POST("/index/block/:number", s.indexExplorerBlock)
-}
-
-// getViewableAddresses returns all addresses the authenticated viewer can view.
-// GET /api/v1/explorer/viewable-addresses
-// SECURITY (RD-1164 #7): the viewer identity comes ONLY from the validated JWT
-// (or the impersonation override) via getViewerDIDFromRequest — never from a
-// ?wallet= lookup, which would be a deanonymization oracle. A ?wallet= value is
-// only echoed back for display; with no JWT the response is the empty set.
-//
-// @Summary      Addresses viewable by the resolved viewer
-// @Description  Lists the viewer's own linked addresses plus addresses disclosed to them via active disclosure grants. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: the viewer DID comes from a validated JWT (or the impersonation override) — never from a query param — and for non-full grants the disclosed address is a pseudonym or "[PRIVATE]", never the real address. Fail-closed: with no resolvable viewer, only empty lists are returned.
-// @Tags         Explorer
-// @Produce      json
-// @Param        wallet query string false "Viewer wallet address (0x-prefixed hex), echoed back for display only. The viewer identity is resolved solely from the JWT — a wallet value never resolves a DID (RD-1164 #7)." example(0x0000000000000000000000000000000000000001)
-// @Success      200 {object} ViewableAddressesResponse
-// @Failure      400 {object} APIError "neither a wallet nor JWT authentication was supplied"
-// @Failure      500 {object} APIError "lookup failed"
-// @Router       /api/v1/explorer/viewable-addresses [get]
-func (s *Server) getViewableAddresses(c *gin.Context) {
-	wallet := c.Query("wallet")
-
-	// SECURITY: Resolve viewer DID from JWT (validated) or wallet (DB-verified).
-	// DID is never accepted directly from query params.
-	viewerDID := s.getViewerDIDFromRequest(c)
-
-	if wallet == "" && viewerDID == "" {
-		respondBadRequest(c, "either wallet or JWT authentication is required")
-		return
-	}
-
-	// Normalize wallet address if provided
-	if wallet != "" {
-		wallet = strings.ToLower(wallet)
-	}
-
-	ctx := c.Request.Context()
-	response := ViewableAddressesResponse{
-		ViewerWallet:       wallet,
-		OwnAddresses:       []OwnAddress{},
-		DisclosedAddresses: []DisclosedAddress{},
-	}
-
-	// RD-1164 #7: identity is resolved ONLY from the validated JWT
-	// (getViewerDIDFromRequest, above). The previous ?wallet= →
-	// GetDIDByEthAddress fallback let an unauthenticated caller resolve any
-	// wallet's DID and enumerate every address linked to that identity — a
-	// deanonymization/clustering oracle. The equivalent wallet-viewer path was
-	// already removed from the other explorer handlers (see the getViewerIdentity
-	// removal note below); this closes it here too. A caller with no valid JWT
-	// gets the anonymous empty response regardless of any ?wallet= value.
-	if viewerDID == "" {
-		c.JSON(http.StatusOK, response)
-		return
-	}
-
-	response.ViewerDID = viewerDID
-
-	// 2. Get viewer's own addresses
-	ownLinks, err := s.db.GetEthAddressesByDID(ctx, viewerDID)
-	if err != nil {
-		respondInternalErrorAndLog(c, "failed to get own addresses",
-			"explorer: GetEthAddressesByDID failed",
-			"viewer_did", viewerDID, "err", err)
-		return
-	}
-
-	for _, link := range ownLinks {
-		response.OwnAddresses = append(response.OwnAddresses, OwnAddress{
-			Address: link.EthAddress,
-			ENSName: link.ENSName,
-		})
-	}
-
-	// 3. Get disclosure grants where the viewer is the requester
-	// We need to find all grants where requester_did = viewerDID
-	grants, err := s.getDisclosedAddressesForViewer(ctx, viewerDID)
-	if err != nil {
-		respondInternalErrorAndLog(c, "failed to get disclosed addresses",
-			"explorer: getDisclosedAddressesForViewer failed",
-			"viewer_did", viewerDID, "err", err)
-		return
-	}
-	response.DisclosedAddresses = grants
-
-	c.JSON(http.StatusOK, response)
-}
-
-// getDisclosedAddressesForViewer returns all addresses disclosed to a viewer via grants
-func (s *Server) getDisclosedAddressesForViewer(ctx context.Context, viewerDID string) ([]DisclosedAddress, error) {
-	// Query for all active grants where the viewer is the requester
-	query := `SELECT g.id, g.scope, g.expires_at, r.requester_did, u.external_id as target_did
-		FROM disclosure_grants g
-		JOIN disclosure_requests r ON g.request_id = r.id
-		JOIN users u ON r.target_user_id = u.id
-		WHERE r.requester_did = $1
-		AND g.revoked_at IS NULL
-		AND g.expires_at > NOW()`
-
-	rows, err := s.db.Conn().QueryContext(ctx, query, viewerDID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var result []DisclosedAddress
-
-	for rows.Next() {
-		var grantID string
-		var scope []byte
-		var expiresAt time.Time
-		var requesterDID, targetDID string
-
-		if err := rows.Scan(&grantID, &scope, &expiresAt, &requesterDID, &targetDID); err != nil {
-			return nil, err
-		}
-
-		// Get all addresses owned by the target DID
-		targetAddresses, err := s.db.GetEthAddressesByDID(ctx, targetDID)
-		if err != nil {
-			return nil, err
-		}
-
-		// Parse scope JSON to determine disclosure level
-		var scopeData disclosure.Scope
-		disclosureLevel := "full" // Default to full
-		if err := json.Unmarshal(scope, &scopeData); err == nil {
-			if scopeData.DisclosureLevel != "" {
-				disclosureLevel = string(scopeData.DisclosureLevel)
-			}
-		}
-
-		for _, addr := range targetAddresses {
-			// Generate opaque address ID for routing (hash-based)
-			addressID := explorer.GenerateAddressID(addr.EthAddress, grantID)
-
-			disclosed := DisclosedAddress{
-				AddressID:       addressID,
-				OwnerDID:        targetDID,
-				DisclosureLevel: disclosureLevel,
-				GrantID:         grantID,
-				ExpiresAt:       &expiresAt,
-			}
-
-			// SECURITY: Only include real address for full disclosure
-			switch disclosureLevel {
-			case "full":
-				disclosed.Address = addr.EthAddress
-				disclosed.ENSName = addr.ENSName
-			case "pseudonymous":
-				disclosed.Address = s.pseudonym(addr.EthAddress)
-				// Don't include ENS name - it could reveal identity
-			case "redacted":
-				disclosed.Address = "[PRIVATE]"
-				// Don't include ENS name
-			default:
-				// SECURITY: Fail-safe - treat unknown disclosure levels as redacted
-				disclosed.Address = "[PRIVATE]"
-			}
-
-			result = append(result, disclosed)
-		}
-	}
-
-	return result, nil
-}
-
-// resolveAddressID resolves an opaque address_id back to the real address
-// GET /api/v1/explorer/grant/:grant_id/resolve/:address_id
-// This is an internal API for the explorer backend to fetch data for disclosed addresses.
-// SECURITY: This endpoint is localhost-only and returns the real address for backend use.
-// The explorer backend must apply appropriate redaction before sending to the frontend.
-//
-// @Summary      Resolve a grant-scoped address_id
-// @Description  Resolves an opaque address_id (issued by viewable-addresses) back to grant-scoped disclosure data for the explorer backend. Private network only (serves the explorer backend); not reachable through the public ingress. The response is scoped to the grant's disclosure level: the real address is returned ONLY for a "full" grant; a "pseudonymous" grant returns a stable pseudonym and no real address; other levels return neither. Fail-closed: a revoked or expired grant, or an address_id that does not belong to the grant, yields 403/404.
-// @Tags         Explorer
-// @Produce      json
-// @Param        grant_id path string true "Disclosure grant ID"
-// @Param        address_id path string true "Opaque address identifier from viewable-addresses"
-// @Success      200 {object} ResolveAddressResponse
-// @Failure      400 {object} APIError "grant_id and address_id are required"
-// @Failure      401 {object} APIError "authentication required"
-// @Failure      403 {object} APIError "grant has been revoked or has expired"
-// @Failure      404 {object} APIError "grant or address not found for this grant"
-// @Failure      500 {object} APIError "lookup failed"
-// @Router       /api/v1/explorer/grant/{grant_id}/resolve/{address_id} [get]
-func (s *Server) resolveAddressID(c *gin.Context) {
-	grantID := c.Param("grant_id")
-	addressID := c.Param("address_id")
-
-	if grantID == "" || addressID == "" {
-		respondBadRequest(c, "grant_id and address_id are required")
-		return
-	}
-
-	// Look up the grant with its request
-	grantWithRequest, err := s.db.GetDisclosureGrantWithRequest(c.Request.Context(), grantID)
-	if err != nil || grantWithRequest == nil {
-		respondNotFound(c, "grant not found")
-		return
-	}
-
-	grant := grantWithRequest.Grant
-	request := grantWithRequest.Request
-
-	// SECURITY (RD-1164 #10): grantee verification — the viewer's DID must match
-	// the grant's requester_did. Without it, any caller who knows a grant_id +
-	// address_id could resolve the real address of a `full` grant they do not
-	// hold. Mirrors getGrantActivityLogs; uniform 404 avoids grant enumeration.
-	viewerDID := s.getViewerDIDFromRequest(c)
-	if viewerDID == "" {
-		respondUnauthorized(c, "authentication required")
-		return
-	}
-	if request.RequesterDID != viewerDID {
-		respondNotFound(c, "grant not found")
-		return
-	}
-
-	// Check grant is still valid
-	if grant.RevokedAt != nil {
-		respondForbidden(c, "grant has been revoked")
-		return
-	}
-	if grant.ExpiresAt.Before(time.Now()) {
-		respondForbidden(c, "grant has expired")
-		return
-	}
-
-	// Get target DID from the request
-	targetUser, err := s.db.GetUser(c.Request.Context(), request.TargetUserID)
-	if err != nil || targetUser == nil {
-		respondInternalError(c, "failed to get target user")
-		return
-	}
-	targetDID := targetUser.ExternalID
-
-	// Get all addresses for the target DID
-	addresses, err := s.db.GetEthAddressesByDID(c.Request.Context(), targetDID)
-	if err != nil {
-		respondInternalError(c, "failed to get addresses")
-		return
-	}
-
-	// Find the address matching the address_id
-	var realAddress string
-	for _, addr := range addresses {
-		computedID := explorer.GenerateAddressID(addr.EthAddress, grantID)
-		if computedID == addressID {
-			realAddress = addr.EthAddress
-			break
-		}
-	}
-
-	if realAddress == "" {
-		respondNotFound(c, "address not found for this grant")
-		return
-	}
-
-	// Get disclosure level from grant scope
-	disclosureLevel := "full"
-	if grant.Scope.DisclosureLevel != "" {
-		disclosureLevel = string(grant.Scope.DisclosureLevel)
-	}
-
-	response := ResolveAddressResponse{
-		DisclosureLevel: disclosureLevel,
-		GrantID:         grantID,
-		ScopeMethods:    grant.Scope.Methods,
-	}
-
-	// SECURITY: Only include real address for full disclosure.
-	// The explorer backend is an untrusted client and must not see real addresses
-	// for pseudonymous or redacted grants.
-	if disclosureLevel == "full" {
-		response.RealAddress = &realAddress
-	}
-
-	// Include pseudonym for pseudonymous disclosures
-	if disclosureLevel == "pseudonymous" {
-		response.Pseudonym = s.pseudonym(realAddress)
-	}
-
-	c.JSON(http.StatusOK, response)
-}
-
-// generateExternalPseudonym creates a deterministic pseudonym for an external address
-// in the context of a specific grant. The pseudonym is derived from the address and grant ID
-// so it is consistent within a grant but cannot be correlated across grants.
-func generateExternalPseudonym(address, grantID string) string {
-	h := sha256.New()
-	h.Write([]byte(strings.ToLower(address)))
-	h.Write([]byte(":"))
-	h.Write([]byte(grantID))
-	sum := h.Sum(nil)
-	return fmt.Sprintf("External-%X", sum[:2])
-}
-
-// pseudonym returns the keyed, non-reversible display pseudonym for an address
-// (RD-1164 #8), keyed by EXPLORER_PSEUDONYM_KEY when configured. All explorer
-// handlers use this rather than calling explorer.GeneratePseudonym directly so
-// the key is applied uniformly.
-func (s *Server) pseudonym(address string) string {
-	var key []byte
-	if s.config != nil {
-		key = s.config.ExplorerPseudonymKey
-	}
-	return explorer.GeneratePseudonym(address, key)
-}
-
-// filterTxsByGrantScope drops disclosed transactions that fall outside the
-// grant's own scope (RD-1164 #9): a grant scoped to a DateRange or a set of
-// contract addresses must not disclose transactions beyond it. An unset scope
-// dimension imposes no restriction. Filtering is applied to the already-fetched
-// page, so has_more reflects the post-filter page — conservative (it may
-// under-report additional in-scope rows on later pages, but never
-// over-discloses). Proper server-side time/keyset bounds are tracked in RD-1149.
-func filterTxsByGrantScope(txs []explorer.Transaction, scope disclosure.Scope) []explorer.Transaction {
-	if scope.DateRange == nil && len(scope.Addresses) == 0 {
-		return txs
-	}
-
-	var scopeAddrs map[string]bool
-	if len(scope.Addresses) > 0 {
-		scopeAddrs = make(map[string]bool, len(scope.Addresses))
-		for _, a := range scope.Addresses {
-			scopeAddrs[strings.ToLower(a)] = true
-		}
-	}
-
-	var start, end int64
-	if scope.DateRange != nil {
-		start = scope.DateRange.Start.Unix()
-		end = scope.DateRange.End.Unix()
-	}
-
-	out := make([]explorer.Transaction, 0, len(txs))
-	for _, tx := range txs {
-		if scope.DateRange != nil {
-			// Fail closed: a tx with a missing (0) or out-of-range block
-			// timestamp is excluded rather than disclosed.
-			ts := int64(tx.BlockTimestamp)
-			if ts == 0 || ts < start || ts > end {
-				continue
-			}
-		}
-		if scopeAddrs != nil {
-			from := strings.ToLower(tx.From)
-			to := ""
-			if tx.To != nil {
-				to = strings.ToLower(*tx.To)
-			}
-			if !scopeAddrs[from] && !scopeAddrs[to] {
-				continue
-			}
-		}
-		out = append(out, tx)
-	}
-	return out
-}
-
-// getGrantTransactions returns transactions for a disclosed address, pseudonymized
-// according to the grant's disclosure level.
-// GET /api/v1/explorer/grant/:grant_id/:address_id/transactions
-// SECURITY: This endpoint never exposes real addresses for non-full grants.
-// The explorer backend receives pre-pseudonymized data and cannot reverse it.
-//
-// @Summary      Grant-scoped transactions for a disclosed address
-// @Description  Returns transactions for a disclosed address, rendered at the grant's disclosure level. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the grant: "full" reveals real addresses, hashes and values; "pseudonymous" replaces addresses with stable pseudonyms and hides values and hashes; "redacted" (or any unknown level) shows only direction, gas, status and timing with "[PRIVATE]" counterparties. Fail-closed: a revoked or expired grant, or an address_id that does not belong to the grant, yields 403/404.
-// @Tags         Explorer
-// @Produce      json
-// @Param        grant_id path string true "Disclosure grant ID"
-// @Param        address_id path string true "Opaque address identifier from viewable-addresses"
-// @Param        limit query int false "Max rows to return (1-100)" default(25)
-// @Param        before query int false "Return rows strictly older than this block number (pagination cursor)"
-// @Success      200 {object} GrantTransactionsResponse
-// @Failure      400 {object} APIError "grant_id and address_id are required"
-// @Failure      401 {object} APIError "authentication required"
-// @Failure      403 {object} APIError "grant has been revoked or has expired"
-// @Failure      404 {object} APIError "grant or address not found for this grant"
-// @Failure      500 {object} APIError "explorer store not configured or lookup failed"
-// @Router       /api/v1/explorer/grant/{grant_id}/{address_id}/transactions [get]
-func (s *Server) getGrantTransactions(c *gin.Context) {
-	if s.explorerStore == nil {
-		respondInternalError(c, "explorer store not configured")
-		return
-	}
-
-	grantID := c.Param("grant_id")
-	addressID := c.Param("address_id")
-
-	if grantID == "" || addressID == "" {
-		respondBadRequest(c, "grant_id and address_id are required")
-		return
-	}
-
-	// Look up the grant with its request
-	grantWithRequest, err := s.db.GetDisclosureGrantWithRequest(c.Request.Context(), grantID)
-	if err != nil || grantWithRequest == nil {
-		respondNotFound(c, "grant not found")
-		return
-	}
-
-	grant := grantWithRequest.Grant
-	request := grantWithRequest.Request
-
-	// SECURITY (RD-1164 #10): grantee verification FIRST — the viewer's DID must
-	// match the grant's requester_did, else any caller with a grant_id +
-	// address_id could read a `full` grant's real transactions. Checked before
-	// revoked/expired so grant state is never revealed to a non-grantee. Mirrors
-	// getGrantActivityLogs.
-	viewerDID := s.getViewerDIDFromRequest(c)
-	if viewerDID == "" {
-		respondUnauthorized(c, "authentication required")
-		return
-	}
-	if request.RequesterDID != viewerDID {
-		respondNotFound(c, "grant not found")
-		return
-	}
-
-	// Check grant is still valid
-	if grant.RevokedAt != nil {
-		respondForbidden(c, "grant has been revoked")
-		return
-	}
-	if grant.ExpiresAt.Before(time.Now()) {
-		respondForbidden(c, "grant has expired")
-		return
-	}
-
-	// Get disclosure level
-	disclosureLevel := "full"
-	if grant.Scope.DisclosureLevel != "" {
-		disclosureLevel = string(grant.Scope.DisclosureLevel)
-	}
-
-	// Get target user and their addresses
-	targetUser, err := s.db.GetUser(c.Request.Context(), request.TargetUserID)
-	if err != nil || targetUser == nil {
-		respondInternalError(c, "failed to get target user")
-		return
-	}
-	targetDID := targetUser.ExternalID
-
-	addresses, err := s.db.GetEthAddressesByDID(c.Request.Context(), targetDID)
-	if err != nil {
-		respondInternalError(c, "failed to get addresses")
-		return
-	}
-
-	// Find the real address by matching address_id
-	var realAddress string
-	for _, addr := range addresses {
-		computedID := explorer.GenerateAddressID(addr.EthAddress, grantID)
-		if computedID == addressID {
-			realAddress = addr.EthAddress
-			break
-		}
-	}
-
-	if realAddress == "" {
-		respondNotFound(c, "address not found for this grant")
-		return
-	}
-
-	// Parse pagination params
-	limit := 25
-	if limitStr := c.Query("limit"); limitStr != "" {
-		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 && parsed <= 100 {
-			limit = parsed
-		}
-	}
-
-	var beforeBlock *uint64
-	if beforeStr := c.Query("before"); beforeStr != "" {
-		if parsed, err := strconv.ParseUint(beforeStr, 10, 64); err == nil {
-			beforeBlock = &parsed
-		}
-	}
-
-	// Fetch one extra to detect has_more
-	txs, err := s.explorerStore.GetTransactionsByAddress(c.Request.Context(), realAddress, limit+1, beforeBlock)
-	if err != nil {
-		respondInternalError(c, "failed to get transactions")
-		return
-	}
-
-	// RD-1164 #9: enforce the grant's own scope (date range / contract
-	// addresses) on the disclosed transactions before pagination.
-	txs = filterTxsByGrantScope(txs, grant.Scope)
-
-	hasMore := len(txs) > limit
-	if hasMore {
-		txs = txs[:limit]
-	}
-
-	realAddrLower := strings.ToLower(realAddress)
-	labels := make(map[string]string)
-
-	// Resolve viewer's own addresses so we can label them "mine" on the grant page.
-	// viewerDID was resolved and grantee-verified above (RD-1164 #10).
-	viewerAddrs := make(map[string]bool)
-	if viewerDID != "" {
-		linked, err := s.db.GetLinkedAddresses(c.Request.Context(), viewerDID)
-		if err == nil {
-			for _, a := range linked {
-				viewerAddrs[strings.ToLower(a)] = true
-			}
-		}
-	}
-
-	var grantTxs []GrantTransaction
-	for _, tx := range txs {
-		gt := GrantTransaction{
-			BlockNumber:    tx.BlockNumber,
-			BlockTimestamp: tx.BlockTimestamp,
-			GasUsed:        tx.GasUsed,
-			Status:         tx.Status,
-		}
-
-		fromLower := strings.ToLower(tx.From)
-		var toLower string
-		if tx.HasRecipient() {
-			toLower = strings.ToLower(*tx.To)
-		}
-
-		// Determine direction
-		fromIsDisclosed := fromLower == realAddrLower
-		toIsDisclosed := toLower == realAddrLower
-		if fromIsDisclosed && toIsDisclosed {
-			gt.Direction = "self"
-		} else if fromIsDisclosed {
-			gt.Direction = "out"
-		} else {
-			gt.Direction = "in"
-		}
-
-		switch disclosureLevel {
-		case "full":
-			hash := tx.Hash
-			gt.TxHash = &hash
-			gt.From = tx.From
-			if tx.HasRecipient() {
-				gt.To = *tx.To
-			}
-			gt.Value = string(tx.Value)
-
-		case "pseudonymous":
-			disclosedPseudonym := s.pseudonym(realAddress)
-			labels[disclosedPseudonym] = "disclosed"
-
-			if fromIsDisclosed {
-				gt.From = disclosedPseudonym
-			} else if viewerAddrs[fromLower] {
-				gt.From = "Mine"
-				labels["Mine"] = "mine"
-			} else {
-				ext := generateExternalPseudonym(tx.From, grantID)
-				gt.From = ext
-				labels[ext] = "external"
-			}
-
-			if tx.HasRecipient() {
-				if toIsDisclosed {
-					gt.To = disclosedPseudonym
-				} else if viewerAddrs[toLower] {
-					gt.To = "Mine"
-					labels["Mine"] = "mine"
-				} else {
-					ext := generateExternalPseudonym(*tx.To, grantID)
-					gt.To = ext
-					labels[ext] = "external"
-				}
-			}
-
-			gt.Value = "hidden"
-			// tx hash intentionally omitted for pseudonymous
-
-		case "redacted":
-			// Every address renders as the same opaque placeholder. Unlike
-			// pseudonymous, no per-address stable token is emitted — the
-			// auditor cannot correlate counterparties across txs. Value and
-			// tx hash are also withheld so the auditor learns timing, gas,
-			// status, and direction only ("proof of activity" without graph
-			// or financial pattern correlation).
-			gt.From = "[PRIVATE]"
-			if tx.HasRecipient() {
-				gt.To = "[PRIVATE]"
-			}
-			gt.Value = "hidden"
-		}
-
-		grantTxs = append(grantTxs, gt)
-	}
-
-	// Ensure non-nil slices in JSON
-	if grantTxs == nil {
-		grantTxs = []GrantTransaction{}
-	}
-
-	c.JSON(http.StatusOK, GrantTransactionsResponse{
-		Transactions:    grantTxs,
-		DisclosureLevel: disclosureLevel,
-		AddressLabels:   labels,
-		HasMore:         hasMore,
-	})
-}
-
-// GrantActivityLogsResponse is the response for GET /api/v1/explorer/grant/:grant_id/activity
-type GrantActivityLogsResponse struct {
-	Logs   []GrantActivityLogEntry `json:"logs"`
-	Total  int                     `json:"total"`
-	Limit  int                     `json:"limit"`
-	Offset int                     `json:"offset"`
-}
-
-// GrantActivityLogEntry is a stripped-down log entry safe for grant holders.
-// SECURITY: Does NOT include request_params, ip_address, correlation_id, or entry_hash.
-type GrantActivityLogEntry struct {
-	Method     string `json:"method"`
-	StatusCode int    `json:"status_code"`
-	Timestamp  string `json:"timestamp"` // RFC 3339
-}
-
-// getGrantActivityLogs returns activity logs scoped to a disclosure grant.
-// GET /api/v1/explorer/grant/:grant_id/activity
-//
-// SECURITY:
-//   - JWT required -- anonymous requests are rejected.
-//   - Grant holder verification: the viewer's DID must match the grant's requester_did.
-//   - Scope check: grant must include "activity_logs" or "full_disclosure".
-//   - Time-bounded: only logs within the grant's validity period are returned.
-//   - Stripped response: only method, status_code, and timestamp are returned.
-//   - Uniform 404 for "not found" and "not your grant" to prevent enumeration.
-//
-// @Summary      Grant-scoped activity logs
-// @Description  Returns activity-log entries (method, status code, timestamp only) for a disclosure grant the caller holds. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered: a valid JWT is required, the viewer DID must match the grant's requester, the grant scope must include activity_logs or full_disclosure, and only entries inside the grant's validity window are returned. Fail-closed: anonymous callers are rejected, and "grant missing"/"not your grant"/"expired" all return the same 404 to prevent enumeration.
-// @Tags         Explorer
-// @Produce      json
-// @Param        grant_id path string true "Disclosure grant ID"
-// @Param        limit query int false "Max rows to return (1-100)" default(25)
-// @Param        offset query int false "Rows to skip (pagination)" default(0)
-// @Success      200 {object} GrantActivityLogsResponse
-// @Failure      400 {object} APIError "grant_id is required"
-// @Failure      401 {object} APIError "authentication required"
-// @Failure      403 {object} APIError "grant scope does not include activity_logs"
-// @Failure      404 {object} APIError "grant not found (also returned for a grant that is not yours or has expired)"
-// @Failure      500 {object} APIError "lookup failed"
-// @Router       /api/v1/explorer/grant/{grant_id}/activity [get]
-func (s *Server) getGrantActivityLogs(c *gin.Context) {
-	grantID := c.Param("grant_id")
-	if grantID == "" {
-		respondBadRequest(c, "grant_id is required")
-		return
-	}
-
-	// 1. JWT required -- reject anonymous
-	viewerDID := s.getViewerDIDFromRequest(c)
-	if viewerDID == "" {
-		respondUnauthorized(c, "authentication required")
-		return
-	}
-
-	// 2. Look up the grant with its request
-	grantWithRequest, err := s.db.GetDisclosureGrantWithRequest(c.Request.Context(), grantID)
-	if err != nil || grantWithRequest == nil {
-		// Uniform 404 prevents enumeration
-		respondNotFound(c, "grant not found")
-		return
-	}
-
-	grant := grantWithRequest.Grant
-	request := grantWithRequest.Request
-
-	// 3. Grant holder verification: viewer DID must match requester_did
-	if request.RequesterDID != viewerDID {
-		// Same 404 -- do not reveal that the grant exists
-		respondNotFound(c, "grant not found")
-		return
-	}
-
-	// 4. Check grant is still active (not expired, not revoked)
-	if grant.RevokedAt != nil || grant.ExpiresAt.Before(time.Now()) {
-		respondNotFound(c, "grant not found")
-		return
-	}
-
-	// 5. Scope check: must include "activity_logs" or "full_disclosure"
-	hasScope := false
-	for _, m := range grant.Scope.Methods {
-		if m == "activity_logs" || m == "full_disclosure" {
-			hasScope = true
-			break
-		}
-	}
-	if !hasScope {
-		respondForbidden(c, "grant scope does not include activity_logs")
-		return
-	}
-
-	// 6. Parse pagination
-	limit := 25
-	if limitStr := c.Query("limit"); limitStr != "" {
-		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 && parsed <= 100 {
-			limit = parsed
-		}
-	}
-	offset := 0
-	if offsetStr := c.Query("offset"); offsetStr != "" {
-		if parsed, err := strconv.Atoi(offsetStr); err == nil && parsed >= 0 {
-			offset = parsed
-		}
-	}
-
-	// 7. Query activity logs scoped to grant time bounds.
-	// RD-1147: resolve the grant's target + time window from the main DB, then
-	// read access_logs from the audit DB (they may be different databases now).
-	logs, total, err := s.getActivityLogsForGrant(c.Request.Context(), grantID, limit, offset)
-	if err != nil {
-		respondInternalError(c, "failed to get activity logs")
-		return
-	}
-
-	// 8. Build stripped response
-	entries := make([]GrantActivityLogEntry, 0, len(logs))
-	for _, log := range logs {
-		entries = append(entries, GrantActivityLogEntry{
-			Method:     log.Method,
-			StatusCode: log.StatusCode,
-			Timestamp:  log.CreatedAt.Format(time.RFC3339),
-		})
-	}
-
-	c.JSON(http.StatusOK, GrantActivityLogsResponse{
-		Logs:   entries,
-		Total:  total,
-		Limit:  limit,
-		Offset: offset,
-	})
 }
 
 // getViewerIdentity was removed in RD-1028. It read the viewer DID only from
@@ -1282,6 +541,34 @@ func (s *Server) getExplorerStats(c *gin.Context) {
 	c.JSON(http.StatusOK, stats)
 }
 
+// maxExplorerPageLimit caps the page size of explorer list endpoints (RD-1179).
+const maxExplorerPageLimit = 100
+
+// clampExplorerLimit bounds a parsed explorer page limit to [1, maxExplorerPageLimit],
+// falling back to def for non-positive values (RD-1179). Explorer handlers parse
+// limit with `limit, _ := strconv.Atoi(...)`, which ignores both the parse error
+// and the sign — so without this an unbounded ?limit= reaches SQL directly, and a
+// negative limit becomes Postgres `LIMIT ALL` (a full-table dump).
+func clampExplorerLimit(limit, def int) int {
+	if limit <= 0 {
+		return def
+	}
+	if limit > maxExplorerPageLimit {
+		return maxExplorerPageLimit
+	}
+	return limit
+}
+
+// clampExplorerOffset floors a parsed explorer offset at 0 (RD-1179). A negative
+// OFFSET otherwise reaches SQL, where Postgres rejects it ("OFFSET must not be
+// negative") — turning a bad query param into a 500.
+func clampExplorerOffset(offset int) int {
+	if offset < 0 {
+		return 0
+	}
+	return offset
+}
+
 // getExplorerBlocks returns a page of recent blocks, newest first.
 //
 // @Summary      List recent blocks
@@ -1300,6 +587,7 @@ func (s *Server) getExplorerBlocks(c *gin.Context) {
 		return
 	}
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "25"))
+	limit = clampExplorerLimit(limit, 25)
 	var beforeBlock *uint64
 	if b := c.Query("before"); b != "" {
 		if val, err := strconv.ParseUint(b, 10, 64); err == nil {
@@ -1359,9 +647,11 @@ func (s *Server) getExplorerBlock(c *gin.Context) {
 	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID)
 	if filter != nil {
 		filteredCount, err := s.explorerStore.GetBlockTransactionCountFiltered(c.Request.Context(), num, filter)
-		if err == nil {
-			block.TransactionCount = filteredCount
+		if err != nil {
+			// RD-1176: fail-safe to 0, don't fall back to the raw chain-wide count.
+			filteredCount = 0
 		}
+		block.TransactionCount = filteredCount
 	}
 	c.JSON(http.StatusOK, block)
 }
@@ -1400,9 +690,11 @@ func (s *Server) getExplorerBlockByHash(c *gin.Context) {
 	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID)
 	if filter != nil {
 		filteredCount, err := s.explorerStore.GetBlockTransactionCountFiltered(c.Request.Context(), block.Number, filter)
-		if err == nil {
-			block.TransactionCount = filteredCount
+		if err != nil {
+			// RD-1176: fail-safe to 0, don't fall back to the raw chain-wide count.
+			filteredCount = 0
 		}
+		block.TransactionCount = filteredCount
 	}
 	c.JSON(http.StatusOK, block)
 }
@@ -1615,12 +907,7 @@ func (s *Server) getExplorerTransactions(c *gin.Context) {
 		return
 	}
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "25"))
-	if limit <= 0 {
-		limit = 25
-	}
-	if limit > 100 {
-		limit = 100
-	}
+	limit = clampExplorerLimit(limit, 25)
 	var beforeBlock *uint64
 	if b := c.Query("before"); b != "" {
 		if val, err := strconv.ParseUint(b, 10, 64); err == nil {
@@ -1723,24 +1010,29 @@ func (s *Server) getExplorerTransaction(c *gin.Context) {
 	c.JSON(http.StatusOK, redactedTxs[0])
 }
 
-// countAcrossPages walks a newest-first item feed in pages and sums a per-page
-// count, bounded by maxScan total items. It exists because privacy/gRPC mode
+// countAcrossPages pages through an item feed and sums a per-page count over
+// the DISTINCT items, bounded by maxScan rows fetched. It exists because privacy/gRPC mode
 // clamps each indexer fetch to a small max page size (~100), so a single fetch
-// cannot count an active address's transactions — we must page through them.
+// cannot count an active address's transactions.
 //
-// fetch(before) returns the page strictly older than the given block cursor
-// (nil = newest first); cursorOf extracts a page item's block for the next
-// cursor; perPageCount returns how many items in the page should be counted
-// (e.g. redaction survivors). It stops at an empty page, when maxScan items have
-// been scanned, or when the cursor stops decreasing (a single block larger than
-// one page — a safety break so the loop is always bounded and terminates).
+// fetch(before) returns the page older than the given block cursor (nil = newest
+// first); cursorOf extracts an item's block; keyOf returns a stable per-item
+// identity; perPageCount counts the countable items in a page (e.g. redaction
+// survivors). Dedup by identity keeps the count correct even when the backend
+// ignores `before` and re-serves or reorders rows (the gRPC indexer maps
+// `before` to an inclusive block-range bound and does not guarantee order):
+// already-seen rows are dropped, and the cursor advances by the page minimum, so
+// a non-paginating backend under-reports rather than double-counts. It stops at
+// an empty page, when a page yields no new items, at genesis, or at maxScan.
 func countAcrossPages[T any](
 	fetch func(before *uint64) ([]T, error),
 	cursorOf func(T) uint64,
+	keyOf func(T) string,
 	perPageCount func([]T) (int, error),
 	maxScan int,
 ) (int, error) {
 	count, scanned := 0, 0
+	seen := make(map[string]struct{})
 	var before *uint64
 	for scanned < maxScan {
 		page, err := fetch(before)
@@ -1750,23 +1042,36 @@ func countAcrossPages[T any](
 		if len(page) == 0 {
 			break
 		}
-		// Pages are cursor-descending; if the top of this page hasn't moved
-		// below the previous cursor, the backend ignored `before` and is
-		// re-serving counted rows. Stop before counting to avoid duplicates.
-		if before != nil && cursorOf(page[0]) >= *before {
+		fresh := make([]T, 0, len(page))
+		var minCursor uint64
+		for i, item := range page {
+			if c := cursorOf(item); i == 0 || c < minCursor {
+				minCursor = c
+			}
+			k := keyOf(item)
+			if _, dup := seen[k]; dup {
+				continue
+			}
+			seen[k] = struct{}{}
+			fresh = append(fresh, item)
+		}
+		if len(fresh) == 0 {
 			break
 		}
+		// Bound by rows FETCHED, not distinct rows kept: a backend that heavily
+		// re-serves or overlaps pages must not be able to drive far more than
+		// maxScan/pageSize fetches (mirrors countAcrossOffsetPages' offset
+		// bound). count still sums perPageCount over the distinct items only.
 		scanned += len(page)
-		n, err := perPageCount(page)
+		n, err := perPageCount(fresh)
 		if err != nil {
 			return 0, err
 		}
 		count += n
-		last := cursorOf(page[len(page)-1])
-		if last == 0 {
-			break // reached genesis
+		if minCursor == 0 {
+			break
 		}
-		bb := last
+		bb := minCursor
 		before = &bb
 	}
 	return count, nil
@@ -1788,6 +1093,7 @@ func (s *Server) countVisibleAddressTxs(ctx context.Context, address, viewerDID 
 			return s.explorerStore.GetTransactionsByAddress(ctx, address, perPage, before)
 		},
 		func(t explorer.Transaction) uint64 { return t.BlockNumber },
+		func(t explorer.Transaction) string { return t.Hash },
 		func(page []explorer.Transaction) (int, error) {
 			redacted, err := s.explorerRedactor.RedactTransactions(ctx, page, viewerDID, opts)
 			if err != nil {
@@ -1862,6 +1168,7 @@ func (s *Server) countVisibleAddressTransfers(ctx context.Context, address, view
 			return s.explorerStore.GetTransfersByAddress(ctx, address, perPage, before)
 		},
 		func(t explorer.TokenTransfer) uint64 { return t.BlockNumber },
+		func(t explorer.TokenTransfer) string { return t.TxHash + ":" + strconv.Itoa(t.LogIndex) },
 		func(page []explorer.TokenTransfer) (int, error) {
 			redacted, err := s.explorerRedactor.RedactTransfers(ctx, page, viewerDID, opts)
 			if err != nil {
@@ -2049,6 +1356,7 @@ func (s *Server) getExplorerAddressTransactions(c *gin.Context) {
 	}
 	address := c.Param("address")
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "25"))
+	limit = clampExplorerLimit(limit, 25)
 	var beforeBlock *uint64
 	if b := c.Query("before"); b != "" {
 		if val, err := strconv.ParseUint(b, 10, 64); err == nil {
@@ -2696,6 +2004,7 @@ func (s *Server) getExplorerAddressTransfers(c *gin.Context) {
 	}
 
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "25"))
+	limit = clampExplorerLimit(limit, 25)
 	var beforeBlock *uint64
 	if b := c.Query("before"); b != "" {
 		if val, err := strconv.ParseUint(b, 10, 64); err == nil {
@@ -2757,7 +2066,9 @@ func (s *Server) getExplorerAddressInternal(c *gin.Context) {
 	}
 
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "25"))
+	limit = clampExplorerLimit(limit, 25)
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	offset = clampExplorerOffset(offset)
 
 	itxs, _, err := s.explorerStore.GetInternalTransactionsByAddress(c.Request.Context(), address, limit, offset)
 	if err != nil {
@@ -2814,7 +2125,9 @@ func (s *Server) getExplorerAddressLogs(c *gin.Context) {
 	}
 
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "25"))
+	limit = clampExplorerLimit(limit, 25)
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	offset = clampExplorerOffset(offset)
 
 	logs, _, err := s.explorerStore.GetLogsByAddress(c.Request.Context(), address, limit, offset)
 	if err != nil {
@@ -2881,9 +2194,12 @@ func (s *Server) getExplorerAddressContract(c *gin.Context) {
 	if contract.Creator != "" {
 		viewerDID := s.getViewerDIDFromRequest(c)
 		redactedCreator, err := s.explorerRedactor.RedactAddress(c.Request.Context(), contract.Creator, viewerDID)
-		if err == nil {
-			contract.Creator = redactedCreator
+		if err != nil {
+			// RD-1176: fail closed — never keep the raw deployer EOA on a
+			// redaction error (it may be a private foreign user).
+			redactedCreator = "[REDACTED]"
 		}
+		contract.Creator = redactedCreator
 	}
 	c.JSON(http.StatusOK, contract)
 }
@@ -3074,6 +2390,7 @@ func (s *Server) getExplorerTokens(c *gin.Context) {
 		}
 	}
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	offset = clampExplorerOffset(offset)
 	tokenType := c.Query("type")
 
 	tokens, _, err := s.explorerStore.GetTokens(c.Request.Context(), limit, offset, tokenType)
@@ -3103,6 +2420,15 @@ func (s *Server) getExplorerTokens(c *gin.Context) {
 			return
 		}
 
+		// RD-1177 F3: for Full tokens the list previously returned GetTokens'
+		// RAW HolderCount/TransferCount aggregates, while the single-token
+		// endpoint (getExplorerToken) recomputes them as visible-survivor counts
+		// (RD-1154). §3.9 blesses grant/Full holders *seeing* these counts, not
+		// seeing RAW over-reporting counts that reveal how many holders/transfers
+		// are hidden. Recompute here so the list agrees with its single-item
+		// sibling. Fail-safe to 0 on error via visibleCountOrZero.
+		ctx := c.Request.Context()
+		opts := s.buildRedactOptsForViewer(ctx, viewerDID)
 		var filtered []explorer.Token
 		for _, t := range tokens {
 			level := visMap[strings.ToLower(t.Address)]
@@ -3133,7 +2459,13 @@ func (s *Server) getExplorerTokens(c *gin.Context) {
 				t.L1Address = nil
 				t.USDPrice = nil
 				t.IconURL = nil
-				// VisibilityFull or unrecognized: return as-is
+			default:
+				// VisibilityFull (or unrecognized — recomputing is fail-safe):
+				// replace raw counts with visibility-aware survivor counts.
+				tc, tcErr := s.countVisibleTokenTransfers(ctx, t.Address, viewerDID, opts)
+				t.TransferCount = visibleCountOrZero(tc, tcErr, "token_transfers", t.Address)
+				hc, hcErr := s.countVisibleTokenHolders(ctx, t.Address, viewerDID)
+				t.HolderCount = visibleCountOrZero(hc, hcErr, "token_holders", t.Address)
 			}
 			filtered = append(filtered, t)
 		}
@@ -3261,6 +2593,7 @@ func (s *Server) getExplorerTokenHolders(c *gin.Context) {
 		}
 	}
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	offset = clampExplorerOffset(offset)
 
 	holders, _, err := s.explorerStore.GetTokenHolders(c.Request.Context(), address, limit, offset)
 	if err != nil {
@@ -3323,6 +2656,7 @@ func (s *Server) getExplorerTokenTransfers(c *gin.Context) {
 		}
 	}
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	offset = clampExplorerOffset(offset)
 
 	transfers, _, err := s.explorerStore.GetTransfersByToken(c.Request.Context(), address, limit, offset)
 	if err != nil {
@@ -3378,6 +2712,7 @@ func (s *Server) getExplorerAllTransfers(c *gin.Context) {
 		}
 	}
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	offset = clampExplorerOffset(offset)
 
 	transfers, _, err := s.explorerStore.GetAllTransfers(c.Request.Context(), limit, offset)
 	if err != nil {
@@ -3464,19 +2799,49 @@ func (s *Server) getExplorerAccounts(c *gin.Context) {
 				"viewer_did", viewerDID, "err", err)
 			return
 		}
+		// RD-1177 F1: the per-address activity counts on explorer.AddressStats
+		// (TxCount / TokenTransferCount / InternalTxCount) are RAW aggregates
+		// that ignore the viewer's visibility — identical count-disclosure to
+		// RD-1154/G22, which was fixed for the single-address /addresses/:address/stats
+		// endpoint (getExplorerAddressStats) but missed here. Worse, this list is
+		// ordered by raw tx_count DESC, so even the ranking leaks. Recompute all
+		// three counts for Full rows via the SAME helpers + shared opts the
+		// single-address endpoint uses (fail-safe to 0 on error via
+		// visibleCountOrZero), and zero them for pseudonymous rows — a
+		// pseudonymised party's activity volume is not the viewer's to see, and
+		// the single-address endpoint never serves pseudonymous (it 404s).
+		//
+		// Cost note: this recomputes up to pageSize (≤100) × 3 visibility-aware
+		// counts, each bounded by its helper's maxScan. Matches the accepted cost
+		// of getExplorerAddressStats, multiplied by the page size.
+		ctx := c.Request.Context()
+		opts := s.buildRedactOptsForViewer(ctx, viewerDID)
 		filtered := accounts[:0]
 		for _, a := range accounts {
 			level := visMap[strings.ToLower(a.Address)]
 			switch level {
 			case explorer.VisibilityFull:
+				txCount, txErr := s.countVisibleAddressTxs(ctx, a.Address, viewerDID, opts)
+				a.TxCount = visibleCountOrZero(txCount, txErr, "transactions", a.Address)
+				trCount, trErr := s.countVisibleAddressTransfers(ctx, a.Address, viewerDID, opts)
+				a.TokenTransferCount = visibleCountOrZero(trCount, trErr, "token_transfers", a.Address)
+				inCount, inErr := s.countVisibleAddressInternalTxs(ctx, a.Address, viewerDID, opts)
+				a.InternalTxCount = visibleCountOrZero(inCount, inErr, "internal_transactions", a.Address)
 				filtered = append(filtered, a)
 			case explorer.VisibilityPseudonymous:
 				a.Address = s.pseudonym(a.Address)
+				// Do not leak a pseudonymised party's raw activity volume.
+				a.TxCount = 0
+				a.TokenTransferCount = 0
+				a.InternalTxCount = 0
 				filtered = append(filtered, a)
 				// VisibilityHidden, VisibilityRedacted: drop this account
 			}
 		}
 		accounts = filtered
+		// One audit entry for any rows revealed under ORG_ADMIN_VIEW_USER_TXS
+		// across the recompute passes (no-op under the default posture).
+		s.auditAdminUserTxView(c, viewerDID, "accounts", "", opts.Stats)
 	}
 
 	// Never expose raw DB total — it reveals how many rows were redacted (private data)

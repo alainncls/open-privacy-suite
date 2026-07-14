@@ -172,7 +172,7 @@ func TestProxyOpenLoop(t *testing.T) {
 	tv := rbac.NewTraceValidator(database)
 	proc := NewJSONRPCProcessorWithTracing(
 		rbacCtrl, &noopRateLimiter{}, proxy.New(node.URL), database, rt, tv,
-		NewCircuitBreaker(), NewConcurrencyLimiter(50), "",
+		NewCircuitBreaker(), NewConcurrencyLimiter(50, 0), "",
 	)
 
 	auditMode := "async"

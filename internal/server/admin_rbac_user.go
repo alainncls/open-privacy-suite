@@ -348,6 +348,9 @@ func (s *Server) getRBACUser(c *gin.Context) {
 // @Security     AdminToken
 // @Router       /api/v1/admin/users/{user_id} [put]
 func (s *Server) updateRBACUser(c *gin.Context) {
+	if denyOperatorOrgScoped(c) { // RD-1173: operator token must not mutate tenant users (ban/kyc/note)
+		return
+	}
 	userID := c.Param("user_id")
 	if !s.requireUserInFullAdminScope(c, userID) {
 		return
@@ -505,6 +508,9 @@ func (s *Server) getUserLinkedAddresses(c *gin.Context) {
 // @Security     AdminToken
 // @Router       /api/v1/admin/users/{user_id} [delete]
 func (s *Server) deleteRBACUser(c *gin.Context) {
+	if denyOperatorOrgScoped(c) { // RD-1173: operator token must not delete tenant users
+		return
+	}
 	userID := c.Param("user_id")
 	if !s.requireUserInFullAdminScope(c, userID) {
 		return
@@ -1086,6 +1092,17 @@ func (s *Server) deleteUserMembership(c *gin.Context) {
 		}
 	}
 
+	// RD-1180: bind the path :user_id to the membership's real owner. Auth is
+	// correctly anchored on the membership's org above, but :user_id was never
+	// checked against membership.UserID — a mismatch would invalidate the wrong
+	// user's permission cache (InvalidateUser below) and attribute the audit row
+	// to the wrong user. Reject with the same opaque foreign-org error (after the
+	// foreign-org check) so it can't be used as a membership-ownership oracle.
+	if membership.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": errMembershipForeignOrg})
+		return
+	}
+
 	// is_org_admin escalation gate (RD-1099): removing a member from an
 	// org-admin group demotes an org admin — the "ban or demote the granter"
 	// power the gate exists to prevent — so it is super-admin-only, symmetric
@@ -1313,6 +1330,9 @@ func (s *Server) getCacheStats(c *gin.Context) {
 // @Security     AdminToken
 // @Router       /api/v1/admin/eth-addresses/collisions [get]
 func (s *Server) getEthAddressCollisions(c *gin.Context) {
+	if denyOperatorTenantRead(c) { // RD-1173: operator token must not read the cross-org DID↔address collision list
+		return
+	}
 	collisions, err := s.db.GetAddressLinkCollisions(c.Request.Context())
 	if err != nil {
 		slog.Error("collisions: db read failed", "err", err)

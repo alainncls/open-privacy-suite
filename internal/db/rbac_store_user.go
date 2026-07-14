@@ -642,6 +642,14 @@ func (d *DB) HasAdminClaim(ctx context.Context, userID string) (bool, error) {
 	return exists, nil
 }
 
+// Compile-time guarantee that the production store satisfies rbac's optional
+// OrgAdminChecker extension (RD-1164 #14). AccessController's historical-state
+// guard type-asserts the store to this interface and falls OPEN only when it is
+// absent; making conformance a build requirement means the production store can
+// never silently lose IsOrgAdmin and drop into that fail-open branch — a
+// dropped/renamed method breaks the build instead.
+var _ rbac.OrgAdminChecker = (*DB)(nil)
+
 // IsOrgAdmin checks whether a user (identified by internal ID) is a member of
 // any group with is_org_admin = true. Returns true if the user is an org admin
 // in at least one org, along with the list of org IDs where they hold org admin

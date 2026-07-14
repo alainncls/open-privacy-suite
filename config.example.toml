@@ -79,13 +79,12 @@ REQUIRE_PROOF_OF_HUMANITY = true
 RUNTIME_TRACING_ETH_CALL_ENABLED = true
 ETH_CALL_TRACE_TIMEOUT = "5s"
 RUNTIME_TRACING_INTRA_ORG_GRANTS_ENABLED = false
-# ETH_CALL_DENY_WITHOUT_ABI (RD-1144): when true, eth_call returns from contracts
-# with no resolvable ABI are blanked (fail-closed). Default false passes them
-# through. Address-typed returns of ABI-registered contracts are field-level
-# redacted either way; setting this true also blocks reads of unregistered
-# contracts, so weigh privacy vs usability for your deployment.
-ETH_CALL_DENY_WITHOUT_ABI = false
 MAX_CONCURRENT_REQUESTS = 50
+# Shared concurrency cap for ANONYMOUS /rpc traffic (requests with no JWT). The
+# per-user cap above is keyed by identity and cannot bound anonymous callers, so
+# this bounds the total in-flight work an unauthenticated flood can create.
+# Defaults to MAX_CONCURRENT_REQUESTS; set 0 to disable.
+MAX_CONCURRENT_ANONYMOUS_REQUESTS = 50
 # EXTRA_RPC_NAMESPACES_FILE = "./rpc-namespaces.json"
 
 # -----------------------------------------------------------------------------

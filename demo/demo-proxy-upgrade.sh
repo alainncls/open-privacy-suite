@@ -722,7 +722,7 @@ print_info "Implementation: $IMPL_V1_ADDR"
 # Get the ERC1967Proxy bytecode and encode constructor args
 # We'll need to compile a proxy contract
 cat > "$BUILD_DIR/src/DeployProxy.sol" << 'EOF'
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";

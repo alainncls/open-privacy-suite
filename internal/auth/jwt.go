@@ -24,6 +24,14 @@ type JWTService struct {
 	refreshSecret []byte
 	accessTTL     time.Duration
 	refreshTTL    time.Duration
+
+	// Previous secrets accepted for VALIDATION only, never signing (RD-1164
+	// #15). Rotating a leaked/expiring signing secret otherwise invalidates
+	// every outstanding token at once (mass logout). With a rotation window the
+	// new secret signs, while tokens still bearing the old secret keep
+	// validating until they naturally expire. Empty by default (no window).
+	accessSecretsPrev  [][]byte
+	refreshSecretsPrev [][]byte
 }
 
 // TokenClaims represents the claims in our JWT tokens
@@ -70,6 +78,35 @@ func NewJWTService(accessSecret, refreshSecret string, accessTTL, refreshTTL tim
 		accessTTL:     accessTTL,
 		refreshTTL:    refreshTTL,
 	}, nil
+}
+
+// SetValidationSecrets registers additional secrets that are accepted when
+// VALIDATING tokens but never used to sign new ones (RD-1164 #15). This is the
+// rotation window: to rotate a signing secret without logging everyone out,
+// promote the new secret to the primary (JWT_SECRET / JWT_REFRESH_SECRET) and
+// pass the outgoing secret here (JWT_SECRET_PREVIOUS / JWT_REFRESH_SECRET_PREVIOUS).
+// Tokens already issued under the old secret keep validating until they expire;
+// once the longest TTL has elapsed the previous secret can be dropped. Empty or
+// blank entries are ignored. Safe to call once at startup.
+func (j *JWTService) SetValidationSecrets(accessPrevious, refreshPrevious []string) {
+	j.accessSecretsPrev = toSecretBytes(accessPrevious)
+	j.refreshSecretsPrev = toSecretBytes(refreshPrevious)
+}
+
+// toSecretBytes converts non-blank secret strings to byte slices, dropping
+// empty entries (a trailing comma or unset var must not create an all-zero key).
+func toSecretBytes(secrets []string) [][]byte {
+	out := make([][]byte, 0, len(secrets))
+	for _, s := range secrets {
+		if s == "" {
+			continue
+		}
+		out = append(out, []byte(s))
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // IssueAccessToken issues a new access token (short-lived)
@@ -121,15 +158,44 @@ func HashToken(token string) string {
 
 // ValidateAccessToken validates an access token and returns the claims
 func (j *JWTService) ValidateAccessToken(tokenString string) (*TokenClaims, error) {
-	return j.validateToken(tokenString, j.accessSecret)
+	return j.validateToken(tokenString, j.accessSecret, j.accessSecretsPrev)
 }
 
 // ValidateRefreshToken validates a refresh token and returns the claims
 func (j *JWTService) ValidateRefreshToken(tokenString string) (*TokenClaims, error) {
-	return j.validateToken(tokenString, j.refreshSecret)
+	return j.validateToken(tokenString, j.refreshSecret, j.refreshSecretsPrev)
 }
 
-func (j *JWTService) validateToken(tokenString string, secret []byte) (*TokenClaims, error) {
+// validateToken validates against the primary secret first, then each previous
+// (validation-only) secret. Expiry is terminal: an expired token is denied
+// without trying other secrets, so the rotation window (RD-1164 #15) only ever
+// accepts a still-valid token signed under a secret we've rotated away from —
+// it never extends a token's lifetime.
+func (j *JWTService) validateToken(tokenString string, primary []byte, previous [][]byte) (*TokenClaims, error) {
+	claims, err := j.parseWithSecret(tokenString, primary)
+	if err == nil {
+		return claims, nil
+	}
+	if errors.Is(err, ErrExpiredToken) {
+		return nil, err
+	}
+	// Primary failed on signature/parse (not expiry): the token may have been
+	// signed under a secret we've since rotated away from. Try each previous.
+	for _, secret := range previous {
+		c, e := j.parseWithSecret(tokenString, secret)
+		if e == nil {
+			return c, nil
+		}
+		if errors.Is(e, ErrExpiredToken) {
+			return nil, e
+		}
+	}
+	return nil, err
+}
+
+// parseWithSecret parses and validates a token against a single secret,
+// mapping library errors onto the package's ErrExpiredToken / ErrInvalidToken.
+func (j *JWTService) parseWithSecret(tokenString string, secret []byte) (*TokenClaims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &TokenClaims{}, func(token *jwt.Token) (interface{}, error) {
 		// Validate signing method
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {

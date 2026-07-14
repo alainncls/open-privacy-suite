@@ -39,7 +39,7 @@ COMPLIANCE_DEFAULT_MODE = "enforce"
 **`version` is required.** The file must declare a top-level `version` (currently `1`). The proxy refuses to start on a missing or unsupported version, so a file written for a future schema fails loudly instead of being silently mis-read.
 
 <Callout variant="danger" title="Secrets are not allowed in the config file">
-Secrets — `JWT_SECRET`, `JWT_REFRESH_SECRET`, `ADMIN_API_TOKEN`, `OPERATOR_API_TOKEN`, `AZURE_AD_CLIENT_SECRET`, `DATABASE_URL`, `AUDIT_DATABASE_URL`, `AUDIT_ADMIN_DATABASE_URL`, `EXPLORER_DATABASE_URL`, `REDIS_URL` / `REDIS_PASSWORD`, `RPC_API_KEY`, `RPC_API_KEY_ENCRYPTION_KEY`, `OAUTH_FIRST_PARTY_CLIENTS` — must live in your environment or secrets manager, never in a plaintext config file. **The proxy refuses to start if it finds one of these in the file**, naming the offending key. Inject secrets via the environment, which overrides the file anyway.
+Secrets — `JWT_SECRET`, `JWT_REFRESH_SECRET`, `JWT_SECRET_PREVIOUS`, `JWT_REFRESH_SECRET_PREVIOUS`, `ADMIN_API_TOKEN`, `OPERATOR_API_TOKEN`, `AZURE_AD_CLIENT_SECRET`, `DATABASE_URL`, `AUDIT_DATABASE_URL`, `AUDIT_ADMIN_DATABASE_URL`, `EXPLORER_DATABASE_URL`, `REDIS_URL` / `REDIS_PASSWORD`, `RPC_API_KEY`, `RPC_API_KEY_ENCRYPTION_KEY`, `OAUTH_FIRST_PARTY_CLIENTS` — must live in your environment or secrets manager, never in a plaintext config file. **The proxy refuses to start if it finds one of these in the file**, naming the offending key. Inject secrets via the environment, which overrides the file anyway.
 </Callout>
 
 A fully-commented template lives at `config.example.toml` in the repository root — copy and trim it:
@@ -145,6 +145,8 @@ At startup the proxy migrates the audit database (as the admin DSN), then reads 
   { name: "IPFS_GATEWAY", default: "https://ipfs-proxy-cache.privado.id", description: "IPFS gateway for schemas" },
   { name: "JWT_SECRET", default: "(auto in dev)", description: "Access token signing secret" },
   { name: "JWT_REFRESH_SECRET", default: "(auto in dev)", description: "Refresh token signing secret" },
+  { name: "JWT_SECRET_PREVIOUS", default: "(none)", description: "Optional comma-separated previous access-token secrets, accepted for validation only (never signing). Lets you rotate JWT_SECRET without logging every session out: promote the new secret to JWT_SECRET and move the old one here, then drop it after the access-token TTL elapses." },
+  { name: "JWT_REFRESH_SECRET_PREVIOUS", default: "(none)", description: "Optional comma-separated previous refresh-token secrets, accepted for validation only. Same rotation-window purpose as JWT_SECRET_PREVIOUS; drop old entries after the refresh-token TTL elapses." },
   { name: "VERIFIER_ID", default: "(required in prod)", description: "Privado verifier DID" },
   { name: "ADMIN_API_TOKEN", default: "(required in prod)", description: "Shared token for admin API access via X-Admin-Token header" },
 ]} />
@@ -392,6 +394,7 @@ Each RBAC group can have an API key for the upstream RPC node. This enables per-
   { name: "RPC_API_KEY_HEADER", default: "Authorization", description: "Header name used to send the upstream RPC API key. Default 'Authorization' sends 'Bearer <key>'; any other value (e.g. 'X-API-Key') sends the key verbatim under that header. Validated against ^[A-Za-z0-9-]+$ at startup." },
   { name: "RPC_API_KEY_ENCRYPTION_KEY", default: "(none)", description: "Hex-encoded 32-byte key for encrypting API keys at rest. Required in production. Generate with: openssl rand -hex 32. The proxy refuses to start if this is set to an invalid value (bad hex or wrong length) rather than silently storing keys in plaintext — fix or unset it to boot." },
   { name: "MAX_CONCURRENT_REQUESTS", default: "50", description: "Maximum concurrent in-flight requests per authenticated user." },
+  { name: "MAX_CONCURRENT_ANONYMOUS_REQUESTS", default: "= MAX_CONCURRENT_REQUESTS", description: "Shared concurrency cap for anonymous /rpc traffic (requests with no JWT). The per-user cap is keyed by identity and cannot bound anonymous callers, so this bounds the total in-flight work an unauthenticated flood can create. Set 0 to disable." },
 ]} />
 
 Per-group keys are configured in the admin dashboard under group access settings. Keys are encrypted at rest in production and masked in API responses (only last 4 characters visible). Each group can also override `rpc_api_key_header` to switch between `Authorization` and any single-header alternative such as `X-API-Key`.
@@ -405,6 +408,15 @@ privacy-cli reencrypt-rpc-keys --database-url $DATABASE_URL --old-key $OLD_KEY -
 Add `--dry-run` to preview the change without writing. Run it before switching `RPC_API_KEY_ENCRYPTION_KEY` over to the new value.
 
 The client's IP is forwarded to the upstream node via `X-Forwarded-For` for upstream rate limiting.
+
+### Request size and pagination limits
+
+Fixed limits protect the proxy from oversized or unbounded requests. These are not configurable:
+
+- **Request body size:** admin, explorer, and `/rpc` requests are capped at 1 MB. A declared `Content-Length` above the cap is rejected with `413 Request Entity Too Large`; chunked or under-declared bodies are still bounded and fail with a 4xx response when the handler reads past the cap.
+- **Admin list pagination:** `?limit=` on admin list endpoints is capped at 1000; higher values are clamped down. Non-numeric, zero, or negative values fall back to the endpoint default.
+- **Explorer pagination:** `?limit=` on explorer list endpoints is capped at 100; negative `limit`/`offset` values are treated as the default rather than passed through to the database.
+- **Batch admin operations:** contract sync-delete and batch-move accept at most 200 contract IDs per request; a single contract grant accepts at most 100 custom-address event param rules.
 
 ---
 

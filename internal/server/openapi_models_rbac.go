@@ -159,8 +159,6 @@ type groupUpdateRequest struct {
 type groupAccessRequest struct {
 	AllowedMethods []string     `json:"allowed_methods"`
 	Claims         []rbac.Claim `json:"claims"`
-	RateLimitRPS   *int         `json:"rate_limit_rps" example:"50"`
-	RateLimitDaily *int         `json:"rate_limit_daily" example:"100000"`
 	RPCAPIKey      *string      `json:"rpc_api_key"`
 	VerboseErrors  bool         `json:"verbose_errors"`
 }

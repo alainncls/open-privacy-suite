@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	baseURL := env("PRIVACY_URL", "http://localhost:18300")
+	baseURL := env("PRIVACY_URL", "http://localhost:8080")
 	adminToken := os.Getenv("PRIVACY_ADMIN_TOKEN")
 
 	client, err := newHTTPClient(baseURL, adminToken)

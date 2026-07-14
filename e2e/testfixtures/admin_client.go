@@ -94,8 +94,6 @@ type GroupAccess struct {
 	GroupID        string   `json:"group_id"`
 	AllowedMethods []string `json:"allowed_methods"`
 	Claims         []Claim  `json:"claims"`
-	RateLimitRPS   *int     `json:"rate_limit_rps"`
-	RateLimitDaily *int     `json:"rate_limit_daily"`
 }
 
 type User struct {
@@ -145,8 +143,6 @@ type EffectivePermissions struct {
 	OrgID          string           `json:"org_id"`
 	AllowedMethods []string         `json:"allowed_methods"`
 	Claims         []Claim          `json:"claims"`
-	RateLimitRPS   *int             `json:"rate_limit_rps"`
-	RateLimitDaily *int             `json:"rate_limit_daily"`
 	Groups         []Group          `json:"groups"`
 	Memberships    []UserMembership `json:"memberships"`
 }
@@ -170,8 +166,6 @@ type CreateGroupInput struct {
 type GroupAccessInput struct {
 	AllowedMethods []string `json:"allowed_methods"`
 	Claims         []Claim  `json:"claims"`
-	RateLimitRPS   *int     `json:"rate_limit_rps,omitempty"`
-	RateLimitDaily *int     `json:"rate_limit_daily,omitempty"`
 	VerboseErrors  bool     `json:"verbose_errors,omitempty"` // RD-1137 Part A
 }
 

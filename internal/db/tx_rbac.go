@@ -222,8 +222,8 @@ func (t *Tx) CreateGroupAccess(ctx context.Context, access *rbac.GroupAccess) er
 	// rpc_api_key_header column is left at its schema DEFAULT 'Authorization'
 	// (migration 043) and is not consulted at runtime. The header name is
 	// operator-wide via the RPC_API_KEY_HEADER env var.
-	query := `INSERT INTO group_access (id, group_id, allowed_methods, claims, rate_limit_rps, rate_limit_daily, rpc_api_key)
-	          VALUES ($1, $2, $3, $4, $5, $6, $7)
+	query := `INSERT INTO group_access (id, group_id, allowed_methods, claims, rpc_api_key)
+	          VALUES ($1, $2, $3, $4, $5)
 	          RETURNING created_at, updated_at`
 
 	claims := make([]string, len(access.Claims))
@@ -234,7 +234,7 @@ func (t *Tx) CreateGroupAccess(ctx context.Context, access *rbac.GroupAccess) er
 	return t.tx.QueryRowContext(ctx, query,
 		access.ID, access.GroupID,
 		pq.Array(access.AllowedMethods), pq.Array(claims),
-		access.RateLimitRPS, access.RateLimitDaily, access.RPCAPIKey,
+		access.RPCAPIKey,
 	).Scan(&access.CreatedAt, &access.UpdatedAt)
 }
 

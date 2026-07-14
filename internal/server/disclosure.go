@@ -209,6 +209,9 @@ func (s *Server) disclosureUserMiddleware() gin.HandlerFunc {
 // @Security     AdminToken
 // @Router       /api/v1/admin/disclosure/requests [post]
 func (s *Server) createDisclosureRequest(c *gin.Context) {
+	if denyOperatorOrgScoped(c) { // RD-1173: operator token must not mutate tenant disclosure state
+		return
+	}
 	var input struct {
 		RequesterUserID string           `json:"requester_user_id"` // Optional - who's requesting (internal user ID)
 		RequesterDID    string           `json:"requester_did"`     // DID of authorized viewer (for block explorer auth)
@@ -316,6 +319,9 @@ func (s *Server) createDisclosureRequest(c *gin.Context) {
 // @Security     AdminToken
 // @Router       /api/v1/admin/disclosure/requests [get]
 func (s *Server) listDisclosureRequests(c *gin.Context) {
+	if denyOperatorTenantRead(c) { // RD-1173: operator token must not read tenant disclosure data
+		return
+	}
 	filter := &disclosure.DisclosureFilter{}
 
 	orgID, ok := resolveAdminListOrgID(c)
@@ -422,6 +428,9 @@ func (s *Server) listDisclosureRequests(c *gin.Context) {
 // @Security     AdminToken
 // @Router       /api/v1/admin/disclosure/grants [get]
 func (s *Server) listDisclosureGrants(c *gin.Context) {
+	if denyOperatorTenantRead(c) { // RD-1173: operator token must not read tenant disclosure data
+		return
+	}
 	filter := &disclosure.DisclosureFilter{}
 
 	orgID, ok := resolveAdminListOrgID(c)
@@ -513,6 +522,9 @@ func (s *Server) listDisclosureGrants(c *gin.Context) {
 // @Security     AdminToken
 // @Router       /api/v1/admin/disclosure/requests/{request_id} [delete]
 func (s *Server) deleteDisclosureRequest(c *gin.Context) {
+	if denyOperatorOrgScoped(c) { // RD-1173: operator token must not mutate tenant disclosure state
+		return
+	}
 	requestID := c.Param("request_id")
 
 	// Load the request to find its org before any mutation.
@@ -570,6 +582,9 @@ func (s *Server) deleteDisclosureRequest(c *gin.Context) {
 // @Security     AdminToken
 // @Router       /api/v1/admin/disclosure/grants/{grant_id}/revoke [post]
 func (s *Server) adminRevokeDisclosureGrant(c *gin.Context) {
+	if denyOperatorOrgScoped(c) { // RD-1173: operator token must not mutate tenant disclosure state
+		return
+	}
 	grantID := c.Param("grant_id")
 
 	// Load grant to find owning org via its parent request.
@@ -626,6 +641,9 @@ func (s *Server) adminRevokeDisclosureGrant(c *gin.Context) {
 // @Security     AdminToken
 // @Router       /api/v1/admin/disclosure/requests/{request_id} [get]
 func (s *Server) getDisclosureRequest(c *gin.Context) {
+	if denyOperatorTenantRead(c) { // RD-1173: operator token must not read tenant disclosure data
+		return
+	}
 	requestID := c.Param("request_id")
 
 	reqDetails, err := s.db.GetDisclosureRequestWithDetails(c.Request.Context(), requestID)
@@ -663,6 +681,9 @@ func (s *Server) getDisclosureRequest(c *gin.Context) {
 // @Security     AdminToken
 // @Router       /api/v1/admin/disclosure/check-access [get]
 func (s *Server) checkDisclosureAccess(c *gin.Context) {
+	if denyOperatorTenantRead(c) { // RD-1173: operator token must not probe tenant disclosure relationships
+		return
+	}
 	requesterDID := c.Query("requester_did")
 	targetUserDID := c.Query("target_user_did")
 
@@ -677,6 +698,18 @@ func (s *Server) checkDisclosureAccess(c *gin.Context) {
 		slog.Error("disclosure: check-access lookup failed", "err", err)
 		respondInternalError(c, "failed to check disclosure access")
 		return
+	}
+
+	// RD-1180: a jwt_admin (tier-2) must not learn whether a disclosure grant
+	// exists over ANOTHER org's user. The lookup is global by DID pair, and the
+	// success body leaks grant ID / scope / level / expiry, so without a scope
+	// clamp this endpoint is a cross-org relationship oracle. When a grant exists
+	// but its org is outside the caller's scope, collapse to the SAME opaque
+	// "no active grant" body as the not-found case so the two are indistinguishable.
+	// inScope bypasses for super-admin (admin_token) and dev; the operator token
+	// is blocked upstream by denyOperatorTenantRead.
+	if grantWithReq != nil && !inScope(c, grantWithReq.Request.OrgID) {
+		grantWithReq = nil
 	}
 
 	if grantWithReq == nil {

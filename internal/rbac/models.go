@@ -276,11 +276,9 @@ type GroupAccess struct {
 	ID             string    `json:"id"`
 	GroupID        string    `json:"group_id"`
 	AllowedMethods []string  `json:"allowed_methods"`
-	Claims         []Claim   `json:"claims"`                     // Operational claims: deploy, upgrade, admin
-	RateLimitRPS   *int      `json:"rate_limit_rps,omitempty"`   // Deprecated: rate limiting moved to RPC proxy
-	RateLimitDaily *int      `json:"rate_limit_daily,omitempty"` // Deprecated: rate limiting moved to RPC proxy
-	RPCAPIKey      *string   `json:"rpc_api_key,omitempty"`      // API key for upstream RPC proxy authentication
-	VerboseErrors  bool      `json:"verbose_errors"`             // RD-1137 Part A: members get curated reason codes on the wire for denials
+	Claims         []Claim   `json:"claims"`                // Operational claims: deploy, upgrade, admin
+	RPCAPIKey      *string   `json:"rpc_api_key,omitempty"` // API key for upstream RPC proxy authentication
+	VerboseErrors  bool      `json:"verbose_errors"`        // RD-1137 Part A: members get curated reason codes on the wire for denials
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 
@@ -332,9 +330,7 @@ type EffectivePermissions struct {
 	AllowedMethods []string                  `json:"allowed_methods"`
 	ContractAccess map[string]ContractAccess `json:"contract_access"` // address -> access
 	Claims         []Claim                   `json:"claims"`          // User's capabilities from groups
-	RateLimitRPS   *int                      `json:"rate_limit_rps,omitempty"`
-	RateLimitDaily *int                      `json:"rate_limit_daily,omitempty"`
-	RPCAPIKey      string                    `json:"-"` // Per-group upstream RPC API key (excluded from JSON — sensitive)
+	RPCAPIKey      string                    `json:"-"`               // Per-group upstream RPC API key (excluded from JSON — sensitive)
 	ComputedAt     time.Time                 `json:"computed_at"`
 	ExpiresAt      time.Time                 `json:"expires_at"`
 }
@@ -407,11 +403,9 @@ type AccessCheckResult struct {
 	Allowed        bool    `json:"allowed"`
 	AuthRequired   bool    `json:"auth_required,omitempty"` // True when denial is due to missing authentication (401 vs 403)
 	Reason         string  `json:"reason,omitempty"`
-	OrgID          string  `json:"org_id,omitempty"`           // Resolved organization ID
-	UserID         string  `json:"user_id,omitempty"`          // Internal user ID (UUID)
-	RateLimitRPS   *int    `json:"rate_limit_rps,omitempty"`   // Deprecated: rate limiting moved to RPC proxy
-	RateLimitDaily *int    `json:"rate_limit_daily,omitempty"` // Deprecated: rate limiting moved to RPC proxy
-	RPCAPIKey      string  `json:"-"`                          // API key for upstream RPC proxy (excluded from JSON — sensitive)
+	OrgID          string  `json:"org_id,omitempty"`  // Resolved organization ID
+	UserID         string  `json:"user_id,omitempty"` // Internal user ID (UUID)
+	RPCAPIKey      string  `json:"-"`                 // API key for upstream RPC proxy (excluded from JSON — sensitive)
 	Claims         []Claim `json:"claims,omitempty"`
 }
 

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.20;
 
 /// @title MaliciousBox - A contract that tries to call an external address

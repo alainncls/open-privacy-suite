@@ -89,6 +89,54 @@ var TraceMethods = map[string]bool{
 // RD-1121.
 var DeployMethods = TraceMethods
 
+// canonicalMethodByLower maps the lowercased form of every built-in standard
+// RPC method to its canonical camelCase spelling. Built once from the static
+// Read/Write/Trace method sets. Operator-configured ExtraMethods (e.g. linea_*)
+// are intentionally excluded — their canonical form is operator-defined and they
+// pass through verbatim.
+var canonicalMethodByLower = func() map[string]string {
+	m := make(map[string]string, len(ReadMethods)+len(WriteMethods)+len(TraceMethods)+len(canonicalExtraMethods))
+	for _, set := range []map[string]bool{ReadMethods, WriteMethods, TraceMethods} {
+		for name := range set {
+			m[strings.ToLower(name)] = name
+		}
+	}
+	for _, name := range canonicalExtraMethods {
+		m[strings.ToLower(name)] = name
+	}
+	return m
+}()
+
+// canonicalExtraMethods are methods NOT in the Read/Write/Trace sets that are
+// still consumed case-sensitively downstream — GetTargetAddress /
+// GetFunctionSelector switch on them (access.go), and they are per-address
+// cross-org gated (ReadOpsMap). Without canonicalizing them, a mixed-case
+// eth_getProof / eth_createAccessList would pass through unchanged, yield an
+// empty TargetAddress, and skip the per-address isolation check — the same
+// bypass CanonicalizeMethod closes for eth_call / eth_getLogs.
+var canonicalExtraMethods = []string{
+	"eth_getProof",
+	"eth_createAccessList",
+}
+
+// CanonicalizeMethod normalizes a JSON-RPC method name to its canonical
+// camelCase spelling for internal dispatch and access-control decisions
+// (RD-1180). It is a case-insensitive match against the built-in standard
+// method set; unknown methods (operator linea_* aliases, wildcard passthrough,
+// anything else) are returned UNCHANGED so a mis-cased unknown method still
+// fails closed downstream. This closes the case-normalization skew where a
+// mixed-case eth_sendRawTransaction / debug_trace* would skip the special
+// validation dispatch, and a mixed-case eth_call / eth_getLogs would skip
+// target/selector extraction (bypassing per-contract cross-org isolation for a
+// "*"-allowlist group). The upstream node still receives the request body
+// verbatim — only the internal method string is normalized.
+func CanonicalizeMethod(method string) string {
+	if canon, ok := canonicalMethodByLower[strings.ToLower(method)]; ok {
+		return canon
+	}
+	return method
+}
+
 // GetClaimForMethod returns the claim required for a given RPC method.
 //
 // As of RD-1121, NO standard RPC method requires a claim at the allowlist level:

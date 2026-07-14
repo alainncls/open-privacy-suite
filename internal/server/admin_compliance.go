@@ -61,12 +61,10 @@ func (s *Server) registerComplianceRoutes(adminGroup *gin.RouterGroup) {
 }
 
 // compliancePaginationParams parses and caps pagination parameters.
+// The cap now lives in parsePaginationParams (RD-1179 — applied to all admin
+// list endpoints), so this is a thin alias kept for call-site clarity.
 func compliancePaginationParams(c *gin.Context, defaultLimit int) (int, int) {
-	limit, offset := parsePaginationParams(c, defaultLimit)
-	if limit > maxPaginationLimit {
-		limit = maxPaginationLimit
-	}
-	return limit, offset
+	return parsePaginationParams(c, defaultLimit)
 }
 
 // defaultEnforcementMode returns the cluster-wide default compliance
@@ -353,8 +351,8 @@ func (s *Server) upsertTokenPrice(c *gin.Context) {
 	var input struct {
 		Symbol      string             `json:"symbol" binding:"required"`
 		Decimals    int                `json:"decimals"`
-		Prices      map[string]float64 `json:"prices"`                // multi-currency: {"usd": 3500, "eur": 3200}
-		CoingeckoID *string            `json:"coingecko_id"`          // null = manual, "ethereum"/"tether"/"usd-coin" = CoinGecko
+		Prices      map[string]float64 `json:"prices"`       // multi-currency: {"usd": 3500, "eur": 3200}
+		CoingeckoID *string            `json:"coingecko_id"` // null = manual, "ethereum"/"tether"/"usd-coin" = CoinGecko
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		respondBadRequestAndLog(c, "invalid request body",
@@ -900,6 +898,13 @@ func (s *Server) listSanctionedAddresses(c *gin.Context) {
 // @Security     AdminToken
 // @Router       /api/v1/admin/compliance/sanctions [post]
 func (s *Server) addSanctionedAddress(c *gin.Context) {
+	// RD-1173: sanctions are compliance controls (per-org = org admin's job,
+	// global = super-admin only) — never the platform operator's. Deny the
+	// operator token outright; admin_token and jwt_admin keep their existing
+	// per-org / global handling below.
+	if denyOperatorOrgScoped(c) {
+		return
+	}
 	var input struct {
 		OrgID   *string `json:"org_id"`
 		Address string  `json:"address" binding:"required"`
@@ -989,6 +994,11 @@ func (s *Server) addSanctionedAddress(c *gin.Context) {
 // @Security     AdminToken
 // @Router       /api/v1/admin/compliance/sanctions/{id} [delete]
 func (s *Server) removeSanctionedAddress(c *gin.Context) {
+	// RD-1173: the operator token must not touch sanctions (per-org or
+	// global). admin_token/jwt_admin keep their existing handling below.
+	if denyOperatorOrgScoped(c) {
+		return
+	}
 	id := c.Param("id")
 
 	existing, err := s.db.GetSanctionedAddress(c.Request.Context(), id)
