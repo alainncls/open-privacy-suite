@@ -2915,8 +2915,11 @@ components:
         event_rules:
           $ref: '#/components/schemas/privacy-proxy_internal_rbac.EventRulesField'
         functions:
-          description: nil = all functions, or structured rules with optional param
-            constraints
+          description: |-
+            No omitempty: a non-nil empty slice ([]) means "deny all functions"
+            (events-only grant) and MUST be distinguishable in the API response from
+            nil ("all functions"). Mirrors EventRules below, which is likewise always
+            serialized so the dashboard can tell none/all/specific apart.
           items:
             $ref: '#/components/schemas/privacy-proxy_internal_rbac.FunctionRule'
           type: array
@@ -2993,7 +2996,7 @@ components:
           type: string
       type: object
     privacy-proxy_internal_rbac.EventRulesField:
-      description: nil = deny, wildcard = all events, allowlist = specific events
+      description: null = deny, wildcard = all events, allowlist = specific events
       properties:
         rules:
           description: allowlist rules; only meaningful when Wildcard is false

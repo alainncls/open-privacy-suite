@@ -521,8 +521,10 @@ export default function ContractGrantsManager({
                 <div className="mt-2 flex items-start justify-between gap-4 group">
                   <div className="flex flex-wrap items-center gap-2 pt-0.5">
                     <span className="text-xs text-neutral-500">Functions:</span>
-                    {!grant.functions || grant.functions.length === 0 ? (
+                    {grant.functions == null ? (
                     <span className="text-xs text-success font-medium">All functions allowed</span>
+                  ) : grant.functions.length === 0 ? (
+                    <span className="text-xs text-amber-700 font-medium">No functions (events only)</span>
                   ) : (
                     <div className="flex flex-wrap items-center gap-1.5">
                       {grant.functions.map((rule: FunctionRule) => {
