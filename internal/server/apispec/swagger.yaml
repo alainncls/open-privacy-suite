@@ -10731,7 +10731,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/internal_server.APIError'
-          description: grant_id and address_id are required
+          description: grant_id and address_id are required, or the pagination cursor
+            is malformed
         "401":
           content:
             application/json:

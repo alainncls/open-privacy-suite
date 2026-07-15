@@ -33,10 +33,17 @@ func decodeFeedCursor(s string) (feedCursor, error) {
 	if err != nil {
 		return c, ErrBadCursor
 	}
-	if err := json.Unmarshal(raw, &c); err != nil {
+	// Require both fields present and non-null: a lenient decode would let a
+	// truncated/hand-built cursor default the index to 0 and silently
+	// reposition the feed instead of failing closed.
+	var probe struct {
+		B *uint64 `json:"b"`
+		I *uint32 `json:"i"`
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil || probe.B == nil || probe.I == nil {
 		return c, ErrBadCursor
 	}
-	return c, nil
+	return feedCursor{Block: *probe.B, Index: *probe.I}, nil
 }
 
 // sqlFeedBound normalizes an AddressPage to the exclusive row-value bound

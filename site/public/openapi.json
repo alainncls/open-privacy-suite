@@ -16210,7 +16210,7 @@
                                 }
                             }
                         },
-                        "description": "grant_id and address_id are required"
+                        "description": "grant_id and address_id are required, or the pagination cursor is malformed"
                     },
                     "401": {
                         "content": {

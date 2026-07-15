@@ -80,10 +80,14 @@ func (b *Backend) listTxFeed(ctx context.Context, limit int, beforeBlock *uint64
 // resumes on the exact (block, tx_index) keyset position — bare block-range
 // paging skipped a boundary block's remaining rows, and the indexer clamps
 // PageSize (~100), so next_cursor is the only reliable continuation signal.
-// The legacy exclusive BeforeBlock maps to the proto's INCLUSIVE
-// block_range.to_block as before-1 (first page only; the indexer ignores
-// block_range once a cursor is present).
+// The legacy BeforeBlock and the proto's block_range.to_block are both
+// exclusive (BlockRange is half-open; 0 = unbounded), so before=N passes
+// through unchanged — except before=0, which means "nothing" and must
+// short-circuit (to_block=0 would mean unbounded and restart the feed).
 func (b *Backend) GetTransactionsByAddress(ctx context.Context, address string, limit int, page explorer.AddressPage) ([]explorer.Transaction, string, error) {
+	if page.Cursor == "" && page.BeforeBlock != nil && *page.BeforeBlock == 0 {
+		return nil, "", nil
+	}
 	req := &indexerv1.ListTransactionsRequest{
 		Page: &indexerv1.PageRequest{PageSize: int32(limit), Cursor: page.Cursor},
 		Filter: &indexerv1.ListTransactionsRequest_ByAddress{
@@ -92,8 +96,8 @@ func (b *Backend) GetTransactionsByAddress(ctx context.Context, address string, 
 			},
 		},
 	}
-	if page.Cursor == "" && page.BeforeBlock != nil && *page.BeforeBlock > 0 {
-		req.BlockRange = &indexerv1.BlockRange{ToBlock: *page.BeforeBlock - 1}
+	if page.Cursor == "" && page.BeforeBlock != nil {
+		req.BlockRange = &indexerv1.BlockRange{ToBlock: *page.BeforeBlock}
 	}
 	resp, err := b.client.ListTransactions(ctx, req)
 	if err != nil {
@@ -185,14 +189,18 @@ func (b *Backend) GetTransfersByTransaction(ctx context.Context, txHash string) 
 }
 
 // GetTransfersByAddress — RD-1149 cursor round-trip; see
-// GetTransactionsByAddress for the rationale.
+// GetTransactionsByAddress for the rationale (incl. the exclusive
+// to_block passthrough and the before=0 short-circuit).
 func (b *Backend) GetTransfersByAddress(ctx context.Context, address string, limit int, page explorer.AddressPage) ([]explorer.TokenTransfer, string, error) {
+	if page.Cursor == "" && page.BeforeBlock != nil && *page.BeforeBlock == 0 {
+		return nil, "", nil
+	}
 	req := &indexerv1.ListTokenTransfersRequest{
 		ByAddress: address,
 		Page:      &indexerv1.PageRequest{PageSize: int32(limit), Cursor: page.Cursor},
 	}
-	if page.Cursor == "" && page.BeforeBlock != nil && *page.BeforeBlock > 0 {
-		req.BlockRange = &indexerv1.BlockRange{ToBlock: *page.BeforeBlock - 1}
+	if page.Cursor == "" && page.BeforeBlock != nil {
+		req.BlockRange = &indexerv1.BlockRange{ToBlock: *page.BeforeBlock}
 	}
 	resp, err := b.client.ListTokenTransfers(ctx, req)
 	if err != nil {

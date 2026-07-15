@@ -124,11 +124,13 @@ func TestGetTransactionsByAddress_CursorRoundTrip(t *testing.T) {
 	}
 }
 
-// TestGetTransactionsByAddress_BeforeBlockMapsToInclusiveToBlock pins the
-// legacy-bound translation: the REST ?before= is exclusive, the proto
-// block_range.to_block is inclusive, so before=N must be sent as to_block=N-1
-// — and only on the first page (no cursor).
-func TestGetTransactionsByAddress_BeforeBlockMapsToInclusiveToBlock(t *testing.T) {
+// TestGetTransactionsByAddress_BeforeBlockMapsToExclusiveToBlock pins the
+// legacy-bound translation: both the REST ?before= and the proto
+// block_range.to_block are exclusive (BlockRange is half-open), so before=N
+// passes through unchanged — only on the first page (no cursor) — and
+// before=0 short-circuits to an empty page (to_block=0 would mean unbounded
+// and restart the feed).
+func TestGetTransactionsByAddress_BeforeBlockMapsToExclusiveToBlock(t *testing.T) {
 	fake := &fakeIndexerClient{clamp: 3}
 	b := &Backend{client: fake}
 	before := uint64(100)
@@ -136,8 +138,14 @@ func TestGetTransactionsByAddress_BeforeBlockMapsToInclusiveToBlock(t *testing.T
 	if _, _, err := b.GetTransactionsByAddress(context.Background(), "0xa", 10, explorer.AddressPage{BeforeBlock: &before}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if tb := fake.lastTxReq.GetBlockRange().GetToBlock(); tb != 99 {
-		t.Errorf("to_block = %d, want 99 (exclusive before=100 → inclusive to_block=99)", tb)
+	if tb := fake.lastTxReq.GetBlockRange().GetToBlock(); tb != 100 {
+		t.Errorf("to_block = %d, want 100 (exclusive passthrough)", tb)
+	}
+
+	zero := uint64(0)
+	rows, next, err := b.GetTransactionsByAddress(context.Background(), "0xa", 10, explorer.AddressPage{BeforeBlock: &zero})
+	if err != nil || len(rows) != 0 || next != "" {
+		t.Errorf("before=0 must short-circuit to an empty terminal page, got rows=%d next=%q err=%v", len(rows), next, err)
 	}
 
 	// With a cursor present, the legacy bound must NOT be sent — the indexer

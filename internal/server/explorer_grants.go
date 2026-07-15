@@ -398,13 +398,16 @@ func (s *Server) collectGrantScopeTxs(ctx context.Context, address string, scope
 		if err != nil {
 			return nil, "", err
 		}
+		// A non-advancing cursor means the backend re-served the previous
+		// page: discard this fetch (appending it would double-serve rows on a
+		// resumed request) and terminate with what was legitimately gathered.
+		if next != "" && next == cur.Cursor {
+			return inScope, "", nil
+		}
 		scanned += len(txs)
 		inScope = append(inScope, filterTxsByGrantScope(txs, scope)...)
 		if next == "" {
 			return inScope, "", nil // feed exhausted — nothing left to resume
-		}
-		if next == cur.Cursor {
-			return inScope, "", nil // defensive: a non-advancing cursor must terminate
 		}
 		cur = explorer.AddressPage{Cursor: next}
 		if len(inScope) >= want {
@@ -430,7 +433,7 @@ func (s *Server) collectGrantScopeTxs(ctx context.Context, address string, scope
 // @Param        cursor query string false "Opaque continuation cursor from the previous response's next_cursor (RD-1149); takes precedence over before"
 // @Param        before query int false "Legacy: return rows strictly older than this block number (may skip rows of the boundary block — prefer cursor)"
 // @Success      200 {object} GrantTransactionsResponse
-// @Failure      400 {object} APIError "grant_id and address_id are required"
+// @Failure      400 {object} APIError "grant_id and address_id are required, or the pagination cursor is malformed"
 // @Failure      401 {object} APIError "authentication required"
 // @Failure      403 {object} APIError "grant has been revoked or has expired"
 // @Failure      404 {object} APIError "grant or address not found for this grant"

@@ -1534,6 +1534,10 @@ func (s *Server) corsMiddleware() gin.HandlerFunc {
 			}
 			c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
 			c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
+			// Custom response headers are invisible to cross-origin browser
+			// clients unless exposed; X-Next-Cursor carries the explorer
+			// feeds' pagination continuation (RD-1149).
+			c.Writer.Header().Set("Access-Control-Expose-Headers", "X-Next-Cursor")
 		}
 
 		if c.Request.Method == "OPTIONS" {
