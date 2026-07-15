@@ -119,21 +119,24 @@ services:
     restart: unless-stopped
 
   chain-indexer:
-    # Pull a published image rather than building from a sibling clone
-    # so the dev stack is runnable without a chain-indexer checkout.
-    # Pin via INDEXER_VERSION (e.g. 0.3.0). docker-compose.override.yml
-    # can swap to `build:` for source iteration. Note: dockerhub tags this
-    # image without the `v` prefix (verify with `docker manifest inspect
-    # gatewayfm/chain-indexer:<tag>` before changing the default).
+    # Built from the sibling checkout (CHAIN_INDEXER_PATH), like the proxy
+    # and block-explorer services — privacy-dev-up.sh already requires that
+    # checkout to exist, and pulling a published tag here meant the dev
+    # stack silently tested RELEASED indexer code while every other service
+    # ran local source (bit the RD-1149 acceptance run). The built image is
+    # tagged :dev-local so it never clobbers a pinned published tag. To run
+    # a published image instead, override this service in
+    # docker-compose.privacy.dev.override.yml with
+    # `image: gatewayfm/chain-indexer:<tag>` and no `build:`.
     #
-    # ≥ 0.2.0 is REQUIRED — earlier tags stored from_address / to_address
-    # in EIP-55 checksum case but compared exact-match in SQL, so every
-    # ByAddress query returned zero rows for the lowercased addresses the
-    # proxy passes. Upstream commit 03182bd "fix(reads): case-insensitive
-    # address lookups …" (chain-indexer v0.2.0, 2026-05-21) made the
-    # explorer-read SQL case-insensitive. Do not roll the default back
-    # below 0.2.0 without re-opening that bug.
-    image: gatewayfm/chain-indexer:${INDEXER_VERSION:-0.3.0}
+    # If you point at a published tag: ≥ 0.2.0 is REQUIRED — earlier tags
+    # stored from_address / to_address in EIP-55 checksum case but compared
+    # exact-match in SQL, so every ByAddress query returned zero rows for
+    # the lowercased addresses the proxy passes (fixed upstream in v0.2.0,
+    # commit 03182bd "fix(reads): case-insensitive address lookups …").
+    build:
+      context: ${CHAIN_INDEXER_PATH:-../chain-indexer}
+    image: gatewayfm/chain-indexer:dev-local
     environment:
       - RPC_URL=http://anvil:8545
       - DATABASE_URL=postgres://postgres:${INDEXER_POSTGRES_PASSWORD:?INDEXER_POSTGRES_PASSWORD is required in privacy mode}@indexer-postgres:5432/chain_indexer?sslmode=disable
