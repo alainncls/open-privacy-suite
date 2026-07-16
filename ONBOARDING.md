@@ -34,7 +34,7 @@ scenario and **ready-to-use tokens printed to your terminal**:
 | Persona | Identity (DID) | Role |
 |---------|----------------|------|
 | Alice | `did:test:alice` | Meridian Bank — payment operations (can deploy) |
-| Carol | `did:test:carol` | Meridian Bank — compliance analyst (read-only, own balance only) |
+| Carol | `did:test:carol` | Meridian Bank — compliance analyst (query methods only, own balance only) |
 | Bob   | `did:test:bob`   | Volta Bank — trader (no access to Meridian's contracts) |
 | Rita  | `did:test:rita`  | Regulator (sees Alice's activity via an approved disclosure grant) |
 | Mia   | `did:test:mia`   | Meridian Bank — org admin (unlocks the admin dashboard, Meridian only) |

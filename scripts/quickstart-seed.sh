@@ -7,7 +7,9 @@
 # THE SCENARIO — two banks and a regulator share one chain:
 #
 #   Meridian Bank ─ Alice (operations, deploy claim)
-#                 └ Carol (analyst, read-only, balanceOf restricted to self)
+#                 ├ Carol (analyst, query-only method allowlist,
+#                 │        balanceOf restricted to self by a parameter rule)
+#                 └ Mia   (org admin — unlocks the /admin dashboard)
 #   Volta Bank    ─ Bob   (trader; no access to Meridian's contracts)
 #   Regulator     ─ Rita  (no bank membership; sees Alice's activity only
 #                          through an approved, audited disclosure grant)
@@ -200,12 +202,15 @@ fi
 MERIDIAN_ID="$(ensure_org meridian-bank "Meridian Bank")"
 VOLTA_ID="$(ensure_org volta-bank "Volta Bank")"
 
+# Authorization model (RD-821/RD-853): the per-group METHOD ALLOWLIST decides
+# what a group may call; contract grants decide what it may see. The only
+# operational claims are deploy/upgrade/admin — there are no read/write claims.
 OPS_GROUP="$(ensure_group "$MERIDIAN_ID" operations "Payment Operations" \
   '{"claims":["deploy"],"allowed_methods":["*"]}')"
 ANALYSTS_GROUP="$(ensure_group "$MERIDIAN_ID" analysts "Compliance Analysts" \
-  '{"claims":["read"],"allowed_methods":["eth_call","eth_blockNumber","eth_chainId","eth_getBalance","net_version"]}')"
+  '{"claims":[],"allowed_methods":["eth_call","eth_blockNumber","eth_chainId","eth_getBalance","net_version"]}')"
 TRADERS_GROUP="$(ensure_group "$VOLTA_ID" traders "Trading Desk" \
-  '{"claims":["read","write"],"allowed_methods":["eth_call","eth_sendTransaction","eth_getBalance","eth_blockNumber","eth_chainId","eth_getTransactionReceipt","eth_getTransactionByHash","net_version"]}')"
+  '{"claims":[],"allowed_methods":["eth_call","eth_sendTransaction","eth_getBalance","eth_blockNumber","eth_chainId","eth_getTransactionReceipt","eth_getTransactionByHash","net_version"]}')"
 # Org-admin group (unlocks the /admin dashboard for Mia). Invariants: claims
 # must be empty (org admins get all claims automatically) and the method
 # allowlist must be non-empty; creating it requires the super-admin token.

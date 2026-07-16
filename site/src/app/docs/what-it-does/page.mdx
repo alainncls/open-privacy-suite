@@ -28,7 +28,9 @@ The privacy proxy makes a shared chain behave like this instead:
 
 - **You see your own activity in full.**
 - **You see what others have explicitly shared with you.**
-- **Everything else is redacted or invisible** — including the fact that it exists (filtered lists don't leak counts of hidden items).
+- **Everything else is redacted or invisible** — list and count surfaces are
+  filtered per viewer, so hidden activity is not itemized to those who may
+  not see it.
 
 ## What is hidden, from whom
 
@@ -37,7 +39,7 @@ The privacy proxy makes a shared chain behave like this instead:
 | An organization's contracts and their activity | That organization's members (per their role), plus anyone explicitly granted access |
 | A user's personal wallet and its history | Only that user — **not even their own org admin** — plus recipients of a disclosure grant |
 | Transaction details (counterparties, amounts, calldata) | Participants of the transaction; others see `[PRIVATE]` placeholders or nothing at all |
-| Transaction counts, volumes, charts | Filtered per viewer — totals never reveal how much hidden activity exists |
+| Transaction counts, volumes, charts | Filtered per viewer — count surfaces reflect what the viewer is allowed to see, not raw chain totals |
 | Unknown/unregistered addresses | Nobody (private by default) |
 
 Two enforcement layers apply to every response: raw JSON-RPC responses are
@@ -57,8 +59,10 @@ Honesty matters more in this section than anywhere else:
   behind a privacy proxy or unreachable from users entirely. A single
   unprotected node re-exposes the whole ledger and defeats the system. That
   is a deployment requirement, not an optional hardening step.
-- **Chain-level metadata** (block numbers, timestamps, gas totals) is visible
-  to authenticated users.
+- **Chain-level metadata** (block numbers, timestamps) is visible to
+  authenticated users. Aggregate fields that could disclose hidden activity
+  (block sizes, per-block gas totals) are zeroed or omitted rather than
+  recomputed from what a viewer can see.
 - **Whatever you share is shared.** Grants and disclosure approvals reveal
   exactly what they say they reveal — the system's job is to make that
   sharing explicit, scoped, expiring, and audited.
@@ -67,10 +71,13 @@ Honesty matters more in this section than anywhere else:
 
 - **Organizations** own contracts. **Groups** within an org carry permissions.
   **Users** belong to groups.
-- Permissions are layered: which JSON-RPC methods a group may call, which
-  claims it holds (`read`, `write`, `deploy`, `upgrade`, `admin`), which
-  contracts it can touch, down to **individual function parameters** — e.g.
-  "this group may call `balanceOf`, but only for the caller's own address."
+- Permissions are layered: the **method allowlist** decides which JSON-RPC
+  methods a group may call (this is the authorization model — there are no
+  read/write claims), **contract grants** decide which contracts it can see
+  and touch, operational claims (`deploy`, `upgrade`, `admin`) gate contract
+  creation, proxy upgrades and admin bypass, and rules go down to
+  **individual function parameters** — e.g. "this group may call
+  `balanceOf`, but only for the caller's own address."
 - **Cross-organization isolation is absolute by default**: org A's users
   cannot read or call org B's contracts — even indirectly. Transactions are
   runtime-traced, so routing a call through an intermediary contract does not
@@ -96,7 +103,10 @@ Data crosses a privacy boundary only through explicit, auditable mechanisms:
 
 ## Compliance built in
 
-- KYC status gates access; unverified or banned users are denied.
+- KYC status gates access to protected state and transaction methods. One
+  deliberate exception: an authenticated but not-yet-KYC'd user still gets
+  already-public chain metadata (chain id, block number and the like) — no
+  less than an anonymous caller would see. Banned users are always denied.
 - Travel-rule checks can be enforced on transfers.
 - Access logs are written to an append-only audit store with tamper-evident
   integrity checking — an operator can prove what was and wasn't accessed.
