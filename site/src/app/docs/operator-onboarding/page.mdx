@@ -142,6 +142,57 @@ A user's DID is established the first time they authenticate. If you don't have 
 
 ---
 
+## Removing an org admin by DID (super-admin)
+
+Removal is the symmetric counterpart of bootstrap step 4 — same identifier,
+same body shape, same scope rules:
+
+```bash
+curl -sS -X DELETE "$PROXY/api/v1/admin/orgs/$ORG_ID/memberships/by-did" \
+  -H "X-Admin-Token: $ADMIN_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "did": "did:iden3:privado:main:2Sf...",
+    "group_id": "'"$ADMIN_GROUP_ID"'"
+  }'
+```
+
+What the operator credential can and cannot do here:
+
+- **Can:** add a DID to, and remove a DID from, `is_org_admin` groups.
+  Minting and revoking org admins is deliberately super-admin-only — a
+  tier-2 org-admin JWT cannot mint or remove a peer who could then ban or
+  demote them.
+- **Cannot:** manage regular-group memberships with the operator token —
+  that is per-org tenant management and is rejected; org admins do it
+  themselves (Part 2). The operator token also cannot read tenant data
+  (user lists, groups, contracts are tenant-confidential), which is why
+  removal works purely from the DID and group id you already hold — no
+  lookup step is required or possible.
+- **Opaque failures:** an unknown DID, a DID with no membership in the
+  target group, and a group belonging to a different org all return the
+  same opaque `403`. The API confirms nothing about what exists (no
+  enumeration oracle) — if a removal unexpectedly 403s, re-check the DID
+  and group id you recorded at onboarding time.
+
+**Audit attribution.** Every mint and removal lands in the RBAC audit log,
+attributed to the credential that performed it: the full super-admin token
+as `__super_admin__`, the restricted operator/bootstrap token as
+`__operator__`, and a tenant org admin's JWT as that admin's own identity.
+Access reviews can therefore separate operator lifecycle actions from
+in-tenant administration.
+
+<Callout variant="warning" title="No anti-lockout guard">
+Nothing prevents removing an organization's **last** org admin. The org
+keeps running if that happens — RPC access and existing memberships are
+unaffected — but nobody can administer it from the dashboard until you
+mint a new org admin (bootstrap step 4 with a new DID). The operator
+retains this mint/remove authority by design until a dedicated recovery
+and governance flow replaces it.
+</Callout>
+
+---
+
 ## Part 2 — Day-to-day onboarding
 
 These are the **tier-2 org admin's** day-to-day operations, run with their session JWT — they manage their own org: groups, memberships, contract grants, KYC/ban. (Org creation and minting org admins are **not** here — those are the super-admin bootstrap in Part 1.)
