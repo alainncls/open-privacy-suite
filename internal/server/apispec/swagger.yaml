@@ -1215,7 +1215,9 @@ components:
         functions:
           items:
             $ref: '#/components/schemas/privacy-proxy_internal_rbac.FunctionRule'
-          type: array
+          type:
+          - array
+          - "null"
           uniqueItems: false
         group_id:
           example: 9a8b7c6d-5e4f-3a2b-1c0d-9e8f7a6b5c4d
@@ -1230,7 +1232,9 @@ components:
         functions:
           items:
             $ref: '#/components/schemas/privacy-proxy_internal_rbac.FunctionRule'
-          type: array
+          type:
+          - array
+          - "null"
           uniqueItems: false
       type: object
     internal_server.contractListResponse:
@@ -2922,7 +2926,9 @@ components:
             serialized so the dashboard can tell none/all/specific apart.
           items:
             $ref: '#/components/schemas/privacy-proxy_internal_rbac.FunctionRule'
-          type: array
+          type:
+          - array
+          - "null"
           uniqueItems: false
         group_id:
           type: string

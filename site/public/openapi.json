@@ -1743,7 +1743,10 @@
                         "items": {
                             "$ref": "#/components/schemas/privacy-proxy_internal_rbac.FunctionRule"
                         },
-                        "type": "array",
+                        "type": [
+                            "array",
+                            "null"
+                        ],
                         "uniqueItems": false
                     },
                     "group_id": {
@@ -1765,7 +1768,10 @@
                         "items": {
                             "$ref": "#/components/schemas/privacy-proxy_internal_rbac.FunctionRule"
                         },
-                        "type": "array",
+                        "type": [
+                            "array",
+                            "null"
+                        ],
                         "uniqueItems": false
                     }
                 },
@@ -4172,7 +4178,10 @@
                         "items": {
                             "$ref": "#/components/schemas/privacy-proxy_internal_rbac.FunctionRule"
                         },
-                        "type": "array",
+                        "type": [
+                            "array",
+                            "null"
+                        ],
                         "uniqueItems": false
                     },
                     "group_id": {
@@ -4744,6 +4753,10 @@
             }
         }
     },
+    "externalDocs": {
+        "description": "",
+        "url": ""
+    },
     "info": {
         "contact": {
             "name": "Gateway.fm",
@@ -4753,10 +4766,7 @@
         "title": "Privacy Proxy REST API",
         "version": "1.0"
     },
-    "externalDocs": {
-        "description": "",
-        "url": ""
-    },
+    "openapi": "3.1.0",
     "paths": {
         "/api/v1/admin/access/check": {
             "post": {
@@ -4771,8 +4781,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/privacy-proxy_internal_rbac.AccessCheckRequest",
-                                        "summary": "request",
-                                        "description": "access-check request"
+                                        "description": "access-check request",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -5022,8 +5032,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.azureTenantCreateRequest",
-                                        "summary": "request",
-                                        "description": "tenant to allowlist"
+                                        "description": "tenant to allowlist",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -5279,8 +5289,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.azureTenantUpdateRequest",
-                                        "summary": "request",
-                                        "description": "fields to update"
+                                        "description": "fields to update",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -5485,8 +5495,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.ComplianceSetBaseCurrencyRequest",
-                                        "summary": "request",
-                                        "description": "target currency and force flag"
+                                        "description": "target currency and force flag",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -5695,8 +5705,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.ComplianceSanctionAddRequest",
-                                        "summary": "request",
-                                        "description": "sanction fields"
+                                        "description": "sanction fields",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -5981,8 +5991,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.DeployDemoERC20Request",
-                                        "summary": "request",
-                                        "description": "optional org to register the contract to, and contract name"
+                                        "description": "optional org to register the contract to, and contract name",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -6638,8 +6648,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.DisclosureReasonBody",
-                                        "summary": "request",
-                                        "description": "optional revocation reason"
+                                        "description": "optional revocation reason",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -6946,8 +6956,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.CreateDisclosureRequestBody",
-                                        "summary": "request",
-                                        "description": "disclosure request (target_user_id and reason required)"
+                                        "description": "disclosure request (target_user_id and reason required)",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -7456,8 +7466,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.orgCreateRequest",
-                                        "summary": "request",
-                                        "description": "organization to create"
+                                        "description": "organization to create",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -7723,8 +7733,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.orgUpdateRequest",
-                                        "summary": "request",
-                                        "description": "fields to update (all optional)"
+                                        "description": "fields to update (all optional)",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -8040,8 +8050,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.ComplianceThresholdOverrideUpsertRequest",
-                                        "summary": "request",
-                                        "description": "override fields"
+                                        "description": "override fields",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -8202,8 +8212,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.ComplianceConfigUpdateRequest",
-                                        "summary": "request",
-                                        "description": "compliance config fields to change"
+                                        "description": "compliance config fields to change",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -8610,8 +8620,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.ComplianceTokenPriceUpsertRequest",
-                                        "summary": "request",
-                                        "description": "token price fields"
+                                        "description": "token price fields",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -8812,8 +8822,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.ComplianceTravelRuleRecordCreateRequest",
-                                        "summary": "request",
-                                        "description": "travel-rule record fields"
+                                        "description": "travel-rule record fields",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -9113,8 +9123,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.contractCreateRequest",
-                                        "summary": "request",
-                                        "description": "contract to create"
+                                        "description": "contract to create",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -9220,8 +9230,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.contractBatchMoveRequest",
-                                        "summary": "request",
-                                        "description": "move request (provide exactly one of target_group_id or new_group)"
+                                        "description": "move request (provide exactly one of target_group_id or new_group)",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -9317,8 +9327,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.contractClaimRequest",
-                                        "summary": "request",
-                                        "description": "claimed address and deployment tx hash"
+                                        "description": "claimed address and deployment tx hash",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -9551,8 +9561,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.contractSyncDeleteRequest",
-                                        "summary": "request",
-                                        "description": "contract IDs to delete"
+                                        "description": "contract IDs to delete",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -9825,8 +9835,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.contractUpdateRequest",
-                                        "summary": "request",
-                                        "description": "fields to update"
+                                        "description": "fields to update",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -9941,8 +9951,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.contractABIUpdateRequest",
-                                        "summary": "request",
-                                        "description": "ABI JSON array"
+                                        "description": "ABI JSON array",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -10153,8 +10163,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.contractEventsAllowDynamicPayloadRequest",
-                                        "summary": "request",
-                                        "description": "flag value"
+                                        "description": "flag value",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -10356,8 +10366,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.contractGrantCreateRequest",
-                                        "summary": "request",
-                                        "description": "grant to create"
+                                        "description": "grant to create",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -10574,8 +10584,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.contractGrantUpdateRequest",
-                                        "summary": "request",
-                                        "description": "fields to update"
+                                        "description": "fields to update",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -10690,8 +10700,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.contractVisibleToUnlockRequest",
-                                        "summary": "request",
-                                        "description": "flag value"
+                                        "description": "flag value",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -10797,8 +10807,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.dryRunRequest",
-                                        "summary": "request",
-                                        "description": "impersonation request (user_did and rpc.method/params)"
+                                        "description": "impersonation request (user_did and rpc.method/params)",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -11003,8 +11013,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.groupCreateRequest",
-                                        "summary": "request",
-                                        "description": "group to create"
+                                        "description": "group to create",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -11110,8 +11120,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.groupBatchDeleteRequest",
-                                        "summary": "request",
-                                        "description": "group IDs to delete"
+                                        "description": "group IDs to delete",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -11207,8 +11217,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.groupBatchDeleteRequest",
-                                        "summary": "request",
-                                        "description": "group IDs to preview"
+                                        "description": "group IDs to preview",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -11461,8 +11471,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.groupUpdateRequest",
-                                        "summary": "request",
-                                        "description": "fields to update (all optional)"
+                                        "description": "fields to update (all optional)",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -11651,8 +11661,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.groupAccessRequest",
-                                        "summary": "request",
-                                        "description": "access settings"
+                                        "description": "access settings",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -11748,8 +11758,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.membershipByDIDRequest",
-                                        "summary": "request",
-                                        "description": "onboarding request"
+                                        "description": "onboarding request",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -12011,8 +12021,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.sharedInfraInput",
-                                        "summary": "request",
-                                        "description": "shared-infrastructure entry to create"
+                                        "description": "shared-infrastructure entry to create",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -12288,8 +12298,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.sharedInfraInput",
-                                        "summary": "request",
-                                        "description": "updated fields (address field ignored)"
+                                        "description": "updated fields (address field ignored)",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -12591,8 +12601,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.systemToggleRequest",
-                                        "summary": "request",
-                                        "description": "enabled flag and audit reason"
+                                        "description": "enabled flag and audit reason",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -12731,8 +12741,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.systemToggleRequest",
-                                        "summary": "request",
-                                        "description": "enabled flag and audit reason"
+                                        "description": "enabled flag and audit reason",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -12863,8 +12873,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.TestRequestInput",
-                                        "summary": "request",
-                                        "description": "method, params, and optional jwt_token / org_id"
+                                        "description": "method, params, and optional jwt_token / org_id",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -13224,8 +13234,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.rbacUserUpdateRequest",
-                                        "summary": "request",
-                                        "description": "fields to update (all optional)"
+                                        "description": "fields to update (all optional)",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -13531,8 +13541,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.membershipCreateRequest",
-                                        "summary": "request",
-                                        "description": "membership to create"
+                                        "description": "membership to create",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -13703,8 +13713,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.AzureCallbackRequest",
-                                        "summary": "request",
-                                        "description": "authorization code, CSRF state, and redirect URI"
+                                        "description": "authorization code, CSRF state, and redirect URI",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -13794,8 +13804,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.AzureServicePrincipalRequest",
-                                        "summary": "request",
-                                        "description": "Azure AD access token from the client-credentials grant"
+                                        "description": "Azure AD access token from the client-credentials grant",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -14047,8 +14057,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.AuthRequestBody",
-                                        "summary": "request",
-                                        "description": "optional callback origin"
+                                        "description": "optional callback origin",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -14159,8 +14169,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.AuthVerifyRequest",
-                                        "summary": "request",
-                                        "description": "session ID and JWZ token"
+                                        "description": "session ID and JWZ token",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -14537,8 +14547,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.VerifyLinkRequest",
-                                        "summary": "request",
-                                        "description": "signed challenge"
+                                        "description": "signed challenge",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -17799,8 +17809,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.ApproveDisclosureRequestBody",
-                                        "summary": "request",
-                                        "description": "optional scope narrowing, grant duration, and reason"
+                                        "description": "optional scope narrowing, grant duration, and reason",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -17905,8 +17915,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.DisclosureReasonBody",
-                                        "summary": "request",
-                                        "description": "optional rejection reason"
+                                        "description": "optional rejection reason",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -18011,8 +18021,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.DisclosureReasonBody",
-                                        "summary": "request",
-                                        "description": "optional revocation reason"
+                                        "description": "optional revocation reason",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -18152,8 +18162,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.RefreshRequest",
-                                        "summary": "request",
-                                        "description": "refresh token"
+                                        "description": "refresh token",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -18233,8 +18243,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.RevokeRequest",
-                                        "summary": "request",
-                                        "description": "refresh token, and optional access token"
+                                        "description": "refresh token, and optional access token",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -18841,8 +18851,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.OAuthTokenRequest",
-                                        "summary": "request",
-                                        "description": "authorization-code grant parameters"
+                                        "description": "authorization-code grant parameters",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -18949,8 +18959,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.JSONRPCRequestEnvelope",
-                                        "summary": "request",
-                                        "description": "JSON-RPC 2.0 request"
+                                        "description": "JSON-RPC 2.0 request",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -19085,8 +19095,8 @@
                                     },
                                     {
                                         "$ref": "#/components/schemas/internal_server.JSONRPCRequestEnvelope",
-                                        "summary": "request",
-                                        "description": "JSON-RPC 2.0 request"
+                                        "description": "JSON-RPC 2.0 request",
+                                        "summary": "request"
                                     }
                                 ]
                             }
@@ -19199,7 +19209,6 @@
             }
         }
     },
-    "openapi": "3.1.0",
     "tags": [
         {
             "description": "Session authentication: Privado ID wallet flow, Azure AD (interactive and service principal), token refresh/revoke/introspection.",
