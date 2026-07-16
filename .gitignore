@@ -143,3 +143,6 @@ CONSOLIDATED_CRITICAL_FINDINGS*.md
 # Loadtest binary (not the cmd/loadtest/ source)
 /loadtest
 mcp/mcp
+
+# Local MCP config (copy .mcp.json.example and fill in the admin token)
+/.mcp.json

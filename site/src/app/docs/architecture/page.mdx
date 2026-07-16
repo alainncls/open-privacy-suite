@@ -40,7 +40,7 @@ The proxy is the **sole gateway** between clients and the blockchain. There are 
 | **Authorization** | Multi-tenant RBAC with org, group (flat, multi-membership), and user-level permissions. Method-level, contract-level, and function selector restrictions |
 | **Proxy** | JSON-RPC forwarding with security filtering, batch rejection, and multicall detection |
 | **Runtime Tracing** | `debug_traceCall` simulation of every transaction to validate all internal call targets before forwarding |
-| **Rate Limiting** | Per-user sliding window (requests per second) and daily counters, configurable per group |
+| **Traffic protection** | Upstream RPC-proxy rate tiers selected by per-group API keys, plus local per-user/shared-anonymous concurrency ceilings and a per-key circuit breaker |
 | **Compliance** | Travel rule enforcement, multi-currency token pricing, and selective disclosure system |
 
 ## Request Flow
@@ -54,9 +54,9 @@ Every JSON-RPC request passes through the following pipeline:
 5. **Permission Resolution** -- Resolve effective permissions from the user's org memberships, group memberships (flat — UNION across all groups), and contract grants (cached).
 6. **Method Check** -- Verify the requested JSON-RPC method is in the user's allowed methods.
 7. **Contract Check** -- If the call targets a contract, verify the user's org owns it and the user has an appropriate grant.
-8. **Rate Limit** -- Check per-user RPS and daily counters. Return 429 if exceeded.
+8. **Concurrency Limit** -- Acquire the caller's local in-flight slot. Authenticated callers are limited per identity; anonymous callers share one aggregate ceiling.
 9. **Runtime Trace** -- Simulate the transaction via `debug_traceCall`. Extract all `CALL`, `DELEGATECALL`, `STATICCALL`, and `CREATE`/`CREATE2` targets. Verify every target belongs to the user's org, is a precompile, or is shared infrastructure.
-10. **Forward** -- Send the validated request to the Ethereum node and return the response.
+10. **Forward** -- Send the validated request with the resolved group or fallback API key. The upstream RPC proxy owns request-rate quotas; privacy-proxy's per-key circuit breaker sheds requests after an upstream `429`.
 
 ## Data Flow for Transactions
 
@@ -69,9 +69,9 @@ graph TD
     E["5. Permission Resolution<br/><small>Resolve from org memberships, flat group UNION, grants</small>"]
     F["6. Method Check<br/><small>Verify method is in allowed methods</small>"]
     G["7. Contract Check<br/><small>Verify org owns contract and user has grant</small>"]
-    H["8. Rate Limit<br/><small>Check per-user RPS and daily counters</small>"]
+    H["8. Concurrency Limit<br/><small>Per identity; shared ceiling for anonymous callers</small>"]
     I["9. Runtime Trace<br/><small>debug_traceCall — verify all CALL/DELEGATECALL/CREATE targets</small>"]
-    J["10. Forward<br/><small>Send to Ethereum node, return response</small>"]
+    J["10. Forward<br/><small>Use group API key; upstream enforces request rate</small>"]
 
     A --> B --> C --> D --> E --> F --> G --> H --> I --> J
 ```

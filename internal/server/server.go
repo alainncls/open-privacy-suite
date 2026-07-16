@@ -1157,7 +1157,7 @@ func (s *Server) setupRouter() *gin.Engine {
 	{
 		// Admin endpoints - private network + token auth + org scoping
 		admin := apiV1.Group("/admin")
-		admin.Use(s.localhostOnlyMiddleware(), adminAuth, orgScope)
+		admin.Use(bodyLimitMiddleware(MaxRequestBodySize), s.localhostOnlyMiddleware(), adminAuth, orgScope)
 		{
 			admin.GET("/logs", s.getLogs)
 			admin.GET("/status", s.getStatus)
@@ -2029,6 +2029,11 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 		respondBadRequest(c, "invalid request body")
 		return
 	}
+
+	// RD-1180: canonicalize the method so this preview path matches the live
+	// /rpc dispatch (which canonicalizes at ingress). Without this, a mixed-case
+	// method would report a different target/selector/verdict here than in prod.
+	input.Method = rbac.CanonicalizeMethod(input.Method)
 
 	// Use synthetic identity for test requests or extract from JWT token
 	testIdentity := "test:dashboard"
