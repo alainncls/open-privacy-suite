@@ -59,6 +59,7 @@ ALICE_DID="did:test:alice"  ALICE_ADDR="0x70997970C51812dc3A010C7d01b50e0d17dc79
 CAROL_DID="did:test:carol"  CAROL_ADDR="0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"
 BOB_DID="did:test:bob"      BOB_ADDR="0x90F79bf6EB2c4f870365E785982E1f101E93b906"
 RITA_DID="did:test:rita"    RITA_ADDR="0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65"
+MIA_DID="did:test:mia"      MIA_ADDR="0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc"
 MOCK_SIG="0xabababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab"
 
 # --- HTTP helpers ------------------------------------------------------------
@@ -115,11 +116,13 @@ ensure_org() { # ensure_org <slug> <name> → org id
   printf '%s' "$id"
 }
 
-ensure_group() { # ensure_group <org-id> <slug> <name> <access-json> → group id
-  local org="$1" slug="$2" name="$3" access="$4" id
+ensure_group() { # ensure_group <org-id> <slug> <name> <access-json> [create-extra-json] → group id
+  # create-extra-json: extra top-level fields for the create body, e.g.
+  # '"is_org_admin":true' (super-admin-only escalation — we hold X-Admin-Token).
+  local org="$1" slug="$2" name="$3" access="$4" extra="${5:-}" id
   id="$(admin GET "/orgs/${org}/groups" | jq -r --arg s "$slug" '(if type=="array" then . else (.data // []) end) | .[]? | (.group // .) | select(.slug == $s) | .id' | head -1)"
   if [[ -z "$id" ]]; then
-    id="$(admin POST "/orgs/${org}/groups" "{\"slug\":\"${slug}\",\"name\":\"${name}\"}" | jq -r '.id // empty')"
+    id="$(admin POST "/orgs/${org}/groups" "{\"slug\":\"${slug}\",\"name\":\"${name}\"${extra:+,${extra}}}" | jq -r '.id // empty')"
   fi
   [[ -n "$id" ]] || { echo "$(red "ERROR: could not create group ${slug}")" >&2; exit 1; }
   admin PUT "/orgs/${org}/groups/${id}/access" "$access" >/dev/null
@@ -203,6 +206,12 @@ ANALYSTS_GROUP="$(ensure_group "$MERIDIAN_ID" analysts "Compliance Analysts" \
   '{"claims":["read"],"allowed_methods":["eth_call","eth_blockNumber","eth_chainId","eth_getBalance","net_version"]}')"
 TRADERS_GROUP="$(ensure_group "$VOLTA_ID" traders "Trading Desk" \
   '{"claims":["read","write"],"allowed_methods":["eth_call","eth_sendTransaction","eth_getBalance","eth_blockNumber","eth_chainId","eth_getTransactionReceipt","eth_getTransactionByHash","net_version"]}')"
+# Org-admin group (unlocks the /admin dashboard for Mia). Invariants: claims
+# must be empty (org admins get all claims automatically) and the method
+# allowlist must be non-empty; creating it requires the super-admin token.
+ADMINS_GROUP="$(ensure_group "$MERIDIAN_ID" administrators "Bank Administrators" \
+  '{"claims":[],"allowed_methods":["eth_call","eth_getBalance","eth_blockNumber","eth_chainId","net_version"]}' \
+  '"is_org_admin":true')"
 
 echo "    $(green '✓') Meridian Bank ($MERIDIAN_ID)"
 echo "    $(green '✓') Volta Bank    ($VOLTA_ID)"
@@ -212,12 +221,14 @@ ALICE_ID="$(setup_user "$ALICE_DID" "$ALICE_ADDR" "$OPS_GROUP" "Alice — Meridi
 CAROL_ID="$(setup_user "$CAROL_DID" "$CAROL_ADDR" "$ANALYSTS_GROUP" "Carol — Meridian analyst")"
 BOB_ID="$(setup_user "$BOB_DID" "$BOB_ADDR" "$TRADERS_GROUP" "Bob — Volta trader")"
 RITA_ID="$(setup_user "$RITA_DID" "$RITA_ADDR" "" "Rita — Regulator")"
-echo "    $(green '✓') Alice (Meridian operations), Carol (Meridian analyst), Bob (Volta trader), Rita (regulator)"
+MIA_ID="$(setup_user "$MIA_DID" "$MIA_ADDR" "$ADMINS_GROUP" "Mia — Meridian admin")"
+echo "    $(green '✓') Alice (Meridian operations), Carol (Meridian analyst), Bob (Volta trader), Rita (regulator), Mia (Meridian admin)"
 
 ALICE_TOKEN="$(mint_token "$ALICE_DID")"
 CAROL_TOKEN="$(mint_token "$CAROL_DID")"
 BOB_TOKEN="$(mint_token "$BOB_DID")"
 RITA_TOKEN="$(mint_token "$RITA_DID")"
+MIA_TOKEN="$(mint_token "$MIA_DID")"
 
 # --- Demo token contract -------------------------------------------------------
 TOKEN_ADDR=""
@@ -227,6 +238,16 @@ if [[ -f "$STATE_FILE" ]]; then
     # Reuse only if it is still registered to Meridian (i.e. same DB volume).
     if ! admin GET "/orgs/${MERIDIAN_ID}/contracts" | jq -e --arg a "$(printf '%s' "$TOKEN_ADDR" | tr '[:upper:]' '[:lower:]')" \
         '(if type=="array" then . else (.data // []) end) | .[]? | select(.address == $a)' >/dev/null; then
+      TOKEN_ADDR=""
+    fi
+  fi
+  if [[ -n "$TOKEN_ADDR" ]]; then
+    # ... and only if the contract still has code on chain. The DB survives a
+    # stack restart (postgres volume) but the dev chain does not (anvil is
+    # in-memory) — a registered address with no code means the chain was
+    # wiped, so deploy fresh instead of verifying against a ghost contract.
+    if ! rpc "$ALICE_TOKEN" eth_getCode "[\"${TOKEN_ADDR}\",\"latest\"]" \
+        | jq -e '.result and .result != "0x"' >/dev/null; then
       TOKEN_ADDR=""
     fi
   fi
@@ -327,7 +348,12 @@ check "Bob (Volta Bank) queries Meridian's token → denied (cross-org isolation
 if admin GET "/disclosure/grants" | jq -e --arg d "$RITA_DID" '(.grants // [])[]? | select(.request.requester_did == $d)' >/dev/null; then V=pass; else V=fail; fi
 check "Regulator's disclosure grant (Rita → Alice) is active" "$V"
 
-# 6. Explorer API serves data (only when the chain-indexer profile is up).
+# 6. Mia can open the admin dashboard: org admin of Meridian (and only Meridian).
+if as_user "$MIA_TOKEN" GET "/api/v1/me/admin-status" \
+    | jq -e --arg m "$MERIDIAN_ID" '.is_admin == true and (.admin_org_ids == [$m])' >/dev/null; then V=pass; else V=fail; fi
+check "Mia (bank admin) unlocks the admin dashboard — org admin of Meridian only" "$V"
+
+# 7. Explorer API serves data (only when the chain-indexer profile is up).
 if [[ "${QUICKSTART_WITH_EXPLORER:-1}" == "1" ]]; then
   if curl -sS -H "X-Admin-Token: ${ADMIN_API_TOKEN}" "${PROXY_URL}/api/v1/explorer/blocks?limit=1" | jq -e '(if type=="array" then . else (.data // []) end) | .[]?' >/dev/null 2>&1; then V=pass; else V=fail; fi
   check "Explorer API serves indexed blocks" "$V"
@@ -338,12 +364,12 @@ jq -n \
   --arg proxy_url "$PROXY_URL" \
   --arg token_address "$TOKEN_ADDR" \
   --arg meridian_id "$MERIDIAN_ID" --arg volta_id "$VOLTA_ID" \
-  --arg alice_id "$ALICE_ID" --arg carol_id "$CAROL_ID" --arg bob_id "$BOB_ID" --arg rita_id "$RITA_ID" \
-  --arg alice_token "$ALICE_TOKEN" --arg carol_token "$CAROL_TOKEN" --arg bob_token "$BOB_TOKEN" --arg rita_token "$RITA_TOKEN" \
+  --arg alice_id "$ALICE_ID" --arg carol_id "$CAROL_ID" --arg bob_id "$BOB_ID" --arg rita_id "$RITA_ID" --arg mia_id "$MIA_ID" \
+  --arg alice_token "$ALICE_TOKEN" --arg carol_token "$CAROL_TOKEN" --arg bob_token "$BOB_TOKEN" --arg rita_token "$RITA_TOKEN" --arg mia_token "$MIA_TOKEN" \
   '{proxy_url: $proxy_url, token_address: $token_address,
     orgs: {meridian: $meridian_id, volta: $volta_id},
-    users: {alice: $alice_id, carol: $carol_id, bob: $bob_id, rita: $rita_id},
-    tokens: {alice: $alice_token, carol: $carol_token, bob: $bob_token, rita: $rita_token}}' \
+    users: {alice: $alice_id, carol: $carol_id, bob: $bob_id, rita: $rita_id, mia: $mia_id},
+    tokens: {alice: $alice_token, carol: $carol_token, bob: $bob_token, rita: $rita_token, mia: $mia_token}}' \
   > "$STATE_FILE"
 
 # =============================================================================
@@ -357,12 +383,16 @@ $(bold '================================================================')
   Web UI:            http://localhost:${HOST_PORT_UI:-5173}   (admin dashboard: /admin — org-admin logins only)
   DEMO token:        ${TOKEN_ADDR}   (deployed by Meridian Bank)
 
-$(bold 'Personas') — the login page lists them as one-click buttons (regular
-users: they get the user-facing view, not /admin):
+$(bold 'Personas') — the login page lists them as one-click buttons:
   Alice  ${ALICE_DID}   Meridian ops     wallet ${ALICE_ADDR}
   Carol  ${CAROL_DID}   Meridian analyst wallet ${CAROL_ADDR}
   Bob    ${BOB_DID}     Volta trader     wallet ${BOB_ADDR}
   Rita   ${RITA_DID}    regulator        wallet ${RITA_ADDR}
+  Mia    ${MIA_DID}     Meridian ADMIN   wallet ${MIA_ADDR}
+
+Log in as Mia and open /admin for the dashboard (org admin of Meridian —
+she sees only her own bank). The other personas are regular users: they
+get the user-facing view, /admin denies them.
 
 $(bold 'Fresh JWTs') (also in ${STATE_FILE}; re-mint any time with
 'scripts/quickstart.sh --seed-only'):
@@ -370,6 +400,7 @@ $(bold 'Fresh JWTs') (also in ${STATE_FILE}; re-mint any time with
   CAROL_JWT=${CAROL_TOKEN}
   BOB_JWT=${BOB_TOKEN}
   RITA_JWT=${RITA_TOKEN}
+  MIA_JWT=${MIA_TOKEN}
 
 $(bold 'Try it — the same question, three viewers, three answers:')
 

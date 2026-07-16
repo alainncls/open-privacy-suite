@@ -1,7 +1,7 @@
 # Evaluating the Open Privacy Suite — Start Here
 
 This is the guided tour for someone seeing the product for the first time.
-In ten minutes you'll have a running stack, four identities with different
+In ten minutes you'll have a running stack, five identities with different
 privacy views, and answers to "so what does it actually do?".
 
 > **Using an AI coding agent?** (Claude Code, Cursor, …) Point it at this
@@ -37,6 +37,7 @@ scenario and **ready-to-use tokens printed to your terminal**:
 | Carol | `did:test:carol` | Meridian Bank — compliance analyst (read-only, own balance only) |
 | Bob   | `did:test:bob`   | Volta Bank — trader (no access to Meridian's contracts) |
 | Rita  | `did:test:rita`  | Regulator (sees Alice's activity via an approved disclosure grant) |
+| Mia   | `did:test:mia`   | Meridian Bank — org admin (unlocks the admin dashboard, Meridian only) |
 
 The seed deploys a `DEMO` token through the proxy as Alice, pays Carol, sets
 up a parameter-level rule ("analysts may query only their *own* balance"),
@@ -58,14 +59,15 @@ chain the *same question* (a token balance) as three different people:
 Then look at the same data through other lenses:
 
 - **Web UI** — <http://localhost:5173>: the login page lists the demo
-  personas as one-click buttons (dev identity picker). The personas are
-  regular users (least privilege — that is the point of the demo), so they
-  get the user-facing view, e.g. the disclosure dashboard at `/disclosure`.
-  The **admin dashboard** lives at <http://localhost:5173/admin> and requires
-  an org-admin login — the demo personas are denied there by design. To
-  browse the admin surface (orgs, groups, contracts, grants), use the MCP
-  tools or the admin API (`X-Admin-Token` = `ADMIN_API_TOKEN` in
-  `.env.quickstart`).
+  personas as one-click buttons (dev identity picker). Log in as **Mia**
+  and open the **admin dashboard** at <http://localhost:5173/admin>: as
+  Meridian's org admin she can browse the bank's groups, users, contracts,
+  grants and disclosure requests — and *only* Meridian's (org admins are
+  tenant-scoped; Volta is invisible to her). The other personas are regular
+  users (least privilege): they get the user-facing view, e.g. the
+  disclosure dashboard at `/disclosure`, and `/admin` denies them.
+  Tenant-independent operator tasks go through the admin API / MCP with
+  `X-Admin-Token` (= `ADMIN_API_TOKEN` in `.env.quickstart`).
 - **Explorer API** — privacy-filtered per viewer: the same transaction list
   is full for Alice, empty for Bob, and disclosed-by-grant for Rita.
 - **Audit trail** — every denial and every disclosed access you just made is
