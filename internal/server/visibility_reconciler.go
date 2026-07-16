@@ -25,8 +25,9 @@ import (
 // the startup tick). So the interval is a safety-net cadence, not the
 // steady-state visibility latency.
 //
-// Lifecycle: one instance per Server, started by Server.Start, stopped
-// via Stop(). The reconciler holds no in-memory state — restart is safe
+// Lifecycle: one instance per Server, constructed and started during
+// server construction (server.New / NewWithVerifier), stopped via Stop()
+// on shutdown. The reconciler holds no in-memory state — restart is safe
 // (next tick picks up where the previous one left off).
 type VisibilityReconciler struct {
 	db        *db.DB
