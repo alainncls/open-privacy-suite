@@ -88,6 +88,15 @@ fi
 PROXY_URL="http://localhost:${HOST_PORT_PROXY:-8080}"
 
 if [[ "$SEED_ONLY" -eq 1 ]]; then
+  # Restore the explorer state persisted by the last full run: the seed's
+  # explorer check must not run against a stack that was deliberately brought
+  # up without one (--no-explorer or the chain-indexer pull fallback).
+  # An explicit QUICKSTART_WITH_EXPLORER in the environment still wins.
+  if [[ -z "${QUICKSTART_WITH_EXPLORER:-}" && -f "$ENV_FILE" ]] \
+     && grep -qE '^QUICKSTART_WITH_EXPLORER=' "$ENV_FILE"; then
+    QUICKSTART_WITH_EXPLORER="$(grep -E '^QUICKSTART_WITH_EXPLORER=' "$ENV_FILE" | tail -1 | cut -d= -f2-)"
+  fi
+  export QUICKSTART_WITH_EXPLORER="${QUICKSTART_WITH_EXPLORER:-1}"
   exec "$REPO_ROOT/scripts/quickstart-seed.sh"
 fi
 
@@ -115,6 +124,17 @@ if [[ "$WITH_EXPLORER" -eq 0 ]]; then
   export QUICKSTART_EXPLORER_DATABASE_URL=""
 fi
 export QUICKSTART_WITH_EXPLORER="$WITH_EXPLORER"
+# Persist the resolved explorer state so --seed-only re-runs verify the
+# stack that actually exists (see the restore above).
+if [[ -f "$ENV_FILE" ]] && grep -qE '^QUICKSTART_WITH_EXPLORER=' "$ENV_FILE"; then
+  env_tmp="$(mktemp)"
+  grep -vE '^QUICKSTART_WITH_EXPLORER=' "$ENV_FILE" >"$env_tmp" || true
+  printf 'QUICKSTART_WITH_EXPLORER=%s\n' "$WITH_EXPLORER" >>"$env_tmp"
+  cat "$env_tmp" >"$ENV_FILE"
+  rm -f "$env_tmp"
+else
+  printf 'QUICKSTART_WITH_EXPLORER=%s\n' "$WITH_EXPLORER" >>"$ENV_FILE"
+fi
 
 # Build identity (RD-1023) — same resolution as privacy-dev-up.sh.
 export VERSION="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo dev)}"

@@ -51,9 +51,12 @@ dedicated tests.
 Honesty matters more in this section than anywhere else:
 
 - **The chain itself is not encrypted.** Privacy is enforced at the access
-  layer. Anyone with *direct* access to the underlying node sees everything —
-  which is why a production deployment must make the proxy the only path to
-  the node. That is a deployment requirement, not an optional hardening step.
+  layer. Anyone with *direct* access to an underlying node sees everything,
+  and chain data is replicated to **every** node — so the guarantee only
+  holds if **all nodes of the chain** are protected: each one is either
+  behind a privacy proxy or unreachable from users entirely. A single
+  unprotected node re-exposes the whole ledger and defeats the system. That
+  is a deployment requirement, not an optional hardening step.
 - **Chain-level metadata** (block numbers, timestamps, gas totals) is visible
   to authenticated users.
 - **Whatever you share is shared.** Grants and disclosure approvals reveal
@@ -73,8 +76,12 @@ Honesty matters more in this section than anywhere else:
   runtime-traced, so routing a call through an intermediary contract does not
   evade the check.
 - Users authenticate with ZK-proof credentials (Privado ID), SSO
-  (Microsoft Entra ID), or wallet linking — and then use completely standard
-  JSON-RPC tooling (MetaMask, Foundry, ethers.js) with an auth header.
+  (Microsoft Entra ID), or wallet linking — and then use standard JSON-RPC
+  tooling with an `Authorization` header. Clients that cannot set HTTP
+  headers (browser wallets like MetaMask) connect through a JWT-injecting
+  reverse proxy that stamps the token onto every request (the deployment
+  keeps the short-lived token file fresh; the injector re-reads it on
+  change).
 
 ## Sharing and disclosure
 
@@ -100,8 +107,10 @@ Data crosses a privacy boundary only through explicit, auditable mechanisms:
   credentials. The product's guarantees are about *users and organizations
   not seeing each other's data* — not about hiding data from whoever operates
   the infrastructure.
-- The **node must sit behind the proxy** in production. The proxy enforces
-  privacy; the chain does not.
+- **Every node of the chain must sit behind a proxy** (or be unreachable by
+  users) in production. The proxy enforces privacy; the chain does not — and
+  chain data is replicated to all nodes, so one exposed node anywhere undoes
+  the guarantee for everyone.
 - The **audit trail is tamper-evident**: logs are hash-chained and verified,
   so after-the-fact manipulation is detectable.
 
@@ -113,8 +122,8 @@ Data crosses a privacy boundary only through explicit, auditable mechanisms:
 | Can my org admin read my wallet history? | No. Personal wallets are visible only to their owner, unless the owner approves a disclosure. |
 | Can a regulator get access? | Yes — through a scoped, consented, expiring disclosure grant, with every access logged. |
 | Does it modify the blockchain? | No. It is a gateway in front of a standard EVM node; contracts and tooling work unchanged. |
-| Can I use MetaMask / Foundry / ethers.js? | Yes — it speaks standard JSON-RPC, plus an auth header. |
-| What if someone bypasses the proxy? | Then they see raw chain data. Production deployments must restrict node access to the proxy — see [Operator Deployment](/docs/operator-deployment). |
+| Can I use MetaMask / Foundry / ethers.js? | It speaks standard JSON-RPC, so yes — but requests need an auth header. Clients that can set one (ethers.js, web3.js, curl) work directly; browser wallets like MetaMask cannot, and connect through a JWT-injecting reverse proxy instead. |
+| What if someone bypasses the proxy? | Then they see raw chain data. Every node of the chain must be reachable only through a privacy proxy — one open node exposes the entire ledger. See [Operator Deployment](/docs/operator-deployment). |
 
 ## Try it in five minutes
 

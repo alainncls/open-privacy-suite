@@ -354,10 +354,11 @@ $(bold ' Privacy Proxy demo is up — two banks + a regulator, mock auth')
 $(bold '================================================================')
 
   Proxy RPC + API:   ${PROXY_URL}
-  Admin dashboard:   http://localhost:${HOST_PORT_UI:-5173}
+  Web UI:            http://localhost:${HOST_PORT_UI:-5173}   (admin dashboard: /admin — org-admin logins only)
   DEMO token:        ${TOKEN_ADDR}   (deployed by Meridian Bank)
 
-$(bold 'Personas') — the dashboard login page lists them as one-click buttons:
+$(bold 'Personas') — the login page lists them as one-click buttons (regular
+users: they get the user-facing view, not /admin):
   Alice  ${ALICE_DID}   Meridian ops     wallet ${ALICE_ADDR}
   Carol  ${CAROL_DID}   Meridian analyst wallet ${CAROL_ADDR}
   Bob    ${BOB_DID}     Volta trader     wallet ${BOB_ADDR}

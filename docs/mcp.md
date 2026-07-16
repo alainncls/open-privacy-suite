@@ -526,7 +526,7 @@ RBAC audit logs. At least one filter required.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `resource_type` | string | Cond. | Filter by type: `organization`, `group`, `user`, `membership`, `system_setting` |
+| `resource_type` | string | Cond. | Filter by type — common values (not exhaustive): `organization`, `group`, `user`, `membership`, `contract`, `grant`, `disclosure_request`, `disclosure_grant`, `system_setting` |
 | `actor_id` | string | Cond. | Filter by actor ID |
 | `limit` | number | No | Max entries (default 100) |
 

@@ -57,17 +57,31 @@ chain the *same question* (a token balance) as three different people:
 
 Then look at the same data through other lenses:
 
-- **Admin dashboard** — <http://localhost:5173>: the login page lists the
-  demo personas as one-click buttons (dev identity picker). Log in as each
-  and explore orgs, groups, contracts, grants, disclosure requests.
+- **Web UI** — <http://localhost:5173>: the login page lists the demo
+  personas as one-click buttons (dev identity picker). The personas are
+  regular users (least privilege — that is the point of the demo), so they
+  get the user-facing view, e.g. the disclosure dashboard at `/disclosure`.
+  The **admin dashboard** lives at <http://localhost:5173/admin> and requires
+  an org-admin login — the demo personas are denied there by design. To
+  browse the admin surface (orgs, groups, contracts, grants), use the MCP
+  tools or the admin API (`X-Admin-Token` = `ADMIN_API_TOKEN` in
+  `.env.quickstart`).
 - **Explorer API** — privacy-filtered per viewer: the same transaction list
   is full for Alice, empty for Bob, and disclosed-by-grant for Rita.
 - **Audit trail** — every denial and every disclosed access you just made is
-  in the append-only access log (ask the MCP for `access_logs`, or see the
-  dashboard).
+  in the append-only access log (ask the MCP for `access_logs`).
 
-Everything is standard JSON-RPC + an `Authorization: Bearer <JWT>` header —
-MetaMask, Foundry (`cast`), and ethers.js work unchanged.
+Under the hood everything is standard JSON-RPC plus an
+`Authorization: Bearer <JWT>` header. Clients that can set an HTTP header —
+`curl`, ethers.js, web3.js, backend SDKs — work unchanged. **Browser wallets
+(MetaMask) cannot attach headers**: run a JWT-injecting reverse proxy such as
+[`gateway-fm/jwt-injector`](https://github.com/gateway-fm/jwt-injector) and
+give the wallet the injector's URL as its RPC endpoint. The injector stamps
+the user's JWT onto every request and re-reads its token file whenever the
+file changes — but JWTs are short-lived, and keeping that file fresh is your
+deployment's job (a refresher that re-mints via the login flow), not the
+injector's. In this demo, re-mint persona tokens any time with
+`scripts/quickstart.sh --seed-only`.
 
 ## Drive it from an AI agent (MCP)
 
@@ -75,7 +89,8 @@ The repo ships an [MCP server](docs/mcp.md) exposing ~94 admin/explorer
 tools. Configure once:
 
 ```bash
-# .mcp.json is picked up by Claude Code automatically — just fill in the token:
+cp .mcp.json.example .mcp.json   # local MCP config (gitignored)
+# then fill in the token:
 #   PRIVACY_ADMIN_TOKEN = the ADMIN_API_TOKEN value in .env.quickstart
 ```
 

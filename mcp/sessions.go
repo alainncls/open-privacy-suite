@@ -343,7 +343,7 @@ func registerAccessLogs(s *mcp.Server, client *httpClient) {
 
 func registerAuditLogs(s *mcp.Server, client *httpClient) {
 	type args struct {
-		ResourceType string `json:"resource_type,omitempty" jsonschema:"filter by resource type: organization, group, user, membership, or system_setting"`
+		ResourceType string `json:"resource_type,omitempty" jsonschema:"filter by resource type — common values (not exhaustive): organization, group, user, membership, contract, grant, disclosure_request, disclosure_grant, system_setting"`
 		ActorID      string `json:"actor_id,omitempty" jsonschema:"filter by actor ID"`
 		Limit        int    `json:"limit,omitempty" jsonschema:"max entries (default 100)"`
 	}
