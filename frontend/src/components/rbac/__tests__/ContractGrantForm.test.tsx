@@ -688,6 +688,32 @@ describe('ContractGrantForm — functions tri-state (RD-1201)', () => {
     expect(screen.getByRole('radio', { name: /Specific functions only/i })).toBeChecked();
   });
 
+  it('creates a grant with functions: [] when "No functions" is selected', async () => {
+    const user = userEvent.setup();
+    stubListEvents();
+    const createGrantSpy = vi
+      .spyOn(rbacApi.contracts, 'createGrant')
+      .mockResolvedValue(mockGrantResponse({ functions: [] }));
+    const { onSave } = renderForm();
+
+    await user.selectOptions(screen.getByRole('combobox'), 'group-1');
+    await user.click(screen.getByRole('radio', { name: /No functions/i }));
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await user.click(screen.getByRole('button', { name: 'Create Grant' }));
+
+    await waitFor(() => {
+      expect(createGrantSpy).toHaveBeenCalledWith(
+        'org-1',
+        '0x1111111111111111111111111111111111111111',
+        expect.objectContaining({ group_id: 'group-1', functions: [] })
+      );
+      expect(onSave).toHaveBeenCalledTimes(1);
+    });
+    const sent = createGrantSpy.mock.calls[0][2] as { functions: unknown };
+    expect(sent.functions).toEqual([]);
+    expect(sent.functions).not.toBeNull();
+  });
+
   it('submits functions: [] when "No functions" is selected', async () => {
     const user = userEvent.setup();
     stubListEvents();
