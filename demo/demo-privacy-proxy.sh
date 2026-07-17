@@ -1,10 +1,10 @@
 #!/bin/bash
 
 # =============================================================================
-# Privacy Proxy - Full Privacy Proxy Workflow Demo
+# Open Privacy Suite - Full Workflow Demo
 # =============================================================================
-# This script demonstrates the full privacy proxy workflow:
-# 1. Start services (anvil + privacy-proxy via docker-compose)
+# This script demonstrates the full Open Privacy Suite workflow:
+# 1. Start services (anvil + Open Privacy Suite via docker-compose)
 # 2. Authenticate and get JWT
 # 3. Set up organization and user permissions
 # 4. Preregister CREATE3 addresses
@@ -124,7 +124,7 @@ api_call() {
 # Configuration
 # =============================================================================
 
-print_header "Privacy Proxy Full Workflow Demo"
+print_header "Open Privacy Suite Full Workflow Demo"
 
 print_step "Step 1: Checking Configuration"
 
@@ -144,17 +144,17 @@ DEPLOYER_ADDRESS=$(cast wallet address "$PRIVATE_KEY" 2>/dev/null)
 print_value "Deployer Address" "$DEPLOYER_ADDRESS"
 
 # Check if services are running
-print_substep "Checking if privacy proxy is running..."
+print_substep "Checking if Open Privacy Suite is running..."
 HEALTH_CHECK=$(curl -s "$PROXY_RPC_URL/health" 2>/dev/null || echo "")
 if [ -z "$HEALTH_CHECK" ]; then
-    print_error "Privacy proxy is not running at $PROXY_RPC_URL"
+    print_error "Open Privacy Suite is not running at $PROXY_RPC_URL"
     echo ""
     echo -e "  ${WHITE}Start the services with:${NC}"
     echo -e "  ${GREEN}docker-compose up -d${NC}"
     echo ""
     exit 1
 fi
-print_success "Privacy proxy is running"
+print_success "Open Privacy Suite is running"
 
 # Check Anvil connection through proxy
 print_substep "Checking Anvil connection..."
@@ -181,7 +181,7 @@ print_substep "User DID: $USER_EXTERNAL_ID"
 print_substep "Starting auth session..."
 AUTH_REQUEST_RESP=$(curl -s -X POST "$PROXY_RPC_URL/auth/request" \
     -H "Content-Type: application/json" \
-    -d '{"reason": "Privacy Proxy Demo"}')
+    -d '{"reason": "Open Privacy Suite Demo"}')
 
 SESSION_ID=$(echo "$AUTH_REQUEST_RESP" | jq -r '.session_id // .sessionId // empty')
 if [ -z "$SESSION_ID" ] || [ "$SESSION_ID" = "null" ]; then
@@ -571,12 +571,12 @@ print_value "LiquidityPool bytecode" "$(echo -n "$LIQUIDITYPOOL_BYTECODE" | wc -
 print_value "SwapRouter bytecode" "$(echo -n "$SWAPROUTER_BYTECODE" | wc -c | tr -d ' ') chars"
 
 # =============================================================================
-# Step 8: Deploy Through Privacy Proxy
+# Step 8: Deploy Through Open Privacy Suite
 # =============================================================================
 
-print_step "Step 8: Deploying Contracts Through Privacy Proxy"
+print_step "Step 8: Deploying Contracts Through Open Privacy Suite"
 
-print_info "All deployments go through the privacy proxy with RBAC enforcement"
+print_info "All deployments go through the Open Privacy Suite with RBAC enforcement"
 print_info "Deploying to preregistered CREATE3 addresses"
 echo ""
 
@@ -719,7 +719,7 @@ fi
 # Step 10: Interact Through Proxy
 # =============================================================================
 
-print_step "Step 10: Interacting Through Privacy Proxy"
+print_step "Step 10: Interacting Through Open Privacy Suite"
 
 print_info "All interactions go through RBAC-enforced proxy"
 echo ""
@@ -830,7 +830,7 @@ fi
 
 print_header "Demo Complete!"
 
-echo -e "${WHITE}Deployed Contracts (Through Privacy Proxy):${NC}"
+echo -e "${WHITE}Deployed Contracts (Through Open Privacy Suite):${NC}"
 echo -e "${CYAN}┌─────────────────────────────────────────────────────────────────────┐${NC}"
 echo -e "${CYAN}│${NC}  ${YELLOW}CREATE3 Factory:${NC}       $CREATE3_FACTORY"
 echo -e "${CYAN}├─────────────────────────────────────────────────────────────────────┤${NC}"
@@ -856,6 +856,6 @@ echo -e "  ${CYAN}6.${NC} RBAC enforcement on all transactions"
 echo -e "  ${CYAN}7.${NC} Circular dependency resolution via CREATE3"
 echo ""
 echo -e "${WHITE}Compare with:${NC}"
-echo -e "  ${GREEN}./demo-anvil-direct.sh${NC}      - Same flow without privacy proxy"
+echo -e "  ${GREEN}./demo-anvil-direct.sh${NC}      - Same flow without Open Privacy Suite"
 echo -e "  ${GREEN}./demo-defi-deployment.sh${NC}   - Focus on CREATE3 patterns"
 echo ""

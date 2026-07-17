@@ -7,7 +7,7 @@ import (
 	"privacy-proxy/internal/explorer"
 )
 
-// Type conversion helpers from chain-indexer proto messages to privacy-proxy's
+// Type conversion helpers from chain-indexer proto messages to Open Privacy Suite's
 // internal explorer.* types. Kept narrow and field-by-field so breakage is
 // explicit when the proto changes.
 
@@ -31,7 +31,7 @@ func big(b *indexerv1.BigInt) string {
 }
 
 // bigToUint64Ptr parses a decimal BigInt into *uint64. Returns nil if empty
-// or unparseable. Used for fields that the privacy-proxy store historically
+// or unparseable. Used for fields that the Open Privacy Suite store historically
 // scanned as *uint64 directly from postgres.
 func bigToUint64Ptr(b *indexerv1.BigInt) *uint64 {
 	if b == nil || b.GetValue() == "" {
@@ -83,7 +83,7 @@ func mapBlock(b *indexerv1.Block) *explorer.Block {
 }
 
 // mapCategory translates a proto TransactionCategory enum to the string label
-// that privacy-proxy's existing code (and tests) expects.
+// that Open Privacy Suite's existing code (and tests) expects.
 func mapCategory(c indexerv1.TransactionCategory) string {
 	switch c {
 	case indexerv1.TransactionCategory_TRANSACTION_CATEGORY_COIN_TRANSFER:

@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "privacy-proxy": {
+    "open-privacy-suite": {
       "command": "go",
       "args": ["run", "-C", "mcp", "."],
       "env": {

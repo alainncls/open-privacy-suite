@@ -9,7 +9,7 @@ const basePath =
     ? process.env.DOCS_BASE_PATH
     : isDev
       ? ""
-      : "/privacy-proxy";
+      : "/open-privacy-suite";
 
 const nextConfig: NextConfig = {
   pageExtensions: ["ts", "tsx", "md", "mdx"],

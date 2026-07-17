@@ -1,7 +1,7 @@
 {
   "name": "privacy-proxy-e2e",
   "version": "1.0.0",
-  "description": "E2E tests for privacy proxy using Playwright",
+  "description": "E2E tests for Open Privacy Suite using Playwright",
   "scripts": {
     "test": "playwright test",
     "test:headed": "playwright test --headed",

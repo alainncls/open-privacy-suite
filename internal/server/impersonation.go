@@ -280,7 +280,7 @@ func (s *Server) impersonationGateMiddleware() gin.HandlerFunc {
 		// Defensive header strip: a misbehaving BFF (or compromised one)
 		// must not be able to smuggle alternate identity envelopes into
 		// the downstream chain. RD-877's `subject` claim is JWT-derived
-		// and immutable here; these headers are unused by privacy-proxy
+		// and immutable here; these headers are unused by Open Privacy Suite
 		// and are stripped purely to keep the BFF contract clean.
 		c.Request.Header.Del("X-Admin-Token")
 		c.Request.Header.Del("X-Impersonate-User-DID")

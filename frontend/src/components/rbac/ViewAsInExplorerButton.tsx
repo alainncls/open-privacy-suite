@@ -12,7 +12,7 @@ import { useOrgContextOptional } from './RBACManager';
  * (?did=<did>&org=<org_id>). The explorer FE picks up both on mount, mints an
  * opaque session token via its own BFF (`POST /api/impersonation/start` with
  * { target_did, org_id }), and lands the admin on the explorer home with the
- * banner active. The privacy-proxy is the authoritative gate; non-tier-2 /
+ * banner active. The Open Privacy Suite backend is the authoritative gate; non-tier-2 /
  * org-not-administered / target-not-in-org / unknown target all surface as
  * 403/404 in the explorer UI.
  *
@@ -60,7 +60,7 @@ export function ViewAsInExplorerButton({
   const orgCtx = useOrgContextOptional();
   const selectedOrgId = orgCtx?.selectedOrg?.id ?? null;
 
-  // Self-impersonation is rejected by the privacy-proxy with 400 anyway;
+  // Self-impersonation is rejected by the Open Privacy Suite backend with 400 anyway;
   // we hide the affordance client-side so the operator never sees a control
   // that can't do anything. Compare lowercase since DID casing isn't
   // semantic. Skip the self-check entirely when AuthProvider isn't in the

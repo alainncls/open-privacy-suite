@@ -24,7 +24,7 @@ type listOrgsArgs struct {
 func registerListOrgs(s *mcp.Server, client *httpClient) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_orgs",
-		Description: "List all organizations configured in the privacy proxy.",
+		Description: "List all organizations configured in the Open Privacy Suite.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args listOrgsArgs) (*mcp.CallToolResult, any, error) {
 		limit := args.Limit
 		if limit == 0 {

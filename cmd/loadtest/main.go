@@ -1,4 +1,4 @@
-// Package main implements a load testing tool for the privacy proxy.
+// Package main implements a load testing tool for the Open Privacy Suite.
 // It deploys DeFi contracts, authenticates multiple accounts, and sends
 // signed transactions at high throughput via eth_sendRawTransaction.
 //
@@ -6,7 +6,7 @@
 // to ensure cross-org isolation before forwarding to the node.
 //
 // Requirements:
-//   - Privacy proxy running (runtime tracing is always enabled)
+//   - Open Privacy Suite running (runtime tracing is always enabled)
 //   - Node with eth_sendRawTransaction and debug_traceCall support
 //
 // Usage:
@@ -56,7 +56,7 @@ type Config struct {
 func main() {
 	cfg := &Config{}
 
-	flag.StringVar(&cfg.ProxyURL, "proxy-url", "http://localhost:8080", "Privacy proxy URL")
+	flag.StringVar(&cfg.ProxyURL, "proxy-url", "http://localhost:8080", "Open Privacy Suite URL")
 	flag.StringVar(&cfg.NodeURL, "node-url", "http://localhost:62644", "Direct node URL (for funding and pool monitoring)")
 	flag.StringVar(&cfg.FundingKey, "funding-key", "", "Private key for funding accounts (hex, with or without 0x prefix)")
 	flag.IntVar(&cfg.NumAccounts, "accounts", 10, "Number of test accounts")

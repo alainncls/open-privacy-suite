@@ -260,7 +260,7 @@ func (s *Server) handleAuthRequest(c *gin.Context) {
 		mockAuthReq, err := s.privadoVerifier.CreateAuthorizationRequest(
 			devVerifierDID,
 			callbackURL,
-			"Authenticate to access Privacy Proxy (demo mode)",
+			"Authenticate to access Open Privacy Suite (demo mode)",
 		)
 		if err != nil {
 			s.sessionStore.DeleteSession(sessionID)

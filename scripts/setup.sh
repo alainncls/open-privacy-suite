@@ -2,7 +2,7 @@
 
 set -e
 
-echo "Setting up Privacy Proxy..."
+echo "Setting up Open Privacy Suite..."
 
 # Check Go version
 if ! command -v go &> /dev/null; then

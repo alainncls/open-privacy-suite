@@ -29,7 +29,7 @@ import (
 // latency climbs).
 //
 // The Ethereum node is mocked (instant, zero EVM), so this measures ONLY the
-// privacy proxy. Load is spread across many users (default 100) so the
+// Open Privacy Suite. Load is spread across many users (default 100) so the
 // per-user MAX_CONCURRENT_REQUESTS cap (50) does not reject under aggregate
 // load — mirroring production, where 5K TPS comes from many users, not one.
 //

@@ -56,7 +56,7 @@ Every JSON-RPC request passes through the following pipeline:
 7. **Contract Check** -- If the call targets a contract, verify the user's org owns it and the user has an appropriate grant.
 8. **Concurrency Limit** -- Acquire the caller's local in-flight slot. Authenticated callers are limited per identity; anonymous callers share one aggregate ceiling.
 9. **Runtime Trace** -- Simulate the transaction via `debug_traceCall`. Extract all `CALL`, `DELEGATECALL`, `STATICCALL`, and `CREATE`/`CREATE2` targets. Verify every target belongs to the user's org, is a precompile, or is shared infrastructure.
-10. **Forward** -- Send the validated request with the resolved group or fallback API key. The upstream RPC proxy owns request-rate quotas; privacy-proxy's per-key circuit breaker sheds requests after an upstream `429`.
+10. **Forward** -- Send the validated request with the resolved group or fallback API key. The upstream RPC proxy owns request-rate quotas; the Open Privacy Suite's per-key circuit breaker sheds requests after an upstream `429`.
 
 ## Data Flow for Transactions
 
@@ -87,14 +87,14 @@ graph TD
 
 ## Privacy-mode topology
 
-In privacy mode the deployment adds a block-explorer fronted by a BFF (Backend-for-Frontend) and a chain-indexer feeding the BFF. The compose manifest splits the trust surface into two internal Docker networks plus a public one — `privacy-proxy` is the only legitimate bridge between them.
+In privacy mode the deployment adds a block-explorer fronted by a BFF (Backend-for-Frontend) and a chain-indexer feeding the BFF. The compose manifest splits the trust surface into two internal Docker networks plus a public one — `proxy-backend` is the only legitimate bridge between them.
 
 ```mermaid
 graph LR
     Client[Browser]
     EXPF[block-explorer-frontend<br/><small>nginx — public + bff-zone</small>]
     BFF[block-explorer-api<br/><small>BFF — bff-zone only</small>]
-    PROXY[privacy-proxy<br/><small>public + bff-zone + indexer-zone</small>]
+    PROXY[proxy-backend<br/><small>public + bff-zone + indexer-zone</small>]
     NODE[Ethereum node]
     IDX[chain-indexer<br/><small>indexer-zone only</small>]
     EXPDB[(block-explorer-postgres)]
@@ -114,9 +114,9 @@ graph LR
 
 Key invariants:
 
-- **`indexer-zone`** holds the chain-indexer and its postgres. Only `privacy-proxy` attaches to this network.
-- **`bff-zone`** holds the block-explorer BFF and its postgres. `privacy-proxy` and the explorer-frontend (for nginx upstream resolution) attach here.
-- **`public`** carries browser ingress only — `privacy-proxy` (port `8080`), `privacy-proxy` frontend (port `5173`), and `block-explorer-frontend` (port `3001`).
+- **`indexer-zone`** holds the chain-indexer and its postgres. Only `proxy-backend` attaches to this network.
+- **`bff-zone`** holds the block-explorer BFF and its postgres. `proxy-backend` and the explorer-frontend (for nginx upstream resolution) attach here.
+- **`public`** carries browser ingress only — `proxy-backend` (port `8080`), `proxy-frontend` (port `5173`), and `block-explorer-frontend` (port `3001`).
 - The BFF is built with the `privacy` Go build tag — the chain-indexer client is compiled out entirely, so even if a future env-var override sets `INDEXER_URL`, the BFF cannot reach `chain-indexer`. A static manifest test enforces by name that no other service may attach to both `indexer-zone` and `bff-zone` at once.
 
 The prod compose (`docker-compose.privacy.yml`) pulls the proxy and chain-indexer as published images rather than building from source; the dev compose (`docker-compose.privacy.dev.yml`) builds the proxy locally and pulls the chain-indexer.

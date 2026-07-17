@@ -3,7 +3,7 @@ import { Callout } from "@/components/mdx/callout"
 export const metadata = {
   title: "What It Does",
   description:
-    "Plain-language summary: what the privacy proxy hides, from whom, what it does not hide, and the trust model.",
+    "Plain-language summary: what the Open Privacy Suite hides, from whom, what it does not hide, and the trust model.",
 }
 
 # What It Does
@@ -12,7 +12,7 @@ This page is the plain-language version of the whole product. No API calls,
 no configuration — just what the system can and cannot do, so you can decide
 in ten minutes whether it fits your problem.
 
-**The one-sentence version:** the privacy proxy sits between your users and a
+**The one-sentence version:** the Open Privacy Suite sits between your users and a
 shared EVM blockchain and enforces *who is allowed to see and do what* —
 so multiple organizations can transact on one chain without seeing each
 other's business.
@@ -24,7 +24,7 @@ connection: every transaction, every counterparty, every amount. That is a
 non-starter for banks, payment operators, and enterprises that are required
 to keep client activity confidential.
 
-The privacy proxy makes a shared chain behave like this instead:
+The Open Privacy Suite makes a shared chain behave like this instead:
 
 - **You see your own activity in full.**
 - **You see what others have explicitly shared with you.**
@@ -56,7 +56,7 @@ Honesty matters more in this section than anywhere else:
   layer. Anyone with *direct* access to an underlying node sees everything,
   and chain data is replicated to **every** node — so the guarantee only
   holds if **all nodes of the chain** are protected: each one is either
-  behind a privacy proxy or unreachable from users entirely. A single
+  behind the Open Privacy Suite or unreachable from users entirely. A single
   unprotected node re-exposes the whole ledger and defeats the system. That
   is a deployment requirement, not an optional hardening step.
 - **Chain-level metadata** (block numbers, timestamps) is visible to
@@ -133,7 +133,7 @@ Data crosses a privacy boundary only through explicit, auditable mechanisms:
 | Can a regulator get access? | Yes — through a scoped, consented, expiring disclosure grant, with every access logged. |
 | Does it modify the blockchain? | No. It is a gateway in front of a standard EVM node; contracts and tooling work unchanged. |
 | Can I use MetaMask / Foundry / ethers.js? | It speaks standard JSON-RPC, so yes — but requests need an auth header. Clients that can set one (ethers.js, web3.js, curl) work directly; browser wallets like MetaMask cannot, and connect through a JWT-injecting reverse proxy instead. |
-| What if someone bypasses the proxy? | Then they see raw chain data. Every node of the chain must be reachable only through a privacy proxy — one open node exposes the entire ledger. See [Operator Deployment](/docs/operator-deployment). |
+| What if someone bypasses the proxy? | Then they see raw chain data. Every node of the chain must be reachable only through the Open Privacy Suite — one open node exposes the entire ledger. See [Operator Deployment](/docs/operator-deployment). |
 
 ## Try it in five minutes
 
@@ -141,8 +141,8 @@ The repo ships a one-command demo — two banks and a regulator on one chain,
 with ready-to-use identities:
 
 ```bash
-git clone https://github.com/gateway-fm/privacy-proxy.git
-cd privacy-proxy
+git clone https://github.com/gateway-fm/open-privacy-suite.git
+cd open-privacy-suite
 make quickstart
 ```
 

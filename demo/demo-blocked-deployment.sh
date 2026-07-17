@@ -1,16 +1,16 @@
 #!/bin/bash
 
 # =============================================================================
-# Privacy Proxy - Bytecode Validation Security Demo
+# Open Privacy Suite - Bytecode Validation Security Demo
 # =============================================================================
-# This script demonstrates the bytecode validation security of the privacy proxy.
+# This script demonstrates the bytecode validation security of the Open Privacy Suite.
 #
 # The MaliciousBox contract:
 # 1. Contains a hardcoded CALL to 0xDeaDbeeF (not owned by the org)
 # 2. Attempts deployment via CREATE3 factory
 #
 # Expected behavior:
-# - The privacy proxy BLOCKS the deployment because the bytecode contains
+# - The Open Privacy Suite BLOCKS the deployment because the bytecode contains
 #   a CALL to an address that is not owned by or preregistered for the org.
 #
 # This demonstrates:
@@ -104,7 +104,7 @@ print_header "Bytecode Validation Security Demo"
 print_step "Checking Configuration"
 
 # Environment variables with defaults
-# IMPORTANT: PROXY_RPC_URL is the privacy proxy, ANVIL_RPC_URL is direct to node
+# IMPORTANT: PROXY_RPC_URL is the Open Privacy Suite, ANVIL_RPC_URL is direct to node
 : "${ADMIN_API_URL:=http://localhost:8080/api/v1/admin}"
 : "${PROXY_RPC_URL:=http://localhost:8080}"
 : "${ANVIL_RPC_URL:=http://localhost:8545}"
@@ -456,7 +456,7 @@ echo -e "  ${CYAN}│${NC} ${RED}External address is NOT preregistered!${NC}"
 echo -e "  ${CYAN}└─────────────────────────────────────────────────────────────────┘${NC}"
 echo ""
 
-print_warning "The privacy proxy should detect the external call and BLOCK the deployment"
+print_warning "The Open Privacy Suite should detect the external call and BLOCK the deployment"
 
 # =============================================================================
 # Step 5: Attempt deployment through proxy (should be BLOCKED)
@@ -472,7 +472,7 @@ print_info "This address is NOT owned by or preregistered for the org!"
 DEPLOY_CALLDATA=$(cast calldata "deploy(bytes32,bytes)" "$MALICIOUS_SALT" "$MALICIOUS_BYTECODE")
 
 echo ""
-print_substep "Sending deployment transaction through privacy proxy..."
+print_substep "Sending deployment transaction through Open Privacy Suite..."
 
 # Get the nonce for the deployer
 NONCE_RESP=$(rpc_call "eth_getTransactionCount" "[\"$DEPLOYER_ADDRESS\", \"latest\"]")
@@ -510,7 +510,7 @@ if [ -n "$ERROR_MSG" ]; then
     echo -e "  ${GREEN}│${NC}                    ${BOLD}${GREEN}DEPLOYMENT BLOCKED!${NC}                         ${GREEN}│${NC}"
     echo -e "  ${GREEN}└─────────────────────────────────────────────────────────────────┘${NC}"
     echo ""
-    print_success "The privacy proxy correctly blocked the deployment!"
+    print_success "The Open Privacy Suite correctly blocked the deployment!"
     echo ""
     echo -e "  ${WHITE}Reason:${NC}"
     echo -e "  │ $ERROR_MSG"
@@ -580,7 +580,7 @@ echo -e "  ${CYAN}•${NC} CREATE/CREATE2 opcodes blocked (prevents nested deplo
 echo -e "  ${CYAN}•${NC} Dynamic DELEGATECALL blocked (except for known proxy patterns)"
 echo ""
 echo -e "${WHITE}Note:${NC}"
-echo -e "  ${CYAN}•${NC} This demo requires the privacy proxy to be running"
+echo -e "  ${CYAN}•${NC} This demo requires the Open Privacy Suite to be running"
 echo -e "  ${CYAN}•${NC} Mock authentication must be enabled (dev mode)"
 echo -e "  ${CYAN}•${NC} The org must have a CREATE3 factory configured"
 echo ""

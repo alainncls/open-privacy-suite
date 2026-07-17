@@ -32,7 +32,7 @@ steps:
     action: "navigate"
     url: "/admin/dashboard"
     wait: { selector: "[data-testid='admin-app']", timeout: 15000 }
-    narration: "Welcome to the Privacy Proxy admin console. This is where administrators monitor and manage blockchain access."
+    narration: "Welcome to the Open Privacy Suite admin console. This is where administrators monitor and manage blockchain access."
     pause: 3.5
     screenshot: true
 
@@ -69,7 +69,7 @@ steps:
     action: "click"
     selector: "[data-testid='nav-rbac']"
     wait: { selector: "[data-testid='rbac-manager']", timeout: 10000 }
-    narration: "Now let's explore the Role-Based Access Control system. This is the heart of Privacy Proxy's permission management."
+    narration: "Now let's explore the Role-Based Access Control system. This is the heart of Open Privacy Suite's permission management."
     pause: 3.5
     screenshot: true
 
@@ -127,7 +127,7 @@ steps:
   - id: "conclusion"
     action: "wait"
     wait: { timeout: 1000 }
-    narration: "Privacy Proxy: Enterprise-grade access control for Web3. Monitor, audit, and manage with confidence."
+    narration: "Open Privacy Suite: Enterprise-grade access control for Web3. Monitor, audit, and manage with confidence."
     pause: 3.5
 
 branding:

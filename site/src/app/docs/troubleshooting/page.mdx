@@ -275,7 +275,7 @@ If you are receiving `429 Too Many Requests`:
 - For an upstream rejection, check the rate tier associated with the group's
   `rpc_api_key` (or the global fallback key) in the upstream RPC proxy.
 - Respect `Retry-After` when present. Changing group permissions inside
-  privacy-proxy does not change the upstream API key's quota.
+  Open Privacy Suite does not change the upstream API key's quota.
 
 ---
 
@@ -285,4 +285,4 @@ If your issue is not covered here:
 
 1. Check the backend logs: `docker-compose logs -f proxy-backend`
 2. Run tests with verbose output: `go test -v ./e2e/...`
-3. Check the [GitHub Issues](https://github.com/gateway-fm/privacy-proxy/issues) for known problems.
+3. Check the [GitHub Issues](https://github.com/gateway-fm/open-privacy-suite/issues) for known problems.

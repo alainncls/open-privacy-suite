@@ -248,7 +248,7 @@ type LogParticipantStore interface {
 // RedactionEngine handles the bulk redaction of explorer data based on user grants
 type RedactionEngine struct {
 	store                         ContractStore
-	db                            Database // The main privacy proxy DB for RBAC checks
+	db                            Database // The main Open Privacy Suite DB for RBAC checks
 	eventRuleChecker              EventRuleChecker
 	abiResolver                   ABIResolver
 	adminContractsResolver        AdminContractsResolver

@@ -15,7 +15,7 @@ A privacy-preserving gateway that sits between users and a shared EVM
 blockchain. It enforces **who may see and do what** — so multiple
 organizations (say, two banks and their regulator) can transact on one chain
 without seeing each other's business. Plain-language capability summary:
-[What It Does](https://gateway-fm.github.io/privacy-proxy/docs/what-it-does/)
+[What It Does](https://gateway-fm.github.io/open-privacy-suite/docs/what-it-does/)
 (or `site/src/app/docs/what-it-does/page.mdx` in this repo).
 
 ## Five-minute demo
@@ -23,8 +23,8 @@ without seeing each other's business. Plain-language capability summary:
 Requirements: Docker (compose v2), make, curl, jq.
 
 ```bash
-git clone https://github.com/gateway-fm/privacy-proxy.git
-cd privacy-proxy
+git clone https://github.com/gateway-fm/open-privacy-suite.git
+cd open-privacy-suite
 make quickstart
 ```
 
@@ -114,9 +114,9 @@ Persona JWTs live in `.quickstart-demo.json` (regenerate any time with
 
 | You want | Look at |
 |----------|---------|
-| Plain-language capabilities & trust model | [docs site → What It Does](https://gateway-fm.github.io/privacy-proxy/docs/what-it-does/) |
-| Full documentation | <https://gateway-fm.github.io/privacy-proxy/> (source: `site/src/app/docs/`) |
-| REST API (149 operations, OpenAPI 3.1) | `GET /openapi.json` on a running proxy, or [interactive reference](https://gateway-fm.github.io/privacy-proxy/api-reference/) |
+| Plain-language capabilities & trust model | [docs site → What It Does](https://gateway-fm.github.io/open-privacy-suite/docs/what-it-does/) |
+| Full documentation | <https://gateway-fm.github.io/open-privacy-suite/> (source: `site/src/app/docs/`) |
+| REST API (149 operations, OpenAPI 3.1) | `GET /openapi.json` on a running proxy, or [interactive reference](https://gateway-fm.github.io/open-privacy-suite/api-reference/) |
 | Every registered route | [`API_ENDPOINTS.md`](API_ENDPOINTS.md) |
 | Demo internals (what the seed actually does) | `scripts/quickstart-seed.sh` — every API call is plain curl |
 | More demo scripts (CREATE3, upgrades, attack scenarios) | [`demo/`](demo/README.md) |
@@ -134,12 +134,12 @@ make quickstart-reset    # stop and wipe everything
 The quickstart runs with **mock authentication** (no real wallet or
 ZK-verification needed) and is for evaluation only — production deployments
 use ZK-proof credentials (Privado ID), SSO, and a hardened topology; see
-[Operator Deployment](https://gateway-fm.github.io/privacy-proxy/docs/operator-deployment/).
+[Operator Deployment](https://gateway-fm.github.io/open-privacy-suite/docs/operator-deployment/).
 
 ## Common questions
 
 Can Bank B see Bank A's transactions? Can an org admin read a user's wallet
 history? What happens if someone bypasses the proxy? — All answered honestly
-on [What It Does](https://gateway-fm.github.io/privacy-proxy/docs/what-it-does/).
+on [What It Does](https://gateway-fm.github.io/open-privacy-suite/docs/what-it-does/).
 If your question isn't there, open a GitHub issue — pre-sales questions are
 welcome.

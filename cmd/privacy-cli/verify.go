@@ -10,7 +10,7 @@ func runVerify(cmd *flag.FlagSet, args []string) {
 	// Define flags
 	deploymentID := cmd.String("deployment-id", "", "Deployment ID to verify (required)")
 	configPath := cmd.String("config", "", "Path to privacy.toml config file")
-	apiURL := cmd.String("api-url", "", "Privacy Proxy API URL")
+	apiURL := cmd.String("api-url", "", "Open Privacy Suite API URL")
 	token := cmd.String("token", "", "Authentication token")
 	verbose := cmd.Bool("verbose", false, "Show verbose output")
 

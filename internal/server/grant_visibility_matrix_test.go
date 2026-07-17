@@ -478,7 +478,7 @@ func TestGrantVisibilityMatrix(t *testing.T) {
 
 		// Do NOT seed any transactions for gs.TargetAddr.
 
-		// Resolve should still succeed (it only looks up the address in the privacy-proxy DB).
+		// Resolve should still succeed (it only looks up the address in the Open Privacy Suite DB).
 		t.Run("Resolve_200", func(t *testing.T) {
 			req := httptest.NewRequest("GET",
 				"/api/v1/explorer/grant/"+gs.GrantID+"/resolve/"+gs.AddressID, nil)

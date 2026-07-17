@@ -79,10 +79,10 @@ site at `/api-reference`).
 See README.md for full documentation. Quick reference:
 
 ```bash
-# Start privacy-proxy
+# Start Open Privacy Suite
 docker-compose up -d
 
-# Start explorer (privacy-proxy must be running first)
+# Start explorer (Open Privacy Suite must be running first)
 docker-compose -f ../explorer/docker-compose.privacy-proxy.yml up -d
 ```
 

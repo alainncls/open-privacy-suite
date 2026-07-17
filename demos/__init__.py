@@ -1,1 +1,1 @@
-# Privacy Proxy Demo Generator Package
+# Open Privacy Suite Demo Generator Package

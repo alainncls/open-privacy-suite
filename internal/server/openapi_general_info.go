@@ -8,9 +8,9 @@ package server
 
 // generalAPIInfo exists only to carry the general annotations below.
 //
-// @title        Privacy Proxy REST API
+// @title        Open Privacy Suite REST API
 // @version      1.0
-// @description  REST control-plane and data API of the Gateway Privacy Proxy: authentication (Privado ID wallet flow, Azure AD), ETH address linking, user profile and disclosure, RBAC / compliance / system administration, the block-explorer data API, and the proxied Ethereum JSON-RPC endpoint.
+// @description  REST control-plane and data API of the Open Privacy Suite: authentication (Privado ID wallet flow, Azure AD), ETH address linking, user profile and disclosure, RBAC / compliance / system administration, the block-explorer data API, and the proxied Ethereum JSON-RPC endpoint.
 // @description
 // @description  **Authentication.** User endpoints take a Bearer JWT issued by the auth endpoints (`Authorization: Bearer <token>`). `/api/v1/admin/*` requires the `X-Admin-Token` header and is additionally reachable only from private-network addresses. `/api/v1/explorer/*` serves the explorer backend and is private-network only.
 // @description

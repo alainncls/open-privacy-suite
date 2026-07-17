@@ -6,14 +6,14 @@ permissioned-chain workloads and care about the privacy guarantees the
 product advertises, this is the deployment you want.
 
 The authoritative manifest is `docker-compose.privacy.yml` at the
-privacy-proxy repo root. Everything else in this folder is config
+Open Privacy Suite repo root. Everything else in this folder is config
 referenced by that manifest.
 
 ## Why this deployment exists — RD-855 in one paragraph
 
-Prior to RD-855, the suite was deployed such that **privacy-proxy was not
+Prior to RD-855, the suite was deployed such that **Open Privacy Suite was not
 a chokepoint**. The block-explorer ran its own api service, its own
-postgres, and its own indexer alongside privacy-proxy; anything that could
+postgres, and its own indexer alongside Open Privacy Suite; anything that could
 reach the block-explorer's exposed surface could pull raw chain data that
 should have been redacted. The privacy-mode deployment in this folder
 fixes that structurally: the components that had direct access to raw
@@ -40,7 +40,7 @@ endpoints that degrade in privacy mode as a consequence.
            +-------+--------+              +----------------+
                    |                       |
                    v                       v
-                +---- proxy-backend (privacy-proxy) ----+
+                +---- proxy-backend (Open Privacy Suite) ----+
                 |   sole bridge across all three        |
                 |   zones. Applies RedactionEngine.     |
                 +---------------------------------------+
@@ -61,20 +61,20 @@ endpoints that degrade in privacy mode as a consequence.
 
 **Rules:**
 
-1. **proxy-backend (privacy-proxy) is the only service that legitimately
+1. **proxy-backend (Open Privacy Suite) is the only service that legitimately
    attaches to both internal zones.** It is the sole network path
    between bff-zone and indexer-zone. The static manifest test enforces
    this by name (`e2e.BridgeService`); adding any other cross-zone
    service requires updating the test AND justifying the cross-zone
    path.
 2. **The indexer listens on indexer-zone only.** Its gRPC port is not
-   published and no ingress points at it. Privacy-proxy is the sole
+   published and no ingress points at it. Open Privacy Suite is the sole
    consumer. The block-explorer BFF — even though it is also a
    "trust-zone" service in the broad sense — has no route to indexer-zone.
 3. **The block-explorer BFF lives in bff-zone, not indexer-zone.** The
    BFF terminates the OAuth flow, owns browser sessions (HttpOnly
    cookies), stores contract verifications, and forwards chain-data
-   reads to privacy-proxy so redaction applies. Even if a future PR
+   reads to Open Privacy Suite so redaction applies. Even if a future PR
    drops the BFF's `--target privacy` build tag or sets `INDEXER_URL`,
    the BFF still cannot reach the indexer because the network forbids
    it. This makes the network the structural floor for defense-in-depth
@@ -97,7 +97,7 @@ endpoints that degrade in privacy mode as a consequence.
 | anvil (EVM node, dev) | ✅ | indexer-zone | no |
 | chain-indexer | ✅ | indexer-zone | no |
 | indexer-postgres | ✅ | indexer-zone | no |
-| proxy-backend (privacy-proxy) | ✅ | indexer-zone + bff-zone + public (bridge) | yes |
+| proxy-backend (Open Privacy Suite) | ✅ | indexer-zone + bff-zone + public (bridge) | yes |
 | proxy-frontend | ✅ | public | yes |
 | block-explorer-frontend | ✅ | bff-zone + public | yes |
 | **block-explorer-api (BFF, privacy build)** | ✅ | bff-zone | no |
@@ -142,11 +142,11 @@ prints how to opt in.
 
 Required env vars (all fail-closed — missing → compose aborts):
 
-- `JWT_SECRET`, `JWT_REFRESH_SECRET` — privacy-proxy signing keys.
+- `JWT_SECRET`, `JWT_REFRESH_SECRET` — Open Privacy Suite signing keys.
 - `ADMIN_API_TOKEN` — initial admin token for bootstrap.
-- `PRIVACY_POSTGRES_PASSWORD` — privacy-proxy's postgres.
+- `PRIVACY_POSTGRES_PASSWORD` — Open Privacy Suite's postgres.
 - `INDEXER_POSTGRES_PASSWORD` — chain-indexer's postgres.
-- `REDIS_PASSWORD` — privacy-proxy's redis.
+- `REDIS_PASSWORD` — Open Privacy Suite's redis.
 - `BLOCK_EXPLORER_POSTGRES_PASSWORD` — BFF's postgres (verifications).
 
 Optional env vars (have sane defaults):
@@ -209,13 +209,13 @@ Optional env vars (have sane defaults):
 
 Block-explorer in privacy mode runs as frontend **plus a thin
 Backend-for-Frontend (BFF)** — `block-explorer-api`. A pure-SPA
-deployment can't terminate OAuth against privacy-proxy (no place for
+deployment can't terminate OAuth against Open Privacy Suite (no place for
 `/api/auth/callback`, no HttpOnly cookie setter, nowhere to persist
 contract verifications); putting the access token in JavaScript would
 fail OWASP ASVS L2+ and OAuth-for-Browser-Based-Apps BCP. So we run a
 minimal server whose only job is session management + proxying.
 
-The BFF's only legitimate chain-data source is privacy-proxy. Three
+The BFF's only legitimate chain-data source is Open Privacy Suite. Three
 layers of mutually-independent defense keep it that way:
 
 | Layer | Mechanism |
@@ -240,12 +240,12 @@ No chain data. bff-zone only.
 The privacy-mode deployment does **not** place application-level
 authentication on the internal service-to-service hops:
 
-- `privacy-proxy → chain-indexer` gRPC is plaintext, no mTLS, no bearer token.
-- `privacy-proxy → privacy-postgres` uses password-only `sslmode=disable`.
-- `privacy-proxy → redis` uses a shared password on the compose network.
+- `Open Privacy Suite → chain-indexer` gRPC is plaintext, no mTLS, no bearer token.
+- `Open Privacy Suite → privacy-postgres` uses password-only `sslmode=disable`.
+- `Open Privacy Suite → redis` uses a shared password on the compose network.
 - `chain-indexer → indexer-postgres` uses the same pattern.
 - `chain-indexer → anvil` (or prod RPC) is plaintext.
-- `block-explorer-api → privacy-proxy` is plaintext; the BFF is a
+- `block-explorer-api → Open Privacy Suite` is plaintext; the BFF is a
   client like any other, subject to OAuth/JWT for per-user authz.
 - `block-explorer-api → block-explorer-postgres` uses password-only
   `sslmode=disable`.
@@ -287,7 +287,7 @@ reach those services can already read the token from any compromised
 container. Adding tokens *with* network isolation is genuine
 defense-in-depth, but the token rotation / distribution cost isn't
 justified at this stage. Revisit if we gain multi-tenant trust-zone
-deployments where a compromise of one tenant's privacy-proxy should
+deployments where a compromise of one tenant's Open Privacy Suite should
 not give access to another tenant's indexer.
 
 ## Known gaps (see behavioral-shifts doc)
@@ -316,7 +316,7 @@ Run locally:
 
 ```bash
 # Requires chain-indexer and block-explorer cloned as siblings of
-# privacy-proxy. Takes 1-2 minutes.
+# Open Privacy Suite. Takes 1-2 minutes.
 make test-privacy-bypass
 ```
 
@@ -403,7 +403,7 @@ wrong than a single-zone policy that has to enumerate every allowed
 caller.
 
 ```yaml
-# All pods in one namespace; zones are pod labels. Privacy-proxy carries
+# All pods in one namespace; zones are pod labels. Open Privacy Suite carries
 # both zone labels and is the only legitimate bridge.
 
 # Indexer-zone services
@@ -424,7 +424,7 @@ metadata:
     zone: bff
 # (also: block-explorer-postgres)
 
-# Privacy-proxy — the bridge. Carries both labels.
+# Open Privacy Suite — the bridge. Carries both labels.
 apiVersion: v1
 kind: Pod
 metadata:
@@ -447,7 +447,7 @@ metadata:
 ---
 # NetworkPolicy: indexer-zone — only zone=indexer pods (i.e. the indexer
 # itself, its postgres, the EVM node, privacy-postgres, redis, and
-# privacy-proxy) may ingress to indexer-zone pods.
+# Open Privacy Suite) may ingress to indexer-zone pods.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -465,7 +465,7 @@ spec:
 
 ---
 # NetworkPolicy: bff-zone — only zone-bff pods (BFF, BFF-postgres,
-# block-explorer-frontend, and privacy-proxy) may ingress to bff-zone
+# block-explorer-frontend, and Open Privacy Suite) may ingress to bff-zone
 # pods.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -494,7 +494,7 @@ designed for in compose disappears at deploy time.
 **Service mesh additivity:** if Istio or Linkerd is in play, layer
 `AuthorizationPolicy` (Istio) or `ServerAuthorization` (Linkerd) on
 top to enforce SPIFFE-identity gates. That gives you "only the
-privacy-proxy ServiceAccount can call chain-indexer" — strictly
+Open Privacy Suite ServiceAccount can call chain-indexer" — strictly
 stronger than label-based NetworkPolicy because labels are mutable but
 SPIFFE identities are not. Compose cleanly with the two-zone shape;
 optional, not required.
@@ -507,7 +507,7 @@ in the block-explorer repo. In that deployment:
 - block-explorer api + postgres + indexer are all present.
 - Contract verification works.
 - WS subscriptions work.
-- There is no privacy-proxy; data is public by intent.
+- There is no Open Privacy Suite; data is public by intent.
 
 Privacy mode and standalone mode share the frontend SPA bundle but route
 through different nginx configs at container start.

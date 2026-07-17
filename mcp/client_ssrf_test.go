@@ -11,7 +11,7 @@ import (
 // SEC-1325 regression tests for the SSRF mitigations in client.go (PR #343).
 //
 // The MCP admin client talks to a single, operator-configured upstream
-// (privacy-proxy). Two mitigations keep a caller-supplied path (a tool
+// (Open Privacy Suite). Two mitigations keep a caller-supplied path (a tool
 // argument) from steering a request off that trusted upstream toward an
 // internal/loopback/metadata endpoint (e.g. http://169.254.169.254/...):
 //

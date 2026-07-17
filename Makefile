@@ -67,7 +67,7 @@ dev-stack: ensure-hooks
 	@./scripts/print-urls.sh
 
 # Bring up the full privacy-mode stack in dev mode:
-# privacy-proxy + chain-indexer + block-explorer (frontend + BFF).
+# the Open Privacy Suite + chain-indexer + block-explorer (frontend + BFF).
 # Requires sibling clones at ../block-explorer and ../chain-indexer
 # (override with BLOCK_EXPLORER_PATH / CHAIN_INDEXER_PATH).
 full-stack-dev:
@@ -193,7 +193,7 @@ test-e2e:
 # host, frontend routes correctly, /ws returns 404. Takes 1-2 minutes;
 # build-tag gated so it doesn't run in default test runs or the
 # pre-push hook. Expects chain-indexer + block-explorer cloned as
-# siblings of privacy-proxy.
+# siblings of this repo.
 test-privacy-bypass:
 	go test -tags privacy_bypass -timeout 15m -v -run TestPrivacyModeBypassClosure ./e2e/...
 

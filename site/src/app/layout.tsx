@@ -16,8 +16,8 @@ const jetbrainsMono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "Privacy Proxy",
-    template: "%s | Privacy Proxy",
+    default: "Open Privacy Suite",
+    template: "%s | Open Privacy Suite",
   },
   description:
     "A privacy-preserving JSON-RPC proxy for Ethereum nodes with ZK-proof authentication and hierarchical RBAC.",

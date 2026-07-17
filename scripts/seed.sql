@@ -1,4 +1,4 @@
--- Seed data for privacy-proxy development
+-- Seed data for Open Privacy Suite development
 -- Run with: make seed
 
 -- Clear existing policies (for clean re-seeding)

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-command demo stack for first contact with the privacy proxy:
+# One-command demo stack for first contact with the Open Privacy Suite:
 #
 #   make quickstart
 #

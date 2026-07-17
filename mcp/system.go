@@ -18,18 +18,18 @@ func registerSystemTools(s *mcp.Server, client *httpClient) {
 func registerHealth(s *mcp.Server, client *httpClient) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "health",
-		Description: "Check if the privacy proxy is reachable.",
+		Description: "Check if the Open Privacy Suite is reachable.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
 		raw, err := client.get("/health")
 		if err != nil {
-			return errorResult("Privacy proxy unreachable: %v\n\nIs it running? Try: docker-compose up -d", err)
+			return errorResult("Open Privacy Suite unreachable: %v\n\nIs it running? Try: docker-compose up -d", err)
 		}
 		var m map[string]any
 		if err := json.Unmarshal(raw, &m); err != nil {
 			return errorResult("parsing response: %v", err)
 		}
 		return textResult(
-			section("Privacy Proxy Health: OK"),
+			section("Open Privacy Suite Health: OK"),
 			kvf("Status", getString(m, "status")),
 		)
 	})
@@ -38,7 +38,7 @@ func registerHealth(s *mcp.Server, client *httpClient) {
 func registerStatus(s *mcp.Server, client *httpClient) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "status",
-		Description: "Get privacy proxy status: proxy state, node connectivity, and security config.",
+		Description: "Get Open Privacy Suite status: proxy state, node connectivity, and security config.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
 		raw, err := client.get("/api/v1/admin/status")
 		if err != nil {
@@ -49,7 +49,7 @@ func registerStatus(s *mcp.Server, client *httpClient) {
 			return errorResult("Parsing status: %v", err)
 		}
 
-		lines := section("Privacy Proxy Status") + "\n"
+		lines := section("Open Privacy Suite Status") + "\n"
 
 		if proxy := getMap(m, "proxy"); proxy != nil {
 			lines += joinLines(

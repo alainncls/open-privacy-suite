@@ -194,7 +194,7 @@ setup_user() {
 echo -e "${YELLOW}Step 1: Checking services...${NC}"
 
 if ! curl -s "${PROXY_URL}/health" > /dev/null 2>&1; then
-    echo -e "${RED}ERROR: Privacy proxy not running at ${PROXY_URL}${NC}"
+    echo -e "${RED}ERROR: Open Privacy Suite not running at ${PROXY_URL}${NC}"
     echo "Start it with: docker-compose up -d"
     exit 1
 fi

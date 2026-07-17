@@ -1364,7 +1364,7 @@ func TestEdgeCase_ConcurrentAccess(t *testing.T) {
 // ============================================================================
 
 // registerOrgContract inserts an org, group, contract, and contract_grant into the
-// privacy-proxy DB. Returns the group ID so callers can add members.
+// Open Privacy Suite DB. Returns the group ID so callers can add members.
 func registerOrgContract(t *testing.T, database *db.DB, contractAddr string) (groupID string) {
 	t.Helper()
 	ctx := context.Background()
@@ -1558,7 +1558,7 @@ func seedExplorerTransaction(t *testing.T, conn *sql.DB, blockNum int64, hash, f
 }
 
 // setupOrgContractInPrivacyProxy creates an org, group, contract, and contract_grant
-// in the privacy-proxy database. Returns the group ID for membership assignment.
+// in the Open Privacy Suite database. Returns the group ID for membership assignment.
 func setupOrgContractInPrivacyProxy(t *testing.T, database *db.DB, contractAddr string) string {
 	t.Helper()
 	ctx := context.Background()
@@ -1647,7 +1647,7 @@ func TestExplorerTransactions_OwnedPlusOrgContract_AnonymousViewerSeesNothing(t 
 	createTestUserForExplorer(t, database, "did:user:orgtest")
 	linkEthAddressToUser(t, database, "did:user:orgtest", addrUser)
 
-	// Create an org-owned contract in the privacy-proxy DB.
+	// Create an org-owned contract in the Open Privacy Suite DB.
 	addrContract := "0xcccc000000000000000000000000000000000011"
 	setupOrgContractInPrivacyProxy(t, database, addrContract)
 

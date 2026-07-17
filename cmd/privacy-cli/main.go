@@ -1,5 +1,5 @@
 // Package main provides the privacy-cli command-line tool for integrating
-// Foundry deployments with the Privacy Proxy service.
+// Foundry deployments with the Open Privacy Suite service.
 package main
 
 import (
@@ -45,13 +45,13 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Print(`privacy-cli - Privacy Proxy CLI for Foundry integration
+	fmt.Print(`privacy-cli - Open Privacy Suite CLI for Foundry integration
 
 Usage:
   privacy-cli <command> [options]
 
 Commands:
-  prepare           Analyze Foundry broadcast and register addresses with Privacy Proxy
+  prepare           Analyze Foundry broadcast and register addresses with Open Privacy Suite
   verify            Verify deployment matches registration
   list              List pending deployments for an organization
   audit verify      Walk an audit hash chain and report integrity (RD-858)

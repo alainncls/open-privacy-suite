@@ -27,7 +27,7 @@ export default function HomePage() {
         <div className="relative mx-auto max-w-7xl px-4 md:px-6 py-24 md:py-32">
           <div className="max-w-3xl">
             <h1 className="text-4xl md:text-6xl font-bold tracking-tight mb-6">
-              <span className="text-primary">Privacy Proxy</span>
+              <span className="text-primary">Open Privacy Suite</span>
             </h1>
             <p className="text-xl md:text-2xl text-muted-foreground mb-4">
               Privacy-preserving JSON-RPC proxy for Ethereum nodes.
@@ -46,7 +46,7 @@ export default function HomePage() {
               </Button>
               <Button size="lg" variant="outline" asChild>
                 <a
-                  href="https://github.com/gateway-fm/privacy-proxy"
+                  href="https://github.com/gateway-fm/open-privacy-suite"
                   target="_blank"
                   rel="noopener noreferrer"
                 >
@@ -143,11 +143,11 @@ export default function HomePage() {
                 </svg>
               </div>
 
-              {/* Row 2: Privacy Proxy */}
+              {/* Row 2: Open Privacy Suite */}
               <div className="md:col-span-3 rounded-lg border-2 border-primary/30 bg-card p-4 text-center">
                 <div className="flex items-center justify-center gap-2 mb-1">
                   <Lock className="size-4 text-primary" />
-                  <span className="font-semibold">Privacy Proxy</span>
+                  <span className="font-semibold">Open Privacy Suite</span>
                 </div>
                 <p className="text-xs text-muted-foreground">
                   Auth &rarr; RBAC &rarr; Trace &rarr; Proxy

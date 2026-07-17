@@ -28,8 +28,8 @@ Set up Open Privacy Suite and run it locally in minutes.
 
 <Step number={1} title="Clone the repository">
 ```bash
-git clone https://github.com/gateway-fm/privacy-proxy.git
-cd privacy-proxy
+git clone https://github.com/gateway-fm/open-privacy-suite.git
+cd open-privacy-suite
 ```
 </Step>
 
@@ -75,9 +75,9 @@ This calls `scripts/privacy-dev-up.sh`, which:
 
 ```
 /your/dev/dir/
-  ├── privacy-proxy/       ← you are here
-  ├── block-explorer/      ← clone of gateway-fm/block-explorer
-  └── chain-indexer/       ← clone of gateway-fm/chain-indexer (optional;
+  ├── open-privacy-suite/  ← you are here
+  ├── block-explorer/      ← clone of gateway-fm/ops-explorer
+  └── chain-indexer/       ← clone of gateway-fm/ops-indexer (optional;
                              the dev compose pulls the published image
                              by default — see Configuration → INDEXER_VERSION)
 ```
@@ -94,9 +94,9 @@ CHAIN_INDEXER_PATH=/path/to/chain-indexer \
 
 | Service | Port | Source | Description |
 |---------|------|--------|-------------|
-| proxy-backend | 8080 | local build | Privacy-proxy API (mock-login + mock-signatures enabled) |
-| proxy-frontend | 5173 | local build | Privacy-proxy admin UI |
-| privacy-postgres | — | image | Privacy-proxy database |
+| proxy-backend | 8080 | local build | Open Privacy Suite API (mock-login + mock-signatures enabled) |
+| proxy-frontend | 5173 | local build | Open Privacy Suite admin UI |
+| privacy-postgres | — | image | Open Privacy Suite database |
 | anvil | 8545 | image | Local Ethereum node |
 | redis | — | image | Per-user rate limit + session store |
 | chain-indexer | 50051 (gRPC) | published image, tag `INDEXER_VERSION` (default `0.2.2`) | Block indexer feeding the BFF |
@@ -107,8 +107,8 @@ CHAIN_INDEXER_PATH=/path/to/chain-indexer \
 
 URLs after start:
 
-- Privacy-proxy backend → `http://localhost:8080`
-- Privacy-proxy frontend → `http://localhost:5173` (mock-login)
+- Open Privacy Suite backend → `http://localhost:8080`
+- Open Privacy Suite frontend → `http://localhost:5173` (mock-login)
 - Block-explorer frontend → `http://localhost:3001`
 
 <Callout variant="warning" title="Dev only — mock auth is on">

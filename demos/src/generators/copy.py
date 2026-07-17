@@ -13,7 +13,7 @@ class CopyConfig:
 
     brand_voice: str = "professional, innovative, privacy-focused"
     target_audience: str = "developers, Web3 builders, privacy advocates"
-    product_name: str = "Privacy Proxy"
+    product_name: str = "Open Privacy Suite"
     product_tagline: str = "Privacy-first blockchain access"
 
 

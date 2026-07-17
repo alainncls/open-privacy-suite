@@ -72,7 +72,7 @@ func (c *TrustZoneConfig) ZoneOf(name string) string {
 const BridgeService = "proxy-backend"
 
 // LoadTrustZone reads deployments/privacy/trust-zone.yaml relative to the
-// privacy-proxy repo root. repoRoot should be an absolute path.
+// Open Privacy Suite repo root. repoRoot should be an absolute path.
 func LoadTrustZone(repoRoot string) (*TrustZoneConfig, error) {
 	path := filepath.Join(repoRoot, "deployments", "privacy", "trust-zone.yaml")
 	b, err := os.ReadFile(path)

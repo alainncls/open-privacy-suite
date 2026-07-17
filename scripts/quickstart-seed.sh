@@ -381,7 +381,7 @@ jq -n \
 cat <<EOF
 
 $(bold '================================================================')
-$(bold ' Privacy Proxy demo is up — two banks + a regulator, mock auth')
+$(bold ' Open Privacy Suite demo is up — two banks + a regulator, mock auth')
 $(bold '================================================================')
 
   Proxy RPC + API:   ${PROXY_URL}

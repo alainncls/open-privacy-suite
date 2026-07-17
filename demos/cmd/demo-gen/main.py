@@ -2,7 +2,7 @@
 """
 Demo Generator CLI
 
-Generate promotional demo videos from Privacy Proxy application.
+Generate promotional demo videos from Open Privacy Suite application.
 
 Usage:
     python -m demos.cmd.demo-gen.main generate <config>
@@ -46,7 +46,7 @@ CACHE_DIR = DEMOS_DIR / ".cache"
 @click.group()
 @click.version_option(version="1.0.0")
 def cli():
-    """Demo Generator - Create promotional videos from Privacy Proxy."""
+    """Demo Generator - Create promotional videos from Open Privacy Suite."""
     pass
 
 
@@ -410,7 +410,7 @@ def _generate_copy(clips: list, config, output_dir: Path):
     """Generate social media copy for clips."""
     try:
         generator = CopyGenerator(CopyConfig(
-            product_name="Privacy Proxy",
+            product_name="Open Privacy Suite",
             product_tagline=config.metadata.description or "Privacy-first blockchain access",
         ))
 

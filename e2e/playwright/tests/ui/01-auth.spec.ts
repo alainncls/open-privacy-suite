@@ -25,7 +25,7 @@ test.describe('Authentication Flow', () => {
     // Check the title text
     await expect(page.locator(selectors.login.authTitle)).toContainText('Sign In');
 
-    // Verify the Privacy Proxy branding
+    // Verify the Open Privacy Suite branding
     await expect(page.getByText('Open Privacy Suite')).toBeVisible();
     await expect(page.getByText('Authenticated RPC Access')).toBeVisible();
   });

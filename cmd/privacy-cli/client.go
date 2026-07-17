@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// ProxyClient is a client for the Privacy Proxy API.
+// ProxyClient is a client for the Open Privacy Suite API.
 type ProxyClient struct {
 	baseURL    string
 	token      string

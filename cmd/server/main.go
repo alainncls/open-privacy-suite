@@ -88,7 +88,7 @@ func main() {
 
 	// Start server in goroutine
 	go func() {
-		slog.Info("starting privacy proxy server", "port", port)
+		slog.Info("starting Open Privacy Suite server", "port", port)
 		slog.Info("node URL configured", "url", cfg.NodeURL)
 		serverErrors <- srv.RunWithServer(httpServer)
 	}()
