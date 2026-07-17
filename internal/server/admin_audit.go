@@ -55,13 +55,20 @@ func (s *Server) recordAuditActionScoped(
 	authMethod := c.GetString("auth_method")
 	actorExternalID := "__super_admin__"
 	var actorID *string
-	if authMethod == "jwt_admin" {
+	switch authMethod {
+	case "jwt_admin":
 		if subject := c.GetString("admin_subject"); subject != "" {
 			actorExternalID = subject
 		}
 		if uid := c.GetString("admin_user_id"); uid != "" {
 			actorID = &uid
 		}
+	case "operator_token":
+		// The restricted operator/bootstrap token is a distinct principal from
+		// the full super-admin token (RD-1132). Attribute its mutations to
+		// "__operator__" so the audit trail does not misreport an operator
+		// action as a super-admin one (change-management / actor fidelity).
+		actorExternalID = "__operator__"
 	}
 
 	var orgIDPtr *string

@@ -194,3 +194,12 @@ type membershipByDIDRequest struct {
 	GroupID   string  `json:"group_id" binding:"required" example:"6f1e2d3c-0000-0000-0000-000000000001"`
 	ExpiresAt *string `json:"expires_at" example:"2027-01-01T00:00:00Z"`
 }
+
+// membershipByDIDRemovalRequest is the DELETE
+// /api/v1/admin/orgs/{org_id}/memberships/by-did body (RD-1182): remove a user
+// (by DID) from a group in the path org — the symmetric counterpart of
+// membershipByDIDRequest.
+type membershipByDIDRemovalRequest struct {
+	DID     string `json:"did" binding:"required" example:"did:example:alice"`
+	GroupID string `json:"group_id" binding:"required" example:"6f1e2d3c-0000-0000-0000-000000000001"`
+}

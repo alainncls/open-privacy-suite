@@ -1529,6 +1529,18 @@ components:
           example: "2026-01-01T00:00:00Z"
           type: string
       type: object
+    internal_server.membershipByDIDRemovalRequest:
+      properties:
+        did:
+          example: did:example:alice
+          type: string
+        group_id:
+          example: 6f1e2d3c-0000-0000-0000-000000000001
+          type: string
+      required:
+      - did
+      - group_id
+      type: object
     internal_server.membershipByDIDRequest:
       properties:
         did:
@@ -7878,6 +7890,72 @@ paths:
       tags:
       - 'Admin: RBAC'
   /api/v1/admin/orgs/{org_id}/memberships/by-did:
+    delete:
+      description: 'Removes a user identified by DID from a group in the path org
+        (the symmetric counterpart of onboard-by-did). Body: did (required), group_id
+        (required). Requires full (is_org_admin) scope over the path org; the target
+        group must belong to that org (opaque 403 otherwise). Removing from an is_org_admin
+        group is super-admin-only; a regular group is rejected for the operator token.
+        A DID that is unknown, or has no membership in the target group, returns the
+        SAME opaque 403 as a foreign-org group — no existence oracle. No tenant read
+        is performed.'
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: org_id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/internal_server.membershipByDIDRemovalRequest'
+                description: removal request
+                summary: request
+        description: removal request
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_server.APIMessage'
+          description: membership deleted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_server.APIError'
+          description: invalid body
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_server.APIError'
+          description: missing or invalid admin token
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_server.APIError'
+          description: source address not on the private network, path org outside
+            the caller's full-admin scope, target group not in the path org / DID
+            not found / no membership (all opaque), tier-2 JWT removing from an org-admin
+            group, or operator token removing from a regular group
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_server.APIError'
+          description: Internal Server Error
+      security:
+      - AdminToken: []
+      summary: Remove a DID from a group
+      tags:
+      - 'Admin: RBAC'
     post:
       description: 'Onboards a user identified by DID directly into a group in the
         path org, auto-provisioning the user if the DID is not yet known. Body: did

@@ -75,6 +75,9 @@ func (s *Server) registerRBACRoutes(api *gin.RouterGroup) {
 	// cross-org gate as createUserMembership; calls EnsureUserExists so
 	// not-yet-seen DIDs are provisioned on first onboarding.
 	api.POST("/orgs/:org_id/memberships/by-did", s.createMembershipByDID)
+	// RD-1182: symmetric removal-by-DID — lets the operator token complete the
+	// org-admin lifecycle (mint + remove) without a tenant-confidential read.
+	api.DELETE("/orgs/:org_id/memberships/by-did", s.deleteMembershipByDID)
 
 	// Audit Logs
 	api.GET("/audit-logs", s.listAuditLogs)
