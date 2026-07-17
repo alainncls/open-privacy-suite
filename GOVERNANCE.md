@@ -1,6 +1,6 @@
 # Governance
 
-Privacy Proxy is maintained by Gateway.fm and project maintainers designated by
+Open Privacy Suite is maintained by Gateway.fm and project maintainers designated by
 Gateway.fm.
 
 ## Maintainer Responsibilities

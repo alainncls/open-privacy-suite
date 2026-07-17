@@ -11,7 +11,7 @@ func runPrepare(cmd *flag.FlagSet, args []string) {
 	// Define flags
 	broadcastFile := cmd.String("broadcast-file", "", "Path to Foundry broadcast JSON file (required)")
 	configPath := cmd.String("config", "", "Path to privacy.toml config file")
-	apiURL := cmd.String("api-url", "", "Privacy Proxy API URL")
+	apiURL := cmd.String("api-url", "", "Open Privacy Suite API URL")
 	orgID := cmd.String("org-id", "", "Organization ID")
 	token := cmd.String("token", "", "Authentication token")
 	dryRun := cmd.Bool("dry-run", false, "Show what would be registered without calling API")
@@ -95,14 +95,14 @@ func runPrepare(cmd *flag.FlagSet, args []string) {
 
 	// If dry-run, stop here
 	if *dryRun {
-		fmt.Println("\n[Dry run] Would register the above contracts with Privacy Proxy")
+		fmt.Println("\n[Dry run] Would register the above contracts with Open Privacy Suite")
 		fmt.Printf("API URL: %s\n", cfg.Proxy.APIURL)
 		fmt.Printf("Org ID: %s\n", cfg.Org.ID)
 		return
 	}
 
 	// Register with proxy
-	fmt.Println("\nRegistering with Privacy Proxy...")
+	fmt.Println("\nRegistering with Open Privacy Suite...")
 	client, err := NewProxyClient(cfg.Proxy.APIURL, cfg.Auth.Token)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -119,7 +119,7 @@ func runPrepare(cmd *flag.FlagSet, args []string) {
 		os.Exit(1)
 	}
 
-	fmt.Println("\nRegistered with Privacy Proxy")
+	fmt.Println("\nRegistered with Open Privacy Suite")
 	fmt.Printf("  Deployment ID: %s\n", resp.DeploymentID)
 	fmt.Printf("  Expires at: %s\n", resp.ExpiresAt)
 

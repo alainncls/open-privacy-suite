@@ -18,7 +18,7 @@
 // The test asserts:
 //
 //   1. Internal-zone services (chain-indexer gRPC port, indexer postgres,
-//      anvil RPC, privacy-proxy postgres, redis, BFF, BFF postgres) are
+//      anvil RPC, Open Privacy Suite postgres, redis, BFF, BFF postgres) are
 //      NOT published on the host. A TCP connect from the host on the
 //      service's default port must fail. The list is loaded from
 //      trust-zone.yaml dynamically.
@@ -29,7 +29,7 @@
 //
 //   3. The block-explorer frontend in privacy mode:
 //      - Responds to GET /
-//      - Routes /api/* to privacy-proxy (NOT to a local api:8080 which
+//      - Routes /api/* to Open Privacy Suite (NOT to a local api:8080 which
 //        doesn't exist here)
 //      - Returns 404 on /ws (subscriptions deferred per RD-855)
 //
@@ -42,7 +42,7 @@
 //
 // Together these prove the bypass described in RD-855 is closed and
 // hardened per RD-876: there is no reachable path from a client to raw
-// chain data except via privacy-proxy, which applies RedactionEngine
+// chain data except via Open Privacy Suite, which applies RedactionEngine
 // on the way out.
 package e2e
 
@@ -220,9 +220,9 @@ func TestPrivacyModeBypassClosure(t *testing.T) {
 		}
 	})
 
-	t.Run("block-explorer /api/* proxied to privacy-proxy (not local api)", func(t *testing.T) {
-		// Hitting the frontend's /api/ should land at privacy-proxy's
-		// /api/v1/explorer/ — we can tell it hit privacy-proxy (and
+	t.Run("block-explorer /api/* proxied to Open Privacy Suite (not local api)", func(t *testing.T) {
+		// Hitting the frontend's /api/ should land at Open Privacy Suite's
+		// /api/v1/explorer/ — we can tell it hit Open Privacy Suite (and
 		// not nothing) by getting a well-formed HTTP response. 401
 		// (unauthenticated), 403, or 404 (no matching sub-route) are
 		// all acceptable for this negative-path assertion; 502
@@ -237,9 +237,9 @@ func TestPrivacyModeBypassClosure(t *testing.T) {
 			body, _ := io.ReadAll(resp.Body)
 			t.Fatalf("frontend nginx returned %d — implies it's trying to reach a non-existent local api. Privacy-mode nginx config not in place.\nbody: %s", resp.StatusCode, string(body))
 		}
-		// Any other HTTP status means privacy-proxy received the request,
+		// Any other HTTP status means Open Privacy Suite received the request,
 		// which is what we're checking.
-		t.Logf("proxied /api/v1/explorer/stats status=%d (expected: privacy-proxy received the request)", resp.StatusCode)
+		t.Logf("proxied /api/v1/explorer/stats status=%d (expected: Open Privacy Suite received the request)", resp.StatusCode)
 	})
 }
 
@@ -322,7 +322,7 @@ func assertCrossZoneIsolation(t *testing.T, project string) {
 
 	// Negative case — load-bearing assertion.
 	if err := probe(bffNet); err == nil {
-		t.Fatalf("from %s, chain-indexer:50051 IS reachable — the two-zone trust split is broken. The block-explorer BFF could now bypass privacy-proxy at the network layer. Check the compose file: chain-indexer must be on indexer-zone only, the BFF must be on bff-zone only, and proxy-backend (the BridgeService) must be the only service on both.", bffNet)
+		t.Fatalf("from %s, chain-indexer:50051 IS reachable — the two-zone trust split is broken. The block-explorer BFF could now bypass Open Privacy Suite at the network layer. Check the compose file: chain-indexer must be on indexer-zone only, the BFF must be on bff-zone only, and proxy-backend (the BridgeService) must be the only service on both.", bffNet)
 	}
 
 	// Positive control. If this fails the negative assertion above is

@@ -1,6 +1,6 @@
-# Privacy Proxy MCP Server
+# Open Privacy Suite MCP Server
 
-Privacy Proxy includes an [MCP](https://modelcontextprotocol.io/) (Model Context Protocol) server that exposes the full admin API as 94 tools over stdio transport. It covers RBAC, compliance, disclosure, explorer, and operational management.
+Open Privacy Suite includes an [MCP](https://modelcontextprotocol.io/) (Model Context Protocol) server that exposes the full admin API as 94 tools over stdio transport. It covers RBAC, compliance, disclosure, explorer, and operational management.
 
 ## Setup
 
@@ -33,7 +33,7 @@ go run -C mcp .
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PRIVACY_URL` | `http://localhost:8080` | Privacy proxy base URL (http/https only) |
+| `PRIVACY_URL` | `http://localhost:8080` | Open Privacy Suite base URL (http/https only) |
 | `PRIVACY_ADMIN_TOKEN` | _(empty)_ | Admin API token (sent as `X-Admin-Token` header) |
 
 ## Viewing data as a specific user (`viewer_jwt` / `jwt_token`)
@@ -55,7 +55,7 @@ token as `jwt_token` to answer "would this user be allowed to do X?".
 ### System (4 tools)
 
 #### `health`
-Check if the privacy proxy is reachable.
+Check if the Open Privacy Suite is reachable.
 
 #### `status`
 Get proxy state, node connectivity, and security config.
@@ -515,7 +515,7 @@ Check if an address is visible to a viewer.
 ### Operational (3 tools)
 
 #### `access_logs`
-Recent access logs from the privacy proxy.
+Recent access logs from the Open Privacy Suite.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -546,7 +546,7 @@ Tokens are single-use and cannot be replayed across different operations.
 
 When using this MCP server with a cloud-hosted AI (Claude Code with Anthropic's API), tool responses become part of the conversation context sent to Anthropic's servers. This means admin data — org names, user DIDs, contract addresses, compliance configuration — transits through Anthropic's infrastructure.
 
-**What is NOT sent:** The admin API token (`PRIVACY_ADMIN_TOKEN`) is never included in tool responses or conversation context. It exists only in the MCP server process memory and HTTP headers between the MCP server and the privacy-proxy API.
+**What is NOT sent:** The admin API token (`PRIVACY_ADMIN_TOKEN`) is never included in tool responses or conversation context. It exists only in the MCP server process memory and HTTP headers between the MCP server and the Open Privacy Suite API.
 
 **What IS sent:** The content of every tool response — the same data you'd see from a `curl` call to the admin API. This includes org structure, user identities (DIDs), group memberships, contract addresses, compliance config, and disclosure metadata.
 
@@ -560,7 +560,7 @@ When using this MCP server with a cloud-hosted AI (Claude Code with Anthropic's 
 
 ## Example Usage
 
-With Claude Code, you can manage the full privacy proxy conversationally:
+With Claude Code, you can manage the full Open Privacy Suite conversationally:
 
 - "List all organizations and their groups"
 - "Create a new org called Acme Capital with a traders group"

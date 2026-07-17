@@ -47,7 +47,7 @@ or degrades it acceptably; **"Open"** items still need attention.
 
 ### 3. `GetTransactionHistory` has no `range` parameter yet
 
-- **What**: Legacy supported `(intervalSeconds, limit)` — i.e., "last N buckets". The current proto accepts a `range` but privacy-proxy's gRPC client doesn't populate it; the indexer applies its own default lookback.
+- **What**: Legacy supported `(intervalSeconds, limit)` — i.e., "last N buckets". The current proto accepts a `range` but Open Privacy Suite's gRPC client doesn't populate it; the indexer applies its own default lookback.
 - **Why**: Oversight during stage 2a — easier to ship without.
 - **User impact**: Returned window may be longer or shorter than expected. Limit is applied client-side after fetch, so data correctness is fine; only the response size and server work differ.
 - **Suggestion**: populate `range` from `(now - intervalSeconds * limit, now)`. One-line fix when we're back in this handler.

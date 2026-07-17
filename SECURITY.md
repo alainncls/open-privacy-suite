@@ -33,7 +33,7 @@ unless maintainers and the reporter agree on a different disclosure timeline.
 
 In scope:
 
-- Privacy Proxy backend, frontend, MCP tooling, and deployment manifests in
+- Open Privacy Suite backend, frontend, MCP tooling, and deployment manifests in
   this repository.
 - Source-only release materials such as scripts, docs, examples, and generated
   code.

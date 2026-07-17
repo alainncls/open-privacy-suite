@@ -5,7 +5,7 @@
 # grant so developers can quickly switch between test perspectives in the UI.
 #
 # Prerequisites:
-#   - privacy-proxy running at localhost:8080 with ALLOW_MOCK_LOGIN=true
+#   - Open Privacy Suite running at localhost:8080 with ALLOW_MOCK_LOGIN=true
 #   - Anvil running (for ETH transfers and contract deployment)
 #   - cast (from Foundry) installed (for signing and sending transactions)
 #
@@ -245,11 +245,11 @@ step "Preflight checks"
 
 # Check proxy is running
 if ! curl -sf "${PROXY_URL}/health" > /dev/null 2>&1; then
-    err "Privacy proxy not reachable at ${PROXY_URL}"
+    err "Open Privacy Suite not reachable at ${PROXY_URL}"
     err "Start it with: docker-compose up -d"
     exit 1
 fi
-ok "Privacy proxy reachable at ${PROXY_URL}"
+ok "Open Privacy Suite reachable at ${PROXY_URL}"
 
 # Check Anvil is running
 if ! curl -sf -X POST -H "Content-Type: application/json" \

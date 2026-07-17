@@ -304,7 +304,7 @@ func registerAccessLogs(s *mcp.Server, client *httpClient) {
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "access_logs",
-		Description: "Get recent access logs from the privacy proxy.",
+		Description: "Get recent access logs from the Open Privacy Suite.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, a args) (*mcp.CallToolResult, any, error) {
 		limit := a.Limit
 		if limit == 0 {

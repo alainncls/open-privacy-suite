@@ -21,7 +21,7 @@ Each item describes the current state, the decision made (or deferred), and whet
 
 Users without a JWT can only call claim-free methods: `eth_blockNumber`, `eth_chainId`, `eth_gasPrice`, `net_version`, etc. These return chain metadata only — no user data, no transactions, no contract state. All other methods (`eth_call`, `eth_getLogs`, `eth_getBalance`, `eth_getCode`, etc.) are denied.
 
-- ***Impact on block explorer:*** An unauthenticated visitor to the block explorer sees essentially nothing useful — no transactions, no addresses, no contract data. The explorer's `ProxyDataProvider` calls the privacy proxy's Explorer API endpoints, which require authentication to return redacted data. Without a JWT, the explorer can show chain liveness (block number, chain ID) but no blockchain content.
+- ***Impact on block explorer:*** An unauthenticated visitor to the block explorer sees essentially nothing useful — no transactions, no addresses, no contract data. The explorer's `ProxyDataProvider` calls the Open Privacy Suite's Explorer API endpoints, which require authentication to return redacted data. Without a JWT, the explorer can show chain liveness (block number, chain ID) but no blockchain content.
 - ***Discuss:*** Is this the intended UX for the block explorer? Should there be a "public view" that shows redacted transactions (all addresses as `[PRIVATE]`) to unauthenticated users, or should login be required to see anything?
 
 ---

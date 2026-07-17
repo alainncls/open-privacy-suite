@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for contributing to Privacy Proxy.
+Thank you for contributing to Open Privacy Suite.
 
 ## License
 

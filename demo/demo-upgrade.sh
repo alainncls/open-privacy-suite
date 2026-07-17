@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # =============================================================================
-# Privacy Proxy - UUPS Proxy Upgrade Demo
+# Open Privacy Suite - UUPS Proxy Upgrade Demo
 # =============================================================================
 # This script demonstrates the UUPS proxy upgrade workflow:
 # 1. Deploy V1 implementations and proxies

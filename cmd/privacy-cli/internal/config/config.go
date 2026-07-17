@@ -21,7 +21,7 @@ type Config struct {
 
 // APIConfig contains API connection settings.
 type APIConfig struct {
-	// BaseURL is the privacy proxy API URL (e.g., "http://localhost:8080")
+	// BaseURL is the Open Privacy Suite API URL (e.g., "http://localhost:8080")
 	BaseURL string `toml:"base_url"`
 	// Token is the Bearer token for authentication
 	Token string `toml:"token"`
@@ -125,7 +125,7 @@ func Example() string {
 # Environment variables can be used with ${VAR} or $VAR syntax
 
 [api]
-# Privacy proxy API URL
+# Open Privacy Suite API URL
 base_url = "http://localhost:8080"
 # Bearer token for authentication (use env var for security)
 token = "${PRIVACY_API_TOKEN}"

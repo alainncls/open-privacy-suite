@@ -7,7 +7,7 @@
 # exactly the shape production infra provisions out of band.
 #
 # This is the CONTAINER creating the database (mirroring how the main DB is made
-# via POSTGRES_DB), NOT the app: the privacy-proxy app never runs CREATE
+# via POSTGRES_DB), NOT the app: the Open Privacy Suite app never runs CREATE
 # DATABASE. It connects to the already-provisioned "<main>_audit" DB and runs the
 # lean audit migrations against it (as privacy_proxy_admin / the owner).
 #

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # verify-trust-zone-split.sh — RD-876 manual test §3.7 automation.
 #
-# The privacy-proxy stack ships as TWO sibling compose files:
+# The Open Privacy Suite stack ships as TWO sibling compose files:
 #   - docker-compose.privacy.yml      (production manifest; audited trust boundary)
 #   - docker-compose.privacy.dev.yml  (developer manifest; mock-login, anvil RPC exposed)
 #
@@ -32,7 +32,7 @@ green() { printf '\033[0;32m%s\033[0m\n' "$*"; }
 fail() { red "FAIL: $1"; echo "      see $LOG"; exit 1; }
 ok() { green "OK:   $1"; }
 
-[ -f "$PROD" ] || fail "missing $PROD (run from privacy-proxy worktree root)"
+[ -f "$PROD" ] || fail "missing $PROD (run from the repo root)"
 [ -f "$DEV"  ] || fail "missing $DEV"
 
 # Helper — does the file declare a network with the given name? Looks for

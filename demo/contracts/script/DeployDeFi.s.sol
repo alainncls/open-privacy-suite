@@ -9,7 +9,7 @@ import "../src/router/SwapRouter.sol";
 
 /// @title DeployDeFi - Deploy the DeFi demo contracts
 /// @notice This script deploys Token, Pool, and Router with their UUPS proxies
-/// @dev For use with privacy-proxy, addresses should be preregistered via privacy-cli
+/// @dev For use with Open Privacy Suite, addresses should be preregistered via privacy-cli
 contract DeployDeFi is Script {
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");

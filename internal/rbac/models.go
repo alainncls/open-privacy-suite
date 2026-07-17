@@ -1,4 +1,4 @@
-// Package rbac provides role-based access control for the privacy proxy.
+// Package rbac provides role-based access control for the Open Privacy Suite.
 package rbac
 
 import (

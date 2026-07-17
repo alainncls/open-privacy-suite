@@ -62,7 +62,7 @@ See [Getting Started → Full-stack dev (privacy mode)](/docs/getting-started#fu
 
 ## Trust-zone topology
 
-Three Docker networks. `privacy-proxy` is the only legitimate bridge between the two internal ones; the manifest test (`e2e.BridgeService`) fails if any other service attaches to both.
+Three Docker networks. `proxy-backend` is the only legitimate bridge between the two internal ones; the manifest test (`e2e.BridgeService`) fails if any other service attaches to both.
 
 | Zone | Members |
 |---|---|
@@ -78,12 +78,12 @@ Full architecture diagram and rationale: [Architecture → Privacy-mode topology
 
 | Variable | Purpose |
 |---|---|
-| `JWT_SECRET` | Privacy-proxy access-token signing key. |
-| `JWT_REFRESH_SECRET` | Privacy-proxy refresh-token signing key. Must differ from `JWT_SECRET`. |
+| `JWT_SECRET` | Open Privacy Suite access-token signing key. |
+| `JWT_REFRESH_SECRET` | Open Privacy Suite refresh-token signing key. Must differ from `JWT_SECRET`. |
 | `ADMIN_API_TOKEN` | Bootstrap super-admin token (sent as `X-Admin-Token` header on admin endpoints). |
-| `PRIVACY_POSTGRES_PASSWORD` | Privacy-proxy's postgres role. |
+| `PRIVACY_POSTGRES_PASSWORD` | Open Privacy Suite's postgres role. |
 | `INDEXER_POSTGRES_PASSWORD` | Chain-indexer's postgres role. |
-| `REDIS_PASSWORD` | Privacy-proxy's redis. |
+| `REDIS_PASSWORD` | Open Privacy Suite's redis. |
 | `BLOCK_EXPLORER_POSTGRES_PASSWORD` | BFF's postgres (contract verifications only). |
 
 The dev script (`scripts/privacy-dev-up.sh`) auto-generates these into `.env.privacy.dev` on first run. For production, source from your secret store (AWS Secrets Manager, Vault, etc.) — see [Audit Log Integrity → Credential lifecycle](/docs/security/audit-integrity#recommended-aws-secrets-manager-via-irsa-canonical) for the recommended IRSA pattern.
@@ -107,7 +107,7 @@ The dev script (`scripts/privacy-dev-up.sh`) auto-generates these into `.env.pri
 
 ## Silent SSO and first-party client authentication
 
-The block-explorer (and any future first-party UI) skips the interactive Privado prompt when a user already has a privacy-proxy session. This is implemented as a server-to-server `client_secret` exchange at `/oauth/token`, gated by a per-client bcrypt-hashed allowlist on the proxy side.
+The block-explorer (and any future first-party UI) skips the interactive Privado prompt when a user already has an Open Privacy Suite session. This is implemented as a server-to-server `client_secret` exchange at `/oauth/token`, gated by a per-client bcrypt-hashed allowlist on the proxy side.
 
 Two envs are involved, on two different containers:
 
@@ -122,7 +122,7 @@ Two envs are involved, on two different containers:
 id="explorer-${ENV}-$(openssl rand -hex 8)"   # opaque, not the literal 'explorer'
 secret=$(openssl rand -hex 32)
 hash=$(htpasswd -bnBC 12 '' "$secret" | tr -d ':\n')
-# Privacy-proxy:   OAUTH_FIRST_PARTY_CLIENTS=$id:$hash
+# Open Privacy Suite:   OAUTH_FIRST_PARTY_CLIENTS=$id:$hash
 # Block-explorer:  SSO_CLIENT_ID=$id   SSO_CLIENT_SECRET=$secret
 ```
 

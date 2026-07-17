@@ -5,7 +5,7 @@ version: "1"
 
 metadata:
   name: "full-journey"
-  title: "Privacy Proxy: Complete Platform Tour"
+  title: "Open Privacy Suite: Complete Platform Tour"
   description: "End-to-end journey from authentication to RBAC management"
 
 video:
@@ -31,7 +31,7 @@ steps:
     action: "navigate"
     url: "/login"
     wait: { selector: "[data-testid='login-page']", timeout: 15000 }
-    narration: "Privacy Proxy is the complete solution for privacy-preserving blockchain access. Let me show you how it works."
+    narration: "Open Privacy Suite is the complete solution for privacy-preserving blockchain access. Let me show you how it works."
     pause: 3.0
     screenshot: true
 
@@ -133,7 +133,7 @@ steps:
     action: "navigate"
     url: "/login"
     wait: { selector: "[data-testid='login-page']", timeout: 10000 }
-    narration: "Privacy Proxy: Privacy-preserving authentication, fine-grained access control, and seamless blockchain connectivity. The infrastructure Web3 deserves."
+    narration: "Open Privacy Suite: Privacy-preserving authentication, fine-grained access control, and seamless blockchain connectivity. The infrastructure Web3 deserves."
     pause: 4.0
     screenshot: true
 

@@ -5,7 +5,7 @@ set -euo pipefail
 # verify-scaling.sh — Verify multi-instance state sharing
 # =============================================================================
 #
-# Tests that two privacy proxy instances sharing Postgres + Redis correctly
+# Tests that two Open Privacy Suite instances sharing Postgres + Redis correctly
 # share sessions, RBAC permissions, cache invalidation, and address links.
 #
 # Usage:

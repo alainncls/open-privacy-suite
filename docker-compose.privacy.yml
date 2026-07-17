@@ -1,7 +1,7 @@
 # Privacy-mode deployment manifest for the Open Privacy Suite.
 #
 # This is the authoritative deployment for corporate / permissioned chains.
-# It deliberately omits every component that could bypass privacy-proxy.
+# It deliberately omits every component that could bypass Open Privacy Suite.
 # If a service is missing here, that is on purpose — not oversight.
 #
 # See deployments/privacy/README.md for the trust-boundary rationale
@@ -39,7 +39,7 @@
 
 services:
   # ----- Trust zone --------------------------------------------------------
-  # Only privacy-proxy sits on both networks. Nothing else in the trust
+  # Only Open Privacy Suite sits on both networks. Nothing else in the trust
   # zone is reachable from the public network.
 
   privacy-postgres:
@@ -73,7 +73,7 @@ services:
 
   anvil:
     # Development EVM node. In production, swap to an external RPC endpoint
-    # and remove this service entirely — privacy-proxy already reaches it
+    # and remove this service entirely — Open Privacy Suite already reaches it
     # via NODE_URL.
     image: ghcr.io/foundry-rs/foundry:latest
     entrypoint: ["anvil", "--host", "0.0.0.0", "--port", "8545", "--steps-tracing", "--block-time", "2"]
@@ -89,7 +89,7 @@ services:
 
   # Chain-indexer owns its own postgres. Neither is reachable from the
   # public network — there is no path for a client to query the indexer
-  # directly. Privacy-proxy is the sole consumer.
+  # directly. Open Privacy Suite is the sole consumer.
   indexer-postgres:
     image: postgres:15-alpine
     environment:
@@ -138,7 +138,7 @@ services:
     # binary. For local source iteration use docker-compose.privacy.dev.yml
     # (sibling compose) which builds with target: dev.
     image: gatewayfm/privacy-proxy-backend:${PROXY_VERSION:-latest}
-    # Privacy-proxy is the only external-facing backend in privacy mode.
+    # Open Privacy Suite is the only external-facing backend in privacy mode.
     # In production this would typically sit behind an ingress instead
     # of publishing directly; for local dev + the negative-network test
     # it's published to 127.0.0.1 only by default. Operators on a LAN
@@ -164,7 +164,7 @@ services:
       - ENVIRONMENT=production
       - VERIFIER_ID=${VERIFIER_ID:-did:privado:verifier:dev-0000000000000000}
       - BASE_URL=${BASE_URL:-http://localhost:${HOST_PORT_PROXY:-8080}}
-      # Browser-facing URL of the privacy-proxy admin UI. When set, the
+      # Browser-facing URL of the Open Privacy Suite admin UI. When set, the
       # OAuth /authorize endpoint redirects browser requests to the React
       # login page at FRONTEND_URL/login?oauth_session=… instead of
       # serving backend-rendered fallback HTML. Operators should override
@@ -187,7 +187,7 @@ services:
       # Org-admin volume/timing audit view of user↔user txs (value preserved,
       # addresses stay [PRIVATE], reveals audit-logged). Default off = strict privacy.
       - ORG_ADMIN_VIEW_USER_TXS=${ORG_ADMIN_VIEW_USER_TXS:-false}
-      # Indexer integration — this is what flips privacy-proxy's explorer
+      # Indexer integration — this is what flips Open Privacy Suite's explorer
       # backend from direct SQL to gRPC. The explorer postgres variable is
       # still accepted for standalone fallback (ABI writes, indexer
       # progress) per RD-855 behavioral-shifts doc, but in a pure privacy
@@ -242,15 +242,15 @@ services:
 
   # Block-explorer runs as frontend + a thin Backend-for-Frontend (BFF)
   # api. The BFF owns browser sessions (OAuth code flow against
-  # privacy-proxy, HttpOnly cookies, contract verification) and proxies
-  # chain-data reads to privacy-proxy's REST explorer surface, which
+  # Open Privacy Suite, HttpOnly cookies, contract verification) and proxies
+  # chain-data reads to Open Privacy Suite's REST explorer surface, which
   # applies RBAC-based redaction.
   #
   # The BFF image is built with --target privacy, which compiles out the
   # chain-indexer gRPC client (Go build tag "privacy"). Even with env
   # vars flipped at runtime, the binary has no code path to reach
   # chain-indexer — the only data source it can talk to is
-  # privacy-proxy. This is the compile-time layer of the three-layer
+  # Open Privacy Suite. This is the compile-time layer of the three-layer
   # defense (compile-time + runtime + network) documented in
   # docs/rd-855-behavioral-shifts.md.
 
@@ -317,13 +317,13 @@ services:
   # Block-explorer frontend — SPA served by nginx. The mounted nginx
   # config routes:
   #   /api/auth/*   -> block-explorer-api (OAuth flow, cookie set)
-  #   /api/*        -> block-explorer-api (which forwards to privacy-proxy)
+  #   /api/*        -> block-explorer-api (which forwards to Open Privacy Suite)
   #   /ws           -> 404 (subscriptions not supported in privacy mode)
   block-explorer-frontend:
     # Published nginx + SPA bundle. The bind-mount below replaces the
     # in-image standalone-mode default.conf with the privacy-mode one,
     # routing /api/* to block-explorer-api (which forwards to
-    # privacy-proxy with RBAC redaction). Same path inside the image
+    # Open Privacy Suite with RBAC redaction). Same path inside the image
     # as the standalone variant — no build-target distinction here.
     image: gatewayfm/block-explorer-frontend:${EXPLORER_VERSION:-latest}
     ports:
@@ -349,7 +349,7 @@ services:
       - bff-zone
     restart: unless-stopped
 
-  # Expose privacy-proxy on the host too, so clients hitting
+  # Expose Open Privacy Suite on the host too, so clients hitting
   # localhost:${HOST_PORT_PROXY} work for testing.
   #
   # In production deployments the reverse proxy / ingress is the only
@@ -358,7 +358,7 @@ services:
 
 networks:
   # Indexer zone — services that handle raw chain data, plus
-  # privacy-proxy's own state (postgres, redis). Privacy-proxy
+  # Open Privacy Suite's own state (postgres, redis). Open Privacy Suite
   # (proxy-backend) is the only legitimate caller. The block-explorer
   # BFF is NOT attached here; even if a future change drops the BFF's
   # `--target privacy` build tag or sets INDEXER_URL, the BFF still
@@ -371,7 +371,7 @@ networks:
 
   # BFF zone — block-explorer-api (the BFF) and its verification
   # postgres. The BFF talks to its own postgres locally and to
-  # privacy-proxy via this same network (proxy-backend is the bridge).
+  # Open Privacy Suite via this same network (proxy-backend is the bridge).
   # Holds no chain data.
   bff-zone:
     driver: bridge

@@ -14,7 +14,7 @@ Tier-2 org admins can answer "what does this user see right now?" without engine
 - **Audit walk-through**: an auditor inspecting an access-control decision asks "what would this admin's revoked user actually have been able to read?". The admin walks the answer instead of explaining it.
 - **Pre-flight a grant change**: before flipping a `contract_grants` row, confirm what the affected user sees with and without it.
 
-The mechanism is a parallel URL tree on the privacy-proxy that always names an explicit organization: `/api/v1/admin/impersonate/<target_did>/in/<org_id>/…`. The block-explorer dashboard wraps it in a "View as user" button + amber banner. No user-shaped JWT is ever minted; the admin's own session keeps its admin identity throughout.
+The mechanism is a parallel URL tree on the Open Privacy Suite that always names an explicit organization: `/api/v1/admin/impersonate/<target_did>/in/<org_id>/…`. The block-explorer dashboard wraps it in a "View as user" button + amber banner. No user-shaped JWT is ever minted; the admin's own session keeps its admin identity throughout.
 
 ---
 
@@ -41,7 +41,7 @@ The org is never guessed. If no org is selected, the dashboard does not start a 
 | Tier-2 org admin (`is_org_admin = true`) | **Yes**, same-org targets only | This is the intended audience. |
 | Tier-3 admin (`admin` claim only, no `is_org_admin`) | **No** | Per-contract admin scope; cannot impersonate. |
 | Read-only admin | **No** | ROA's whole purpose is read-only audit of admin actions, not user-data browse. |
-| Regular user | **No** | The button is not rendered; the BFF rejects the start request; the privacy-proxy rejects the URL. |
+| Regular user | **No** | The button is not rendered; the BFF rejects the start request; the Open Privacy Suite rejects the URL. |
 
 The dashboard shows the **View as user** button only on user-detail pages that the admin can already access. Each click mints a short-lived opaque session token; the URL the admin's browser receives carries the token, not the target user's DID.
 
@@ -50,7 +50,7 @@ The dashboard shows the **View as user** button only on user-detail pages that t
 ## What the impersonator can do
 
 <Callout variant="warning" title="Strictly read-only">
-  Write methods are blocked at three layers: the FE disables write controls with an "amber tooltip" while the banner is up; the BFF rejects any forwarded write-method body server-side; the privacy-proxy's impersonation surface returns 405 on non-GET requests. There is no path by which an impersonated session can move funds, deploy a contract, or mutate RBAC state.
+  Write methods are blocked at three layers: the FE disables write controls with an "amber tooltip" while the banner is up; the BFF rejects any forwarded write-method body server-side; the Open Privacy Suite's impersonation surface returns 405 on non-GET requests. There is no path by which an impersonated session can move funds, deploy a contract, or mutate RBAC state.
 </Callout>
 
 While the banner is up:
@@ -111,7 +111,7 @@ The admin can also click **Stop viewing as** at any time. This deletes the token
 
 | Setting | Default | Notes |
 |---------|---------|-------|
-| Privacy-proxy: impersonation surface | enabled when admin auth is configured | No env var — gated entirely by the existing tier-2 admin JWT pipeline. |
+| Open Privacy Suite: impersonation surface | enabled when admin auth is configured | No env var — gated entirely by the existing tier-2 admin JWT pipeline. |
 | Block-explorer BFF: session TTL | 1 hour | Adjustable via `IMPERSONATION_TOKEN_TTL`; do not exceed 4 hours. |
 | Block-explorer BFF: session-store backend | in-memory | Swap to Redis-backed store before scaling beyond a single BFF replica. |
 | Audit log retention | matches `impersonation_log` (forever-append) | Subject to the chain integrity policy in [Audit Log Integrity](/docs/security/audit-integrity). |

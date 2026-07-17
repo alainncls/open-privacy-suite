@@ -53,9 +53,9 @@ notice items from the lockfiles include:
 
 ## Gateway Repositories In The Coordinated Release
 
-- `gateway-fm/privacy-proxy`
-- `gateway-fm/chain-indexer`
-- `gateway-fm/block-explorer`
+- `gateway-fm/open-privacy-suite`
+- `gateway-fm/ops-indexer`
+- `gateway-fm/ops-explorer`
 - `gateway-fm/wallet-emulator-js` if retained as a submodule
 
 Each repository and any related images should publish its own LICENSE, NOTICE,

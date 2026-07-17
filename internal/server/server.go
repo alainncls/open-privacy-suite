@@ -1084,7 +1084,7 @@ func (s *Server) setupRouter() *gin.Engine {
 		router.POST("/api/auth/verify", authRL, deprecation, s.handleAuthVerify)
 	}
 
-	// OAuth 2.0 endpoints - enables privacy-proxy as an Identity Provider
+	// OAuth 2.0 endpoints - enables Open Privacy Suite as an Identity Provider
 	// Used by block explorer for Single Sign-On with Privado ID authentication
 	// Rate limited to prevent brute force attacks.
 	//

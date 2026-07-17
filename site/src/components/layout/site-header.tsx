@@ -24,7 +24,7 @@ export function SiteHeader() {
           </div>
           <div className="hidden sm:block min-w-0">
             <h1 className="text-sm font-semibold font-mono truncate tracking-tight">
-              Privacy Proxy
+              Open Privacy Suite
             </h1>
             <p className="text-xs text-muted-foreground font-mono truncate">
               Documentation
@@ -52,7 +52,7 @@ export function SiteHeader() {
           <VersionSelector />
           <Button variant="ghost" size="icon" asChild>
             <a
-              href="https://github.com/gateway-fm/privacy-proxy"
+              href="https://github.com/gateway-fm/open-privacy-suite"
               target="_blank"
               rel="noopener noreferrer"
             >

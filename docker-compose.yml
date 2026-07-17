@@ -143,7 +143,7 @@ volumes:
   postgres-data:
 
 networks:
-  # Internal network — privacy-proxy services only (postgres, backend, anvil, frontend)
+  # Internal network — Open Privacy Suite services only (postgres, backend, anvil, frontend)
   internal:
     driver: bridge
   # Shared network — block-explorer connects here to reach backend and anvil

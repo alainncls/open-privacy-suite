@@ -1,4 +1,4 @@
-// Package api provides a client for the privacy proxy API.
+// Package api provides a client for the Open Privacy Suite API.
 package api
 
 import (
@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// Client is a client for the privacy proxy API.
+// Client is a client for the Open Privacy Suite API.
 type Client struct {
 	baseURL    string
 	token      string

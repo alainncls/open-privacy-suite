@@ -1,6 +1,6 @@
 # Demo Video Generator
 
-Automated demo video generation system for Privacy Proxy. Creates promotional videos with narration, captions, and branding from YAML configuration files.
+Automated demo video generation system for Open Privacy Suite. Creates promotional videos with narration, captions, and branding from YAML configuration files.
 
 ## Quick Start
 
@@ -106,7 +106,7 @@ steps:
     action: "navigate"
     url: "/login"
     wait: { selector: "h1", timeout: 10000 }
-    narration: "Welcome to Privacy Proxy..."
+    narration: "Welcome to Open Privacy Suite..."
     pause: 2.0
     screenshot: true
 

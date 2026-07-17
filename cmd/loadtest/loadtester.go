@@ -280,7 +280,7 @@ func (lt *LoadTester) buildValueTransfer(acc *Account, nonce uint64) (*types.Tra
 	return signedTx, nil
 }
 
-// sendRawTxViaProxy sends a signed transaction through the privacy proxy
+// sendRawTxViaProxy sends a signed transaction through the Open Privacy Suite
 // using eth_sendRawTransaction. Requires runtime tracing to be enabled on the proxy.
 func (lt *LoadTester) sendRawTxViaProxy(ctx context.Context, acc *Account, tx *types.Transaction) error {
 	// Encode transaction to RLP

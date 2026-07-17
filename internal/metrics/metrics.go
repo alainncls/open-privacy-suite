@@ -56,7 +56,7 @@ func NormalizeRPCMethod(method string) string {
 	return "other"
 }
 
-// Metrics holds all Prometheus collectors for the privacy proxy.
+// Metrics holds all Prometheus collectors for the Open Privacy Suite.
 type Metrics struct {
 	Registry *prometheus.Registry
 

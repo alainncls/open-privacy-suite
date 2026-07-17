@@ -14,7 +14,7 @@ import (
 //
 // A full end-to-end parity test (same postgres hit by both *explorer.Store
 // and Backend via a real gRPC server) is deferred to the compose-stack e2e
-// tier, where chain-indexer and privacy-proxy already run alongside each
+// tier, where chain-indexer and Open Privacy Suite already run alongside each
 // other. Exercising the mappers here is enough to catch shape / nil /
 // unit regressions; true behavioral parity (pagination, category flags,
 // SQL-layer visibility vs post-fetch Go-layer filtering) is a runtime

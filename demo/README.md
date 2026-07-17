@@ -1,6 +1,6 @@
-# Privacy Proxy Demo Scripts
+# Open Privacy Suite Demo Scripts
 
-Demo scripts showcasing contract deployment and RBAC features through the privacy proxy.
+Demo scripts showcasing contract deployment and RBAC features through the Open Privacy Suite.
 
 ## Deployment Modes
 
@@ -31,7 +31,7 @@ Both modes require the `deploy` claim. Runtime tracing (`debug_traceCall`) valid
 1. **Foundry** - Install from https://getfoundry.sh
 2. **jq** - For JSON parsing
 3. **curl** - For API calls
-4. **Privacy Proxy** running (`docker-compose up -d`)
+4. **Open Privacy Suite** running (`docker-compose up -d`)
 
 Anvil must be started with `--steps-tracing` for runtime tracing support (the docker-compose files handle this automatically).
 

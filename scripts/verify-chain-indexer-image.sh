@@ -27,7 +27,7 @@ green() { printf '\033[0;32m%s\033[0m\n' "$*"; }
 fail() { red "FAIL: $1"; echo "      see $LOG"; exit 1; }
 ok() { green "OK:   $1"; }
 
-[ -f "$PROD" ] || fail "missing $PROD (run from privacy-proxy worktree root)"
+[ -f "$PROD" ] || fail "missing $PROD (run from the repo root)"
 
 # ----------------------------------------------------------------------------
 # 1. Prod manifest declares chain-indexer as a pulled image, not a build

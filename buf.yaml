@@ -1,4 +1,4 @@
-# Vendored proto contract from gateway-fm/chain-indexer. We do NOT depend
+# Vendored proto contract from gateway-fm/ops-indexer. We do NOT depend
 # on chain-indexer's Go module — we carry our own copy of the .proto
 # files and generate our own stubs. See docs/rd-855-behavioral-shifts.md
 # for the rationale.

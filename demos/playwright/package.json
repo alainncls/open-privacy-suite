@@ -1,7 +1,7 @@
 {
   "name": "privacy-proxy-demos",
   "version": "1.0.0",
-  "description": "Automated demo recording for Privacy Proxy",
+  "description": "Automated demo recording for Open Privacy Suite",
   "scripts": {
     "test": "playwright test",
     "record": "playwright test --project=recording",

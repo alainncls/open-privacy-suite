@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # =============================================================================
-# Privacy Proxy - CREATE3 DeFi Deployment Demo
+# Open Privacy Suite - CREATE3 DeFi Deployment Demo
 # =============================================================================
 # This script demonstrates CREATE3 deployment with circular dependencies:
 # 1. Compute addresses deterministically using CREATE3 salts
@@ -319,7 +319,7 @@ SALT_PREFIX="defi-demo-$TIMESTAMP"
 print_substep "Using salt prefix: $SALT_PREFIX"
 
 # Use batch preregistration API to register 3 addresses (token, pool, router)
-print_substep "Preregistering 3 addresses with privacy proxy..."
+print_substep "Preregistering 3 addresses with Open Privacy Suite..."
 
 PREREG_RESP=$(curl -s -X POST "$ADMIN_API_URL/orgs/$ORG_ID/addresses/preregister" \
     -H "Content-Type: application/json" \

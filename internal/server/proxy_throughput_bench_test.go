@@ -25,7 +25,7 @@ import (
 	"privacy-proxy/internal/tracer"
 )
 
-// PROXY THROUGHPUT BENCHMARK (RD-1112). Measures the PRIVACY PROXY's own
+// PROXY THROUGHPUT BENCHMARK (RD-1112). Measures the OPEN PRIVACY SUITE's own
 // per-request cost end-to-end — decode + ecrecover + RBAC access check + audit
 // + forward — with the Ethereum node MOCKED (instant canned responses), so the
 // number reflects the proxy, not node execution. b.RunParallel simulates

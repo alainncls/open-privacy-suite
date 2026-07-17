@@ -30,7 +30,7 @@ steps:
     action: "navigate"
     url: "/login"
     wait: { selector: "[data-testid='login-page']", timeout: 15000 }
-    narration: "Welcome to Privacy Proxy. Let's explore how we authenticate users without compromising their privacy."
+    narration: "Welcome to Open Privacy Suite. Let's explore how we authenticate users without compromising their privacy."
     pause: 3.0
     screenshot: true
 

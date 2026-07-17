@@ -10,7 +10,7 @@
 //
 // The SQL-visibility-filter variants (GetXxxFiltered) intentionally stay on
 // *Store for now: the chain-indexer has no concept of visibility, so those
-// require post-fetch filtering in the privacy-proxy which is a separate
+// require post-fetch filtering in the Open Privacy Suite which is a separate
 // follow-up (RD-855 Phase 3 stage 2 — not in this commit).
 package indexerclient
 
@@ -64,7 +64,7 @@ func New(cfg Config, sqlStore *explorer.Store) (*Backend, error) {
 	conn, err := grpc.NewClient(
 		cfg.IndexerURL,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		// The indexer and privacy-proxy share a trusted network
+		// The indexer and Open Privacy Suite share a trusted network
 		// (RD-855 trust model): no auth token between them.
 	)
 	if err != nil {

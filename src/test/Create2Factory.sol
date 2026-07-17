@@ -17,7 +17,7 @@ contract Child {
 }
 
 /// @title Create2Factory - Deploys Child contracts via CREATE2 for testing
-/// @dev Used to test that the privacy proxy correctly handles runtime CREATE2
+/// @dev Used to test that the Open Privacy Suite correctly handles runtime CREATE2
 contract Create2Factory {
     event ChildDeployed(address indexed child, bytes32 indexed salt);
 

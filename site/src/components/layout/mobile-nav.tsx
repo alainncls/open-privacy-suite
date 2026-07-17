@@ -49,7 +49,7 @@ export function MobileNav({ onClose }: MobileNavProps) {
         <div className="pt-2 border-t space-y-2">
           <MobileVersionBadge />
           <a
-            href="https://github.com/gateway-fm/privacy-proxy"
+            href="https://github.com/gateway-fm/open-privacy-suite"
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground hover:text-foreground"

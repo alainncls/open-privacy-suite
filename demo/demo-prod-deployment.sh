@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # =============================================================================
-# Privacy Proxy - Production-Style Contract Deployment
+# Open Privacy Suite - Production-Style Contract Deployment
 # =============================================================================
-# This script demonstrates deploying contracts through the privacy proxy
+# This script demonstrates deploying contracts through the Open Privacy Suite
 # as a real user would in production:
 #
 # 1. User has already authenticated via Privado ID (ZK proof)
@@ -132,7 +132,7 @@ AUTH_TOKEN=$(echo "$ETH_RPC_HEADERS" | sed 's/Authorization: Bearer //')
 # Step 2: Verify Connection
 # =============================================================================
 
-print_step "Step 2: Verifying Connection to Privacy Proxy"
+print_step "Step 2: Verifying Connection to Open Privacy Suite"
 
 print_info "Testing RPC connection..."
 CHAIN_RESULT=$(cast chain-id --rpc-url "$PROXY_RPC_URL" 2>&1) && CONNECTION_OK=0 || CONNECTION_OK=1
@@ -324,7 +324,7 @@ print_success "Contracts compiled"
 # Step 4: Deploy Contracts
 # =============================================================================
 
-print_step "Step 4: Deploying Contracts via Privacy Proxy"
+print_step "Step 4: Deploying Contracts via Open Privacy Suite"
 
 echo ""
 echo -e "  ${WHITE}Deployment Flow:${NC}"
@@ -562,7 +562,7 @@ echo -e "${CYAN}└────────────────────�
 echo ""
 echo -e "${WHITE}What happened:${NC}"
 echo -e "  ${GREEN}1.${NC} Transactions signed locally with your private key"
-echo -e "  ${GREEN}2.${NC} Sent via eth_sendRawTransaction through privacy proxy"
+echo -e "  ${GREEN}2.${NC} Sent via eth_sendRawTransaction through Open Privacy Suite"
 echo -e "  ${GREEN}3.${NC} Proxy validated your JWT token and permissions"
 echo -e "  ${GREEN}4.${NC} Proxy ran debug_traceCall to verify cross-org isolation"
 echo -e "  ${GREEN}5.${NC} Contracts deployed to the blockchain"

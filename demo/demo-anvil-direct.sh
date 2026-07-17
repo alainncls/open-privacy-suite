@@ -1,10 +1,10 @@
 #!/bin/bash
 
 # =============================================================================
-# Privacy Proxy - Direct Anvil Deployment Demo (Baseline)
+# Open Privacy Suite - Direct Anvil Deployment Demo (Baseline)
 # =============================================================================
-# This script demonstrates deployment directly to Anvil without privacy proxy.
-# Used as a baseline for comparison with the privacy proxy workflow.
+# This script demonstrates deployment directly to Anvil without Open Privacy Suite.
+# Used as a baseline for comparison with the Open Privacy Suite workflow.
 #
 # Steps:
 # 1. Start Anvil (or use existing instance)
@@ -521,6 +521,6 @@ echo -e "  ${CYAN}3.${NC} Circular dependencies handled by delayed initializatio
 echo -e "  ${CYAN}4.${NC} Anyone with ETH can deploy (no RBAC)"
 echo ""
 echo -e "${WHITE}Compare with:${NC}"
-echo -e "  ${GREEN}./demo-privacy-proxy.sh${NC}     - Same flow through privacy proxy with RBAC"
+echo -e "  ${GREEN}./demo-privacy-proxy.sh${NC}     - Same flow through Open Privacy Suite with RBAC"
 echo -e "  ${GREEN}./demo-defi-deployment.sh${NC}   - CREATE3 deterministic deployment"
 echo ""

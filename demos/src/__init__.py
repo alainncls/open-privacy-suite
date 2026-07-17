@@ -1,1 +1,1 @@
-# Privacy Proxy Video Demo Pipeline
+# Open Privacy Suite Video Demo Pipeline

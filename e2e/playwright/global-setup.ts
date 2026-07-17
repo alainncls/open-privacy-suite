@@ -29,7 +29,7 @@ async function globalSetup(config: FullConfig): Promise<void> {
   console.log('Starting global setup...');
 
   // Wait for proxy backend health endpoint
-  await waitForService(`${PROXY_URL}/health`, 'Privacy Proxy');
+  await waitForService(`${PROXY_URL}/health`, 'Open Privacy Suite');
 
   // Check if any UI tests are being run by examining the projects
   const runningProjects = config.projects.filter(p => {

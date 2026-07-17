@@ -11,7 +11,7 @@ func runList(cmd *flag.FlagSet, args []string) {
 	// Define flags
 	orgID := cmd.String("org-id", "", "Organization ID (required)")
 	configPath := cmd.String("config", "", "Path to privacy.toml config file")
-	apiURL := cmd.String("api-url", "", "Privacy Proxy API URL")
+	apiURL := cmd.String("api-url", "", "Open Privacy Suite API URL")
 	token := cmd.String("token", "", "Authentication token")
 	status := cmd.String("status", "", "Filter by status (pending, verified, expired)")
 	verbose := cmd.Bool("verbose", false, "Show verbose output including addresses")

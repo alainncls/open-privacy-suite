@@ -31,7 +31,7 @@ yellow(){ color "0;33"   "$1"; }
 red()   { color "0;31"   "$1"; }
 
 # Resolve sibling-repo paths. Defaults assume the standard layout where
-# block-explorer and chain-indexer are checked out next to privacy-proxy.
+# block-explorer and chain-indexer are checked out next to this repo.
 # Override via environment if your layout differs.
 BLOCK_EXPLORER_PATH="${BLOCK_EXPLORER_PATH:-../block-explorer}"
 CHAIN_INDEXER_PATH="${CHAIN_INDEXER_PATH:-../chain-indexer}"
@@ -43,7 +43,7 @@ if (( ${#missing[@]} )); then
   echo "$(red 'Missing sibling repos:')"
   printf '  - %s\n' "${missing[@]}"
   echo
-  echo 'Either clone these as siblings of privacy-proxy, or export'
+  echo 'Either clone these as siblings of this repo, or export'
   echo 'BLOCK_EXPLORER_PATH / CHAIN_INDEXER_PATH to point at your checkouts.'
   exit 1
 fi
@@ -211,11 +211,11 @@ cat <<EOF
 $(bold '================================================================')
 $(bold 'Privacy stack is up — DEV MODE (mock auth enabled).')
 
-  Privacy-proxy backend:   http://localhost:${HOST_PORT_PROXY:-8080}
-  Privacy-proxy frontend:  http://localhost:${HOST_PORT_UI:-5173}
+  Open Privacy Suite backend:   http://localhost:${HOST_PORT_PROXY:-8080}
+  Open Privacy Suite frontend:  http://localhost:${HOST_PORT_UI:-5173}
   Block-explorer frontend: http://localhost:${HOST_PORT_EXPLORER:-3001}
 
-$(yellow 'Mock login') — open the privacy-proxy frontend, click through to
+$(yellow 'Mock login') — open the Open Privacy Suite frontend, click through to
 the login page, use "Mock Login (Skip Wallet)" or the dev identity
 picker. Signature verification is disabled; do NOT deploy this manifest
 to anything customer-facing.

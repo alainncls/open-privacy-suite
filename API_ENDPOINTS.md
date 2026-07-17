@@ -1,4 +1,4 @@
-# Privacy Proxy — REST API Endpoint Inventory
+# Open Privacy Suite — REST API Endpoint Inventory
 
 Generated from the live gin route table by `make api-inventory` — do not edit by hand.
 The machine-readable API specification is the OpenAPI document (`internal/server/apispec/swagger.json`,

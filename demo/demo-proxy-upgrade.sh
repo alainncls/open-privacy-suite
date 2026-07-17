@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # =============================================================================
-# Privacy Proxy - CREATE3 Proxy Upgrade Demo
+# Open Privacy Suite - CREATE3 Proxy Upgrade Demo
 # =============================================================================
 # This script demonstrates the full flow of:
 # 1. Preregistering addresses via CREATE3
@@ -111,7 +111,7 @@ print_header "CREATE3 Proxy Upgrade Demo"
 print_step "Checking Configuration"
 
 # Environment variables with defaults
-# IMPORTANT: PROXY_RPC_URL is the privacy proxy (for RBAC), ANVIL_RPC_URL is direct to node (for read-only)
+# IMPORTANT: PROXY_RPC_URL is the Open Privacy Suite (for RBAC), ANVIL_RPC_URL is direct to node (for read-only)
 : "${ADMIN_API_URL:=http://localhost:8080/api}"
 : "${PROXY_RPC_URL:=http://localhost:8080}"
 : "${ANVIL_RPC_URL:=http://localhost:8545}"
@@ -652,7 +652,7 @@ if [ "$CALLDATA_EXIT_CODE" -ne 0 ] || [ -z "$DEPLOY_CALLDATA" ]; then
     exit 1
 fi
 
-print_substep "Sending deployment transaction through privacy proxy..."
+print_substep "Sending deployment transaction through Open Privacy Suite..."
 
 # Get the nonce for the deployer
 NONCE_RESP=$(rpc_call "eth_getTransactionCount" "[\"$DEPLOYER_ADDRESS\", \"latest\"]")
@@ -741,7 +741,7 @@ CONSTRUCTOR_ARGS=$(cast abi-encode "constructor(address,bytes)" "$IMPL_V1_ADDR" 
 CONSTRUCTOR_ARGS_NO_PREFIX="${CONSTRUCTOR_ARGS:2}"
 PROXY_INIT_CODE="${PROXY_BYTECODE}${CONSTRUCTOR_ARGS_NO_PREFIX}"
 
-print_substep "Deploying proxy via CREATE3 through privacy proxy..."
+print_substep "Deploying proxy via CREATE3 through Open Privacy Suite..."
 
 DEPLOY_PROXY_CALLDATA=$(cast calldata "deploy(bytes32,bytes)" "$PROXY_SALT" "$PROXY_INIT_CODE")
 
@@ -788,7 +788,7 @@ print_substep "Calling version()..."
 VERSION_V1=$(cast call "$PROXY_ADDR" "version()(string)" --rpc-url "$RPC_URL" 2>/dev/null || echo "error")
 print_contract_call "$PROXY_ADDR" "version()" "$VERSION_V1"
 
-print_substep "Calling store(42) through privacy proxy..."
+print_substep "Calling store(42) through Open Privacy Suite..."
 STORE_CALLDATA=$(cast calldata "store(uint256)" 42)
 
 # Get the nonce for the deployer
@@ -823,7 +823,7 @@ print_contract_call "$PROXY_ADDR" "retrieve()" "$STORED_VALUE"
 
 print_step "Step 7: Deploying Implementation V2"
 
-print_substep "Deploying BoxV2 to preregistered address via CREATE3 through privacy proxy..."
+print_substep "Deploying BoxV2 to preregistered address via CREATE3 through Open Privacy Suite..."
 print_info "Target address: $IMPL_V2_ADDR"
 
 DEPLOY_V2_CALLDATA=$(cast calldata "deploy(bytes32,bytes)" "$IMPL_V2_SALT" "$BOXV2_BYTECODE")
@@ -867,7 +867,7 @@ print_value "Address" "$IMPL_V2_ADDR"
 
 print_step "Step 8: Upgrading Proxy to V2"
 
-print_substep "Calling upgradeToAndCall() through privacy proxy..."
+print_substep "Calling upgradeToAndCall() through Open Privacy Suite..."
 print_info "Old implementation: $IMPL_V1_ADDR"
 print_info "New implementation: $IMPL_V2_ADDR"
 
@@ -918,7 +918,7 @@ print_substep "Calling retrieve() - value should be preserved..."
 STORED_VALUE_V2=$(cast call "$PROXY_ADDR" "retrieve()(uint256)" --rpc-url "$RPC_URL" 2>/dev/null)
 print_contract_call "$PROXY_ADDR" "retrieve()" "$STORED_VALUE_V2"
 
-print_substep "Calling increment() - new V2 function through privacy proxy..."
+print_substep "Calling increment() - new V2 function through Open Privacy Suite..."
 INCREMENT_CALLDATA=$(cast calldata "increment()")
 
 # Get the nonce for the deployer

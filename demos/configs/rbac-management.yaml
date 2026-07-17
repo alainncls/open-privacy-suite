@@ -30,7 +30,7 @@ steps:
     action: "navigate"
     url: "/admin/rbac/organizations"
     wait: { selector: "[data-testid='rbac-manager']", timeout: 15000 }
-    narration: "Privacy Proxy provides enterprise-grade access control for blockchain applications. Let's explore the admin interface."
+    narration: "Open Privacy Suite provides enterprise-grade access control for blockchain applications. Let's explore the admin interface."
     pause: 3.0
     screenshot: true
 
@@ -80,7 +80,7 @@ steps:
   - id: "conclusion"
     action: "wait"
     wait: { timeout: 1000 }
-    narration: "Privacy Proxy brings enterprise-grade access control to Web3. Your blockchain, your rules."
+    narration: "Open Privacy Suite brings enterprise-grade access control to Web3. Your blockchain, your rules."
     pause: 3.0
     screenshot: true
 

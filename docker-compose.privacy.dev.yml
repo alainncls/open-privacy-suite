@@ -2,7 +2,7 @@
 #
 # Same architecture as docker-compose.privacy.yml (the prod manifest):
 # indexer-zone + bff-zone + public networks, BFF in front of
-# privacy-proxy, no block-explorer indexer. Differences are scoped to
+# Open Privacy Suite, no block-explorer indexer. Differences are scoped to
 # developer ergonomics:
 #
 #   - proxy-backend built with target: dev (mockauth-tagged binary).
@@ -27,7 +27,7 @@
 # base/overlay. Picking one chooses the deployment shape outright.
 #
 # By default, block-explorer is expected as a sibling clone of
-# privacy-proxy (same parent directory). Override the path via the
+# Open Privacy Suite (same parent directory). Override the path via the
 # `BLOCK_EXPLORER_PATH` env var.
 #
 # chain-indexer is pulled as a published image (Docker Hub) — pin a
@@ -287,12 +287,12 @@ services:
       dockerfile: Dockerfile.api
       # SAME AS PROD: the dev variant does not loosen the BFF's
       # privacy-build invariants. The chain-indexer gRPC client is
-      # still compiled out — dev convenience is scoped to privacy-proxy
+      # still compiled out — dev convenience is scoped to Open Privacy Suite
       # auth, never to data-path correctness.
       target: privacy
       # Build identity (RD-1023). block-explorer's Dockerfile.api stamps these
       # into the binary (surfaced at /version + UI footer). They come from
-      # block-explorer's OWN git, NOT privacy-proxy's — privacy-dev-up.sh
+      # block-explorer's OWN git, NOT Open Privacy Suite's — privacy-dev-up.sh
       # resolves BLOCK_EXPLORER_* from $BLOCK_EXPLORER_PATH and exports them.
       # Falls back to the Dockerfile defaults (dev/none/unknown) if unset.
       args:
@@ -307,7 +307,7 @@ services:
       - PRIVACY_PROXY_PUBLIC_URL=${PRIVACY_PROXY_PUBLIC_URL:-http://localhost:${HOST_PORT_PROXY:-8080}}
       # W-1: the privacy-mode block-explorer BFF fails closed at startup unless
       # the trusted browser origins are explicit (it refuses to reflect
-      # arbitrary Origins with credentials). Explorer SPA + privacy-proxy UI.
+      # arbitrary Origins with credentials). Explorer SPA + Open Privacy Suite UI.
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:${HOST_PORT_EXPLORER:-3001},http://localhost:${HOST_PORT_UI:-5173}}
       # A-3: the BFF forces auth cookies to Secure in privacy mode unless this
       # is set explicitly; browsers drop Secure cookies over plain HTTP (this

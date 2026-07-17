@@ -8,14 +8,14 @@ export function SiteFooter() {
         <div className="flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Shield className="size-4 text-primary" />
-            <span>Privacy Proxy by Gateway.fm</span>
+            <span>Open Privacy Suite by Gateway.fm</span>
           </div>
           <nav className="flex items-center gap-6 text-sm text-muted-foreground">
             <Link href="/docs/getting-started" className="hover:text-foreground transition-colors">
               Docs
             </Link>
             <a
-              href="https://github.com/gateway-fm/privacy-proxy"
+              href="https://github.com/gateway-fm/open-privacy-suite"
               target="_blank"
               rel="noopener noreferrer"
               className="hover:text-foreground transition-colors"
