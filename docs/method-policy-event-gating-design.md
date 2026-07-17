@@ -51,7 +51,7 @@ type EventSpec struct {                 // gate a contract's event LOGS
     Key   KeySpec      `json:"key"`      // source "eventParam" (phase 1)
     Allow []AllowRule  `json:"allow"`    // captured-field / literal audience; no Return; where ok
 }
-type TransactionSpec struct {           // gate a tx (and its receipt envelope)
+type TransactionSpec struct {           // gate a tx object fetched by hash / block-index (NOT the receipt envelope)
     Method string     `json:"method"`   // writer signature "processPayment(string,uint8)"
     Key    KeySpec     `json:"key"`      // source "param" (of the tx's own calldata)
     Allow  []AllowRule `json:"allow"`    // as above
@@ -106,8 +106,7 @@ Add `events` to `RecordPolicy` (`internal/rbac/method_policy.go`, alongside
                      "allow": [ {"callerIn":["audience"]} ], "onNoRecord":"deny","else":"deny" } ],
       "events":  [ { "event": "PaymentProcessed(string,uint8)",
                      "key": { "source": "eventParam", "index": 0 },
-                     "allow": [ {"callerIn":["audience"]} ],
-                     "onNoRecord": "deny", "else": "deny" } ]
+                     "allow": [ {"callerIn":["audience"]} ] } ]
     }
   }
 }

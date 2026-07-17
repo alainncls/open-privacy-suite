@@ -79,8 +79,10 @@ type EventSpec struct {
 	Allow []AllowRule `json:"allow"`
 }
 
-// TransactionSpec gives a transaction (and its receipt envelope) an additive
-// audience (rule 72), keyed by a parameter of the tx's OWN calldata.
+// TransactionSpec gives a transaction OBJECT (fetched by hash or block-index) an
+// additive audience (rule 72), keyed by a parameter of the tx's OWN calldata.
+// It does NOT govern the receipt envelope's own visibility (that stays
+// participant/visibleTo/admin) — only the receipt's LOGS are gated, via rule 71.
 type TransactionSpec struct {
 	Method string      `json:"method"`
 	Key    KeySpec     `json:"key"` // Source "param"

@@ -2320,7 +2320,7 @@
                             },
                             "type": "array"
                         },
-                        "description": "full admit-set (super-admin only)",
+                        "description": "full admit-set (visible to the owning-org tier-2 admin / super-admin)",
                         "type": "object"
                     },
                     "has_return_source": {

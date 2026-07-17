@@ -8,6 +8,23 @@ The proxy authenticates with a **Bearer JWT**, so every call carries
 `--rpc-headers "Authorization: Bearer <token>"`. Auth itself is not JSON-RPC, so the
 token is minted with `curl` (two-step mock login).
 
+## Prerequisites & scope (read first)
+
+- **Not auto-provisioned.** This walkthrough assumes a seeded fixture — the
+  `PaymentRegistry` contract deployed, its method policy installed (via
+  `PUT .../method-policies`), the five personas created with the grants below,
+  and PAY-1/PAY-2 submitted through the proxy (so the settle-time captures
+  exist). None of that ships in the repo; you must set it up first. The
+  `ORG`/`CONTRACT`/`TXHASH` values below are from one such run and will differ
+  in yours.
+- **Rule 72 scope.** The transaction gate here covers only
+  `eth_getTransactionByHash` (and `getTransactionBy{BlockHash,BlockNumber}AndIndex`).
+  Block-listing surfaces (`eth_getBlockByHash`/`ByNumber`, `eth_getBlockReceipts`)
+  and the explorer's transaction views do **not** yet consult the record-audience
+  gate — they stay participant/visibleTo-only (fail-closed, no leak). So a record
+  party sees their tx by hash but **not** (yet) inside those list surfaces. Tracked
+  as **RD-1210**.
+
 ## 0. Setup
 
 ```bash

@@ -747,9 +747,13 @@ and the same captured audience:
   group grant allows the call), so `access` **narrows** it to the record's
   audience (§9, deny-by-default at the response).
 - **`events`** (logs, `eth_getLogs` + receipt logs — rule 71) and
-  **`transactions`** (a tx/receipt by hash — rule 72): the write-side baseline is
-  *deny-by-default* (only sender/receiver/`visibleTo`/admin see), so these
-  **additively ADD** the record's captured audience as an extra admit path.
+  **`transactions`** (the tx OBJECT by hash / block-index — rule 72; NOT the
+  receipt envelope, whose own visibility stays participant/`visibleTo`/admin):
+  the write-side baseline is *deny-by-default* (only sender/receiver/`visibleTo`/
+  admin see), so these **additively ADD** the record's captured audience as an
+  extra admit path. Rule 72 currently gates `eth_getTransactionBy{Hash,BlockHashAndIndex,
+  BlockNumberAndIndex}`; block-list surfaces and explorer tx views are not yet
+  gated (fail-closed, no leak — RD-1210).
 
 **Additive semantics (events/transactions).** The record-audience branch admits a
 log/tx when: the contract is grant-eligible for the viewer (bounds it — the gate

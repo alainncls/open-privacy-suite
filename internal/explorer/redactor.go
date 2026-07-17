@@ -262,16 +262,16 @@ type LogParticipantStore interface {
 // emitting contract; topics/data are the log's raw topic hexes and data hex.
 //
 // Bounded by contract eligibility at the call site (see RedactLogs): the resolver
-// is only consulted for a viewer whose visibility on the emitting contract is
-// VisibilityFull. Note VisibilityFull is reached by a real contract grant OR by
-// the participant / visibleTo upgrades — so it is slightly WIDER than the RPC
-// path's `access != nil` (grant-only). This is not a widening of the record gate:
-// a viewer who reached Full via participant/visibleTo already sees the log through
-// that same upgrade regardless of this resolver, so the resolver adds nothing new
-// for them (it only ADDS the record's declared audience to grant/eligible
-// viewers). The residual RPC-vs-explorer difference for a no-grant participant of
-// a dynamic-payload event is a pre-existing M15/participant-admission asymmetry,
-// independent of this feature (audit F1) — not introduced here.
+// is only consulted for a viewer whose GRANT-derived base visibility on the
+// emitting contract is VisibilityFull (a contract grant / org-admin), captured
+// BEFORE the participant/visibleTo upgrades. That is the explorer equivalent of
+// the RPC path's `access != nil` (grant-only): a no-grant participant/visibleTo
+// viewer is only UPGRADED to Full and is NOT consulted here, so the record gate
+// only ADDS the record's declared audience among grant-holders and stays in
+// lockstep with rbac.FilterEventLogs. A no-grant participant's dynamic-payload
+// log still hits the M15 gate below, exactly like RPC (M1 — previously this
+// branch used the post-upgrade level and could admit a governed dynamic-payload
+// log the RPC path dropped).
 type CapturedAudienceResolver interface {
 	EventLogAdmits(ctx context.Context, viewerDID, contractAddr, contractABI string, topics []string, data string) bool
 }
@@ -2253,6 +2253,16 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 
 		level := visMap[contractAddrLower]
 
+		// baseLevel is the GRANT-derived visibility, captured BEFORE the
+		// participant/visibleTo upgrades below. It is the explorer equivalent of
+		// the RPC path's `access != nil` (a contract grant / org-admin → Full).
+		// The RD-1206 record-audience branch is bounded by baseLevel — NOT the
+		// post-upgrade `level` — so a no-grant participant/visibleTo viewer (only
+		// UPGRADED to Full) is never admitted by the record gate; they fall
+		// through to M15, exactly like the RPC path (M1: keeps the two surfaces
+		// in agreement and preserves the M15 dynamic-payload protection).
+		baseLevel := level
+
 		// Participant override: if the viewer is from/to of the parent tx,
 		// upgrade Redacted emitting contracts so they can see their own logs.
 		if level == VisibilityRedacted && isParticipant {
@@ -2299,21 +2309,23 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 		// (same precedence: after the deny-when-no-ABI gate, before M15). The
 		// record's initiating call explicitly designated this audience.
 		//
-		// Bounded by contract eligibility: only VisibilityFull viewers reach
-		// this branch. VisibilityFull for an org-owned contract means the
-		// viewer holds a contract grant on it (GetBatchVisibility Step 2) —
-		// the explorer equivalent of the RPC path's access != nil (a
-		// ContractAccess entry). The record gate therefore only ADDS the
-		// record's declared audience among viewers who already hold the grant;
-		// it never widens past the grant (a Redacted-only viewer — org member
-		// with no grant — is not consulted, matching access == nil on RPC).
+		// Bounded by contract eligibility: gated on baseLevel (the GRANT-derived
+		// visibility BEFORE the participant/visibleTo upgrades), the explorer
+		// equivalent of the RPC path's `access != nil`. A grant / org-admin →
+		// baseLevel==Full; a no-grant org member is Redacted, and a no-grant
+		// participant/visibleTo viewer is only UPGRADED to Full (post-`level`) —
+		// so gating on baseLevel keeps them out. The record gate therefore ADDS
+		// the record's declared audience only among viewers who already hold the
+		// grant, never widening past it (matching access == nil on RPC), and a
+		// no-grant participant's dynamic-payload log still hits M15 below, again
+		// like RPC. (M1)
 		//
 		// Fail-safe: the resolver returns false on any decode / lookup /
 		// org-scoping failure, so the log falls through to the phases below
 		// (never admitted on error, never un-admitted). Anonymous events (no
 		// topic0) carry no governed key and are left to the baseline.
 		if r.capturedAudienceResolver != nil && viewerDID != "" &&
-			level == VisibilityFull && l.Topic0 != nil {
+			baseLevel == VisibilityFull && l.Topic0 != nil {
 			var abiForAudience string
 			if raw, ok := contractABIs[contractAddr]; ok && len(raw) > 0 {
 				abiForAudience = string(raw)

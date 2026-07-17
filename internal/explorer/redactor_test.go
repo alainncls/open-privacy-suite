@@ -4371,6 +4371,70 @@ func TestRedactLogs_M15_NoResolverDisablesGate(t *testing.T) {
 	}
 }
 
+// stubCapturedAudienceResolver admits a fixed set of viewer DIDs (RD-1206 rule 71).
+type stubCapturedAudienceResolver struct{ admit map[string]bool }
+
+func (s *stubCapturedAudienceResolver) EventLogAdmits(_ context.Context, viewerDID, _, _ string, _ []string, _ string) bool {
+	return s.admit[viewerDID]
+}
+
+// TestRedactLogs_M1_RecordAudienceGrantBound is the explorer half of the RD-1206
+// symmetry guard for the M1 audit fix: the record-audience branch must be bounded
+// by the GRANT-derived BASE visibility (the explorer equivalent of the RPC path's
+// access != nil), NOT the post-participant/visibleTo-upgrade level. So a viewer
+// who reaches Full ONLY via the visibleTo upgrade (no grant → base Redacted), even
+// when IN the captured audience, must NOT be admitted a governed dynamic-payload
+// log on the explorer — matching rbac.FilterEventLogs, where a no-grant viewer is
+// skipped (access == nil) and M15 drops the log. Regression for the pre-fix bug
+// where the branch used the upgraded level and leaked the log.
+func TestRedactLogs_M1_RecordAudienceGrantBound(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	txHash := "0xbridgetx"
+	topic := eventTopic0("Bridge(address,bytes)")
+	log := Log{ID: 1, Address: addr, TxHash: txHash, Topic0: &topic, Data: "0x"}
+
+	build := func(base VisibilityLevel, inAudience bool) *RedactionEngine {
+		e := newEngine(VisibilityMap{addr: base})
+		e.SetABIResolver(&stubABIResolver{byAddr: map[string]string{addr: dynamicEventABI}})
+		e.SetEventRuleChecker(&stubEventRuleChecker{byAddr: map[string]EventRulesResolution{addr: {Wildcard: true}}})
+		e.SetDynamicPayloadAllowedResolver(&stubDynamicPayloadAllowedResolver{allow: map[string]bool{}}) // M15 active
+		e.SetCapturedAudienceResolver(&stubCapturedAudienceResolver{admit: map[string]bool{"did:carol": inAudience}})
+		// No VisibleToUnlockResolver wired → the per-contract unlock early-return
+		// does NOT fire; only the visibleTo LEVEL upgrade (Redacted/Hidden→Full)
+		// applies, so the log reaches the record-audience branch + M15.
+		return e
+	}
+	sees := func(e *RedactionEngine) bool {
+		opts := &RedactOpts{VisibleTxHashes: map[string]bool{txHash: true}}
+		out, err := e.RedactLogsWithOpts(context.Background(), []Log{log}, "did:carol", opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, l := range out {
+			if l.ID == 1 {
+				return true
+			}
+		}
+		return false
+	}
+
+	// M1: no grant (base Redacted), upgraded to Full ONLY via visibleTo, IN the
+	// audience → MUST be dropped (record gate is grant-bound; M15 fires) — parity
+	// with RPC (access == nil).
+	if sees(build(VisibilityRedacted, true)) {
+		t.Fatal("M1: a no-grant (Redacted-base) viewer upgraded to Full via visibleTo, even if in the captured audience, must NOT see a governed dynamic-payload log on the explorer (RPC parity: access==nil → M15 drop)")
+	}
+	// Control A: a GRANT-holder (base Full) in the audience → admitted (rule 71
+	// legitimately widens grant-holders past M15).
+	if !sees(build(VisibilityFull, true)) {
+		t.Fatal("a grant-holder (Full-base) in the captured audience must see the governed event log (rule 71)")
+	}
+	// Control B: a GRANT-holder NOT in the audience → dropped by M15.
+	if sees(build(VisibilityFull, false)) {
+		t.Fatal("a grant-holder NOT in the captured audience must not see the governed dynamic-payload log (M15 drop)")
+	}
+}
+
 // TestEventHasDynamicNonIndexedParam_TypeMatrix exercises the helper
 // directly for the type matrix it must classify correctly.
 func TestEventHasDynamicNonIndexedParam_TypeMatrix(t *testing.T) {

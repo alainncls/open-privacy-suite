@@ -182,7 +182,7 @@ type methodPolicySimulateResponse struct {
 	MatchedRule     string              `json:"matched_rule,omitempty"`
 	HasReturnSource bool                `json:"has_return_source"`
 	Poisoned        bool                `json:"poisoned"`
-	Captured        map[string][]string `json:"captured"` // full admit-set (super-admin only)
+	Captured        map[string][]string `json:"captured"` // full admit-set (visible to the owning-org tier-2 admin / super-admin)
 	Note            string              `json:"note,omitempty"`
 	// Surfaces is the caller's verdict on every governed surface — the reader gate
 	// (rule 70, authoritative) plus each gated event (71) and transaction (72),

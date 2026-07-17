@@ -45,13 +45,14 @@ func (p *JSONRPCProcessor) methodPolicyStore() (methodPolicyCaptureStore, bool) 
 var errMethodPolicyOrgUnresolved = errors.New("method policy: contract org unresolved")
 
 // methodPolicyContract resolves the gate's target contract, scoped to the
-// request's resolved org. Addresses are unique only PER ORG, so a global lookup
-// can return a different org's row for a dual-registered address — which would
-// non-deterministically skip or misapply a policy (C1). eth_call/eth_sendTransaction
-// both resolve the org via CheckAccess before this runs, so resolvedOrgID is
-// normally set. If it is empty we fall back to the global lookup only to DETECT
-// a policy: finding one we cannot attribute to an org returns an error so the
-// caller fails closed rather than guessing.
+// request's resolved org. Since migration 035 (unique index on LOWER(address))
+// a contract address is GLOBALLY unique, so cross-org dual-registration is no
+// longer possible; we still scope to the resolved org as defense-in-depth so a
+// lookup can never non-deterministically skip or misapply a policy (C1).
+// eth_call/eth_sendTransaction both resolve the org via CheckAccess before this
+// runs, so resolvedOrgID is normally set. If it is empty we fall back to the
+// global lookup only to DETECT a policy: finding one we cannot attribute to an
+// org returns an error so the caller fails closed rather than guessing.
 func (p *JSONRPCProcessor) methodPolicyContract(ctx context.Context, req *ProcessRequest, to string) (*rbac.Contract, error) {
 	if req.resolvedOrgID != "" {
 		return p.rbacAccessCtrl.Store().GetContractByAddress(ctx, req.resolvedOrgID, to)

@@ -758,6 +758,11 @@ func (s *Server) simulateContractMethodPolicy(c *gin.Context) {
 	orgID := c.Param("org_id")
 	address := c.Param("address")
 
+	// Cap the request body (M2): the what-if `captured` map is admin-supplied and
+	// otherwise unbounded; mirror the dry-run route's guard so a huge body can't
+	// amplify allocation before we even bind it.
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, MaxRequestBodySize)
+
 	// Org-scoped lookup (never GetContractByAddressGlobal): a missing or
 	// other-org contract returns the same opaque 404 — no cross-org probe.
 	contract, err := s.db.GetContractByAddress(c.Request.Context(), orgID, address)
@@ -789,6 +794,21 @@ func (s *Server) simulateContractMethodPolicy(c *gin.Context) {
 	}
 	if input.RecordKey == "" && len(input.Captured) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "record_key (live) or captured (what-if) is required"})
+		return
+	}
+	// Bound the what-if hypothetical parties (M2) to the same limits the policy
+	// write-path enforces, so a large `captured` map can't amplify allocation or
+	// matching work in hypotheticalCaptures / SimulateSurfaces.
+	if len(input.Captured) > rbac.MethodPolicyMaxRemembered {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "too many captured fields"})
+		return
+	}
+	capturedVals := 0
+	for _, vals := range input.Captured {
+		capturedVals += len(vals)
+	}
+	if capturedVals > rbac.MethodPolicyMaxAudience {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "too many captured values"})
 		return
 	}
 
