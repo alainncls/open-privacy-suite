@@ -12,6 +12,7 @@ export function SuccessPage() {
   const navigate = useNavigate();
   const { isAuthenticated, accessToken, userDID, logout, isLoading } = useAuth();
   const [copied, setCopied] = useState<string | null>(null);
+  const [copyError, setCopyError] = useState(false);
   const [linkedAddresses, setLinkedAddresses] = useState<EthAddressResponse[]>([]);
   const [userOrgs, setUserOrgs] = useState<UserOrg[]>([]);
   const [isAddingNetwork, setIsAddingNetwork] = useState(false);
@@ -80,9 +81,13 @@ export function SuccessPage() {
       setCopied(type);
       setTimeout(() => setCopied(null), 2000);
     } catch (err) {
+      // Both the clipboard API and the execCommand fallback failed (rare, very
+      // locked-down browser). Surface a non-blocking inline notice instead of a
+      // native window.prompt — the value is already shown on the page for manual
+      // selection.
       console.error('Failed to copy:', err);
-      // Show the text in a prompt as last resort
-      window.prompt('Copy this text:', text);
+      setCopyError(true);
+      setTimeout(() => setCopyError(false), 4000);
     }
   };
 
@@ -132,6 +137,12 @@ export function SuccessPage() {
             Your authenticated RPC endpoint is ready to use
           </p>
         </div>
+
+        {copyError && (
+          <div className="mb-4 rounded-lg border border-warning/40 bg-warning-light px-3 py-2 text-sm text-warning-dark" role="status" data-testid="copy-error">
+            Couldn&apos;t copy automatically — select the value and press ⌘C (Ctrl+C on Windows/Linux).
+          </div>
+        )}
 
         {/* RPC Endpoint Card */}
         <Card variant="default" className="mb-4" data-testid="rpc-card">
