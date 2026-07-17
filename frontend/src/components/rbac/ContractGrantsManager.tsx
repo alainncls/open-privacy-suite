@@ -213,10 +213,11 @@ export default function ContractGrantsManager({
       for (const item of parsed) {
         if (item.type !== 'function') continue;
         const inputs: { name: string; type: string }[] = item.inputs || [];
-        const inputTypes = inputs.map(input => input.type).join(',');
-        const signature = `${item.name}(${inputTypes})`;
         try {
-          const selector = toFunctionSelector(signature).toLowerCase();
+          // Derive the selector from the ABI item via viem so struct/tuple
+          // params expand to their component types. Hand-joining input.type is
+          // wrong for tuples (type is the literal "tuple") — see RD-1205.
+          const selector = toFunctionSelector(item).toLowerCase();
           names[selector] = item.name;
           const paramMap: Record<number, string> = {};
           inputs.forEach((input, idx) => {
@@ -521,8 +522,10 @@ export default function ContractGrantsManager({
                 <div className="mt-2 flex items-start justify-between gap-4 group">
                   <div className="flex flex-wrap items-center gap-2 pt-0.5">
                     <span className="text-xs text-neutral-500">Functions:</span>
-                    {!grant.functions || grant.functions.length === 0 ? (
+                    {grant.functions == null ? (
                     <span className="text-xs text-success font-medium">All functions allowed</span>
+                  ) : grant.functions.length === 0 ? (
+                    <span className="text-xs text-amber-700 font-medium">No functions (events only)</span>
                   ) : (
                     <div className="flex flex-wrap items-center gap-1.5">
                       {grant.functions.map((rule: FunctionRule) => {

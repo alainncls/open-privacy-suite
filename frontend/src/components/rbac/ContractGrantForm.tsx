@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { toFunctionSelector } from 'viem';
+import { toFunctionSelector, toFunctionSignature } from 'viem';
 import { rbacApi } from '@/api/rbac';
 import type { Group, ContractGrant, CreateContractGrantInput, FunctionRule, EventRule, ParamRule, EventSignature } from '@/types/rbac';
 import { Button } from '@/components/ui/button';
@@ -241,9 +241,11 @@ export default function ContractGrantForm({
   editMode = 'add',
 }: ContractGrantFormProps) {
   const [selectedGroupId, setSelectedGroupId] = useState<string>(grant?.group_id || '');
-  const [functionMode, setFunctionMode] = useState<'all' | 'specific'>(
-    grant?.functions && grant.functions.length > 0 ? 'specific' : 'all'
-  );
+  const [functionMode, setFunctionMode] = useState<'all' | 'specific' | 'none'>(() => {
+    // null/undefined = all functions; [] = no functions (events only); [..] = specific.
+    if (!grant || grant.functions == null) return 'all';
+    return grant.functions.length === 0 ? 'none' : 'specific';
+  });
   const [functions, setFunctions] = useState<FunctionRule[]>(grant?.functions || []);
   const [newSelector, setNewSelector] = useState('');
   const [eventMode, setEventMode] = useState<'all' | 'specific' | 'none'>(() => {
@@ -297,14 +299,18 @@ export default function ContractGrantForm({
       for (const item of parsed) {
         if (item.type !== 'function') continue;
         const abiInputs = item.inputs || [];
-        const inputTypes = abiInputs.map((input: { type: string }) => input.type).join(',');
-        const signature = `${item.name}(${inputTypes})`;
         try {
-          const selector = toFunctionSelector(signature);
+          // Derive selector + canonical signature from the ABI item via viem,
+          // which expands struct/tuple params to their component types
+          // (e.g. `(string,string)`). Building the signature by hand from
+          // input.type is wrong for tuples: a struct param's type is the
+          // literal "tuple", so `setWorkflowDetails(uint256,tuple)` hashes to a
+          // selector that never matches real calldata.
+          const selector = toFunctionSelector(item);
           results.push({
             selector,
             name: item.name,
-            signature,
+            signature: toFunctionSignature(item),
             stateMutability: item.stateMutability,
             inputs: abiInputs.map((input: { name: string; type: string }, idx: number) => ({
               index: idx,
@@ -453,7 +459,8 @@ export default function ContractGrantForm({
 
     try {
       const resolvedEventRules = eventMode === 'all' ? '*' : eventMode === 'none' ? [] : eventRules;
-      const inputFunctions = functionMode === 'all' ? null : functions;
+      // all → null (any function); none → [] (deny all, events-only); specific → the list.
+      const inputFunctions = functionMode === 'all' ? null : functionMode === 'none' ? [] : functions;
 
       if (isEditing) {
         // Update existing grant - preserve the section not being edited
@@ -569,7 +576,8 @@ export default function ContractGrantForm({
           Function Access
         </label>
         <p className="text-xs text-neutral-400">
-          Restrict access to specific contract functions, or allow all functions.
+          Allow all functions, restrict to specific selectors, or allow none (an
+          events-only / monitoring grant).
         </p>
 
         {/* Radio options */}
@@ -601,6 +609,23 @@ export default function ContractGrantForm({
             <div>
               <p className="text-sm font-medium text-neutral-900">Specific functions only</p>
               <p className="text-xs text-neutral-500">Restrict to selected function selectors</p>
+            </div>
+          </label>
+
+          <label className="flex items-center gap-3 p-3 border border-neutral-200 rounded-lg cursor-pointer hover:bg-neutral-100 transition-colors">
+            <input
+              type="radio"
+              name="functionMode"
+              value="none"
+              checked={functionMode === 'none'}
+              onChange={() => setFunctionMode('none')}
+              className="w-4 h-4 text-primary focus:ring-primary"
+            />
+            <div>
+              <p className="text-sm font-medium text-neutral-900">No functions</p>
+              <p className="text-xs text-neutral-500">
+                Group cannot call any function — events only (combine with event visibility below)
+              </p>
             </div>
           </label>
         </div>

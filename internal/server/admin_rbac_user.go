@@ -215,10 +215,27 @@ func resolveListUsersScope(c *gin.Context) ([]string, error) {
 	}
 }
 
+// narrowMembershipScope bounds the per-user group summary returned by the users
+// list. It is always limited to the caller's administered orgs (scopedOrgIDs,
+// nil meaning super-admin/unrestricted). When the list is filtered to a single
+// org (orgID), the summary is narrowed to that org too, so the Groups column
+// reflects the org in view rather than the caller's memberships across every
+// org it administers. It never widens: an orgID outside a scoped caller's orgs
+// returns an empty (non-nil) scope, i.e. no groups.
+func narrowMembershipScope(scopedOrgIDs []string, orgID string) []string {
+	if orgID == "" {
+		return scopedOrgIDs
+	}
+	if scopedOrgIDs == nil || slices.Contains(scopedOrgIDs, orgID) {
+		return []string{orgID}
+	}
+	return []string{}
+}
+
 // listRBACUsers returns a paginated, filterable list of RBAC users.
 //
 // @Summary      List users
-// @Description  Returns a paginated list of RBAC users, each with a scoped summary of their group memberships. Results are scoped to the caller: a super-admin sees all users, a tier-2 org-admin JWT sees only users in the orgs it administers (full or read-only), and cardinality cannot be used as a cross-org enumeration oracle. Optional filters: org_id, search, one or more group_id, and role. Tenant-confidential: rejected for the operator token (403).
+// @Description  Returns a paginated list of RBAC users, each with a scoped summary of their group memberships. Results are scoped to the caller: a super-admin sees all users, a tier-2 org-admin JWT sees only users in the orgs it administers (full or read-only), and cardinality cannot be used as a cross-org enumeration oracle. The per-user group summary is bounded by the caller's administered orgs, and when org_id is supplied it is further narrowed to that org, so the summary never lists a user's memberships in other orgs. Optional filters: org_id, search, one or more group_id, and role. Tenant-confidential: rejected for the operator token (403).
 // @Tags         Admin: RBAC
 // @Produce      json
 // @Param        org_id query string false "Restrict to users in this organization"
@@ -277,7 +294,8 @@ func (s *Server) listRBACUsers(c *gin.Context) {
 		userIDs = append(userIDs, u.ID)
 	}
 
-	memberships, err := s.db.ListGroupMembershipsForUsers(c.Request.Context(), userIDs, filter.ScopedOrgIDs)
+	memberships, err := s.db.ListGroupMembershipsForUsers(c.Request.Context(), userIDs,
+		narrowMembershipScope(filter.ScopedOrgIDs, filter.OrgID))
 	if err != nil {
 		respondInternalErrorAndLog(c, "failed to list users",
 			"admin_rbac_user: ListGroupMembershipsForUsers failed", "err", err)

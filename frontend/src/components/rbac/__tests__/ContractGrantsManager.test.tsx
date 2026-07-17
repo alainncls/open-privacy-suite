@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+import { toFunctionSelector } from 'viem';
 import ContractGrantsManager from '../ContractGrantsManager';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { rbacApi } from '@/api/rbac';
@@ -534,5 +535,87 @@ describe('ContractGrantsManager — event rules display', () => {
         await screen.findByText(/permission denied: not an admin/i),
       ).toBeInTheDocument();
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RD-1201: functions tri-state display — "all" and "none" must never collapse
+// into the same rendered state.
+// ---------------------------------------------------------------------------
+
+describe('ContractGrantsManager — functions tri-state display (RD-1201)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const baseGrant = {
+    id: 'grant-1',
+    contract_id: 'contract-1',
+    group_id: 'group-1',
+    event_rules: null,
+    created_at: '2024-01-01T00:00:00Z',
+    updated_at: '2024-01-01T00:00:00Z',
+  };
+
+  it('renders "All functions allowed" for functions: null', async () => {
+    stubApis([{ ...baseGrant, functions: null } as ContractGrant]);
+    renderManager();
+
+    await waitFor(() => {
+      expect(screen.getByText('Auditors')).toBeInTheDocument();
+    });
+    expect(screen.getByText('All functions allowed')).toBeInTheDocument();
+    expect(screen.queryByText('No functions (events only)')).not.toBeInTheDocument();
+  });
+
+  it('renders "No functions (events only)" for functions: [] — distinct from all', async () => {
+    stubApis([{ ...baseGrant, functions: [] } as ContractGrant]);
+    renderManager();
+
+    await waitFor(() => {
+      expect(screen.getByText('Auditors')).toBeInTheDocument();
+    });
+    expect(screen.getByText('No functions (events only)')).toBeInTheDocument();
+    expect(screen.queryByText('All functions allowed')).not.toBeInTheDocument();
+  });
+
+  // RD-1205: the summary's selector→name map must canonicalize tuple params
+  // (a struct input's `type` is the literal "tuple"; hashing that never
+  // matches real calldata). With the fixed map, a grant holding the canonical
+  // tuple selector renders the function NAME, not the raw selector hex.
+  it('maps a tuple-param selector to its ABI name in the grant summary', async () => {
+    const tupleAbi = JSON.stringify([
+      {
+        type: 'function',
+        name: 'setWorkflowDetails',
+        stateMutability: 'nonpayable',
+        inputs: [
+          { name: 'id', type: 'uint256' },
+          {
+            name: 'details',
+            type: 'tuple',
+            components: [
+              { name: 'label', type: 'string' },
+              { name: 'uri', type: 'string' },
+            ],
+          },
+        ],
+        outputs: [],
+      },
+    ]);
+    // Independent oracle: derive the selector from the canonical STRING
+    // signature — the component must arrive at the same selector from the
+    // ABI OBJECT.
+    const expectedSelector = toFunctionSelector('setWorkflowDetails(uint256,(string,string))');
+
+    stubApis([
+      { ...baseGrant, functions: [{ selector: expectedSelector }] } as ContractGrant,
+    ]);
+    renderManager({ ...mockContract, abi: tupleAbi });
+
+    await waitFor(() => {
+      expect(screen.getByText('Auditors')).toBeInTheDocument();
+    });
+    expect(screen.getByText('setWorkflowDetails')).toBeInTheDocument();
   });
 });

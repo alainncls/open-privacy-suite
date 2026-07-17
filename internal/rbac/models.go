@@ -262,8 +262,12 @@ type ContractGrant struct {
 	ID         string           `json:"id"`
 	ContractID string           `json:"contract_id"`
 	GroupID    string           `json:"group_id"`
-	Functions  []FunctionRule   `json:"functions,omitempty"` // nil = all functions, or structured rules with optional param constraints
-	EventRules *EventRulesField `json:"event_rules"`         // nil = deny, wildcard = all events, allowlist = specific events
+	// No omitempty: a non-nil empty slice ([]) means "deny all functions"
+	// (events-only grant) and MUST be distinguishable in the API response from
+	// nil ("all functions"). Mirrors EventRules below, which is likewise always
+	// serialized so the dashboard can tell none/all/specific apart.
+	Functions  []FunctionRule   `json:"functions"`   // null = all functions; [] = none (deny all); [rules] = only those
+	EventRules *EventRulesField `json:"event_rules"` // null = deny, wildcard = all events, allowlist = specific events
 	CreatedAt  time.Time        `json:"created_at"`
 	UpdatedAt  time.Time        `json:"updated_at"`
 }

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ComponentProps } from 'react';
+import { toFunctionSelector } from 'viem';
 import ContractGrantForm from '../ContractGrantForm';
 import { rbacApi } from '@/api/rbac';
 import type { ContractGrant, Group, EventSignature } from '@/types/rbac';
@@ -639,4 +640,206 @@ describe('ContractGrantForm', () => {
       });
     });
   });
+});
+
+// ---------------------------------------------------------------------------
+// RD-1201: functions tri-state through the form — all (null), none ([]),
+// specific ([rules]) must each round-trip create/edit without collapsing.
+// ---------------------------------------------------------------------------
+
+describe('ContractGrantForm — functions tri-state (RD-1201)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const editableGrant = (functions: ContractGrant['functions']): ContractGrant => ({
+    id: 'grant-3',
+    contract_id: 'contract-1',
+    group_id: 'group-1',
+    functions,
+    event_rules: null,
+    created_at: '2024-01-01T00:00:00Z',
+    updated_at: '2024-01-01T00:00:00Z',
+  });
+
+  it('pre-selects "All functions" when editing a grant with functions: null', async () => {
+    stubListEvents();
+    renderForm({ grant: editableGrant(null), editMode: 'functions' });
+
+    expect(screen.getByRole('radio', { name: /All functions/i })).toBeChecked();
+    expect(screen.getByRole('radio', { name: /No functions/i })).not.toBeChecked();
+  });
+
+  it('pre-selects "No functions" when editing a grant with functions: [] — not "All"', async () => {
+    stubListEvents();
+    renderForm({ grant: editableGrant([]), editMode: 'functions' });
+
+    expect(screen.getByRole('radio', { name: /No functions/i })).toBeChecked();
+    expect(screen.getByRole('radio', { name: /All functions/i })).not.toBeChecked();
+  });
+
+  it('pre-selects "Specific functions only" for a non-empty rule list', async () => {
+    stubListEvents();
+    renderForm({
+      grant: editableGrant([{ selector: '0x70a08231' }]),
+      editMode: 'functions',
+    });
+
+    expect(screen.getByRole('radio', { name: /Specific functions only/i })).toBeChecked();
+  });
+
+  it('creates a grant with functions: [] when "No functions" is selected', async () => {
+    const user = userEvent.setup();
+    stubListEvents();
+    const createGrantSpy = vi
+      .spyOn(rbacApi.contracts, 'createGrant')
+      .mockResolvedValue(mockGrantResponse({ functions: [] }));
+    const { onSave } = renderForm();
+
+    await user.selectOptions(screen.getByRole('combobox'), 'group-1');
+    await user.click(screen.getByRole('radio', { name: /No functions/i }));
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await user.click(screen.getByRole('button', { name: 'Create Grant' }));
+
+    await waitFor(() => {
+      expect(createGrantSpy).toHaveBeenCalledWith(
+        'org-1',
+        '0x1111111111111111111111111111111111111111',
+        expect.objectContaining({ group_id: 'group-1', functions: [] })
+      );
+      expect(onSave).toHaveBeenCalledTimes(1);
+    });
+    const sent = createGrantSpy.mock.calls[0][2] as { functions: unknown };
+    expect(sent.functions).toEqual([]);
+    expect(sent.functions).not.toBeNull();
+  });
+
+  it('submits functions: [] when "No functions" is selected', async () => {
+    const user = userEvent.setup();
+    stubListEvents();
+    const updateGrantSpy = vi
+      .spyOn(rbacApi.contracts, 'updateGrant')
+      .mockResolvedValue(mockGrantResponse({ group_id: 'group-1', functions: [] }));
+    const { onSave } = renderForm({ grant: editableGrant(null), editMode: 'functions' });
+
+    await user.click(screen.getByRole('radio', { name: /No functions/i }));
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+
+    await waitFor(() => {
+      expect(updateGrantSpy.mock.calls).toHaveLength(1);
+    });
+    // event_rules passes through unchanged in editMode 'functions' — this
+    // fixture's grant has event_rules: null, so null is re-sent verbatim.
+    expect(updateGrantSpy.mock.calls[0]).toEqual([
+      'org-1',
+      '0x1111111111111111111111111111111111111111',
+      'group-1',
+      { functions: [], event_rules: null },
+    ]);
+    expect(onSave).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RD-1205: tuple / nested-tuple / tuple-array selectors through the form.
+// The expected selectors are derived from the canonical STRING signatures —
+// an independent path from the component, which starts from the ABI OBJECT.
+// A hand-built signature would hash the literal word "tuple" and never match
+// real calldata.
+// ---------------------------------------------------------------------------
+
+describe('ContractGrantForm — tuple selectors (RD-1205)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const tupleAbi = JSON.stringify([
+    {
+      type: 'function',
+      name: 'setWorkflowDetails',
+      stateMutability: 'nonpayable',
+      inputs: [
+        { name: 'id', type: 'uint256' },
+        {
+          name: 'details',
+          type: 'tuple',
+          components: [
+            { name: 'label', type: 'string' },
+            { name: 'uri', type: 'string' },
+          ],
+        },
+      ],
+      outputs: [],
+    },
+    {
+      type: 'function',
+      name: 'setNested',
+      stateMutability: 'nonpayable',
+      inputs: [
+        {
+          name: 'outer',
+          type: 'tuple',
+          components: [
+            { name: 'inner', type: 'tuple', components: [{ name: 'x', type: 'uint256' }] },
+            { name: 'flag', type: 'bool' },
+          ],
+        },
+      ],
+      outputs: [],
+    },
+    {
+      type: 'function',
+      name: 'batchSet',
+      stateMutability: 'nonpayable',
+      inputs: [
+        {
+          name: 'items',
+          type: 'tuple[]',
+          components: [
+            { name: 'key', type: 'bytes32' },
+            { name: 'value', type: 'uint256' },
+          ],
+        },
+      ],
+      outputs: [],
+    },
+  ]);
+
+  const expectations: Array<{ fn: string; canonical: string }> = [
+    { fn: 'setWorkflowDetails', canonical: 'setWorkflowDetails(uint256,(string,string))' },
+    { fn: 'setNested', canonical: 'setNested(((uint256),bool))' },
+    { fn: 'batchSet', canonical: 'batchSet((bytes32,uint256)[])' },
+  ];
+
+  it.each(expectations)(
+    'adds $fn from the ABI picker with the canonical tuple selector',
+    async ({ fn, canonical }) => {
+      const user = userEvent.setup();
+      stubListEvents();
+      const createGrantSpy = vi
+        .spyOn(rbacApi.contracts, 'createGrant')
+        .mockResolvedValue(mockGrantResponse());
+      const { onSave } = renderForm({ contractAbi: tupleAbi });
+
+      // Pick a group, switch to specific-functions mode, add from the picker,
+      // then step through the two-step create flow (Next → Create Grant).
+      await user.selectOptions(screen.getByRole('combobox'), 'group-1');
+      await user.click(screen.getByRole('radio', { name: /Specific functions only/i }));
+      await user.click(await screen.findByRole('button', { name: new RegExp(fn) }));
+      await user.click(screen.getByRole('button', { name: 'Next' }));
+      await user.click(screen.getByRole('button', { name: 'Create Grant' }));
+
+      const expectedSelector = toFunctionSelector(canonical);
+      await waitFor(() => {
+        expect(createGrantSpy).toHaveBeenCalledWith(
+          'org-1',
+          '0x1111111111111111111111111111111111111111',
+          expect.objectContaining({
+            functions: [expect.objectContaining({ selector: expectedSelector })],
+          })
+        );
+        expect(onSave).toHaveBeenCalledTimes(1);
+      });
+    }
+  );
 });

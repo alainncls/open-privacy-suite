@@ -147,6 +147,7 @@ api-spec:
 	go tool swag init --v3.1 -q -g internal/server/openapi_general_info.go -d ./ \
 		--exclude $(SWAG_EXCLUDES) -o internal/server/apispec --ot json,yaml \
 		--parseInternal --parseDependencyLevel 1
+	go run ./cmd/api-spec-postprocess
 	cp internal/server/apispec/swagger.json site/public/openapi.json
 	go run ./cmd/api-inventory
 
