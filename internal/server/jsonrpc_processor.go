@@ -662,8 +662,11 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	}
 
 	// RD-1135: stamp the resolved org onto subsequent access-log rows (RBAC
-	// denial, concurrency/rate-limit, trace denials, success). Write-once;
-	// empty stays NULL (anonymous / org-free metadata) → super-admin-only.
+	// denial, concurrency/rate-limit, trace denials, success). Write-once.
+	// CheckAccess attributes both allows and in-check denies to the resolved
+	// org (RD-1199); empty stays NULL (anonymous, org-free metadata, and
+	// pre-org denials: unknown user, ban, KYC, global blocklist) →
+	// super-admin-only rows.
 	req.resolvedOrgID = result.OrgID
 
 	if !result.Allowed {
@@ -1417,8 +1420,11 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	}
 
 	// RD-1135: stamp the resolved org onto subsequent access-log rows (RBAC
-	// denial, concurrency/rate-limit, trace denials, success). Write-once;
-	// empty stays NULL (anonymous / org-free metadata) → super-admin-only.
+	// denial, concurrency/rate-limit, trace denials, success). Write-once.
+	// CheckAccess attributes both allows and in-check denies to the resolved
+	// org (RD-1199); empty stays NULL (anonymous, org-free metadata, and
+	// pre-org denials: unknown user, ban, KYC, global blocklist) →
+	// super-admin-only rows.
 	req.resolvedOrgID = result.OrgID
 
 	if !result.Allowed {
