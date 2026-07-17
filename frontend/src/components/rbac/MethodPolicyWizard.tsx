@@ -4,7 +4,7 @@
 // gate its readers, then (optionally) admit those parties to its events and
 // transactions — in plain language, with smart defaults, and a plain-English
 // review before saving. Power-user dimensions (where-conditions, multiple allow
-// rules) are preserved on edit but authored in the "Form editor (advanced)".
+// rules) are preserved on edit but authored in raw JSON ("Edit JSON (advanced)").
 import { useMemo, useState } from "react";
 import type { MethodPolicyDocument } from "@/types/rbac";
 import {
@@ -422,7 +422,7 @@ export function MethodPolicyWizard({
                           also allow the address this getter returns ({f.addressOutputs.map((o) => o.name).join(", ")})
                         </label>
                       )}
-                      <p className="text-neutral-400">Need a condition (e.g. amount ≥ X)? Use “Form editor (advanced)”.</p>
+                      <p className="text-neutral-400">Need a condition (e.g. amount ≥ X)? Use “Edit JSON (advanced)”.</p>
                     </div>
                   </details>
                 </div>
@@ -536,7 +536,7 @@ export function MethodPolicyWizard({
           </details>
           {otherRecords.length > 0 && (
             <p className="text-xs text-neutral-500">
-              This contract has {otherRecords.length} other record type(s); they are preserved. Edit them in “Form editor (advanced)”.
+              This contract has {otherRecords.length} other record type(s); they are preserved. Edit them in “Edit JSON (advanced)”.
             </p>
           )}
           {fullError && <p className="text-xs text-amber-700">{fullError}</p>}
