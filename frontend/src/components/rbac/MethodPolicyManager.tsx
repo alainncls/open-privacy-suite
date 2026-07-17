@@ -31,7 +31,7 @@ import {
 } from "@/lib/methodPolicy";
 import { MethodPolicyWizard } from "./MethodPolicyWizard";
 import { Button } from "@/components/ui/button";
-import { ShieldAlert, ShieldCheck, Check, Loader2, Plus, X, Info, FlaskConical, Wand2 } from "lucide-react";
+import { ShieldAlert, ShieldCheck, Check, Loader2, Plus, X, Info, FlaskConical } from "lucide-react";
 
 interface Props {
   orgId: string;
@@ -211,10 +211,10 @@ export function MethodPolicyManager({ orgId, contractAddress, contractAbi, initi
 
       {canEdit && mode === "none" && (
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" onClick={openWizard} disabled={noAbi}><Wand2 className="w-3 h-3" /> {policy ? "Edit policy" : "Configure a policy"}</Button>
+          <Button variant="outline" size="sm" onClick={openWizard} disabled={noAbi}>{policy ? "Edit policy" : "Configure a policy"}</Button>
           <Button variant="ghost" size="sm" onClick={openStructured} disabled={noAbi}>Form editor (advanced)</Button>
           <Button variant="ghost" size="sm" onClick={openJson} disabled={noAbi}>Edit JSON (advanced)</Button>
-          {policy && <Button variant="ghost" size="sm" onClick={() => { resetBanners(); setMode("simulate"); }}><FlaskConical className="w-3 h-3" /> Simulate</Button>}
+          {policy && <Button variant="ghost" size="sm" onClick={() => { resetBanners(); setMode("simulate"); }}>Simulate</Button>}
           {policy && <Button variant="ghost" size="sm" onClick={clearPolicy} disabled={saving}>Clear policy</Button>}
         </div>
       )}
@@ -865,7 +865,7 @@ function SimulatorPanel({ orgId, contractAddress, readerMethods, captureFields, 
         </div>
       )}
       <div className="flex gap-2">
-        <Button size="sm" disabled={!canRun} onClick={() => void (whatIf ? runWhatIf() : runRecord())}>{running ? <Loader2 className="w-3 h-3 animate-spin" /> : <FlaskConical className="w-3 h-3" />} Simulate</Button>
+        <Button size="sm" disabled={!canRun} onClick={() => void (whatIf ? runWhatIf() : runRecord())}>{running ? <Loader2 className="w-3 h-3 animate-spin" /> : null} Simulate</Button>
         <Button variant="ghost" size="sm" onClick={onClose}>Close</Button>
       </div>
     </div>
