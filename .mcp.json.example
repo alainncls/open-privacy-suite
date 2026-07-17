@@ -2,7 +2,7 @@
   "mcpServers": {
     "privacy-proxy": {
       "command": "go",
-      "args": ["run", "./mcp"],
+      "args": ["run", "-C", "mcp", "."],
       "env": {
         "PRIVACY_URL": "http://localhost:8080",
         "PRIVACY_ADMIN_TOKEN": ""

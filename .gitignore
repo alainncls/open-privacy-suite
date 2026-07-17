@@ -35,6 +35,9 @@ node_modules/
 .*.env
 !.env.example
 
+# Quickstart demo state (tokens, ids) — written by scripts/quickstart-seed.sh
+.quickstart-demo.json
+
 # RPC namespaces config (keep example)
 rpc-namespaces.json
 !rpc-namespaces.example.json

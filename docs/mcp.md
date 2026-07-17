@@ -6,16 +6,27 @@ Privacy Proxy includes an [MCP](https://modelcontextprotocol.io/) (Model Context
 
 ### Claude Code
 
-Copy `.mcp.json.example` in the repo root to `.mcp.json` (gitignored), fill in `PRIVACY_ADMIN_TOKEN`, and open the project in Claude Code — the tools are then available. The proxy must be running (`docker-compose up -d`, backend on `localhost:8080` by default).
+Copy `.mcp.json.example` in the repo root to `.mcp.json` (gitignored) and
+fill in `PRIVACY_ADMIN_TOKEN` — for the quickstart stack it is the
+`ADMIN_API_TOKEN` value in `.env.quickstart`. Open the project in Claude
+Code and the tools are available. The proxy must be running
+(`make quickstart` or `docker-compose up -d`; backend on `localhost:8080`
+by default).
 
-`PRIVACY_ADMIN_TOKEN` must equal the backend's `ADMIN_API_TOKEN` (empty in a fresh clone — set both to the same value, e.g. `ADMIN_API_TOKEN` in a root `.env` file before `docker-compose up`). If the backend has no admin token configured, admin-backed tools return 401.
+`PRIVACY_ADMIN_TOKEN` must equal the backend's `ADMIN_API_TOKEN` (the
+quickstart generates and persists one; for a hand-rolled stack set both to
+the same value, e.g. via `ADMIN_API_TOKEN` in a root `.env` file). If the
+backend has no admin token configured, admin-backed tools return 401.
 
 ### Manual
+
+The MCP server is its own Go module in `mcp/`, so run it with `-C` (or from
+inside the directory) — `go run ./mcp` from the repo root does not work:
 
 ```bash
 PRIVACY_URL=http://localhost:8080 \
 PRIVACY_ADMIN_TOKEN=your-admin-token \
-go run ./mcp
+go run -C mcp .
 ```
 
 ## Configuration
@@ -24,6 +35,20 @@ go run ./mcp
 |----------|---------|-------------|
 | `PRIVACY_URL` | `http://localhost:8080` | Privacy proxy base URL (http/https only) |
 | `PRIVACY_ADMIN_TOKEN` | _(empty)_ | Admin API token (sent as `X-Admin-Token` header) |
+
+## Viewing data as a specific user (`viewer_jwt` / `jwt_token`)
+
+The admin token authorizes *management* operations, but privacy-filtered
+reads (all `explorer_*` tools, `viewable_addresses`) resolve the viewer
+identity **only from a validated user JWT** — never from the admin token or
+a wallet address (that would be a deanonymization oracle). Without a JWT
+these tools return the anonymous view, which is mostly empty by design.
+
+Pass a user's JWT as `viewer_jwt` to render that user's view — this is how
+you demo "what does Bob see vs what does Alice see". The quickstart seed
+(`make quickstart`) prints ready-to-use JWTs for every demo persona and
+stores them in `.quickstart-demo.json`. `test_request` accepts the same
+token as `jwt_token` to answer "would this user be allowed to do X?".
 
 ## Tools
 
@@ -42,7 +67,8 @@ Send a test JSON-RPC request through the full proxy pipeline (RBAC, compliance, 
 |-----------|------|----------|-------------|
 | `method` | string | Yes | JSON-RPC method (e.g. `eth_call`) |
 | `params` | any | No | JSON-RPC params |
-| `user_external_id` | string | No | User DID to test as |
+| `jwt_token` | string | No | User JWT to test as (identity from the validated token; omitted = the synthetic `test:dashboard` identity) |
+| `org_id` | string | No | Org context (needed for multi-org users when the request has no target contract) |
 
 #### `eth_address_collisions`
 Check for ETH address linking collisions (same address linked to multiple DIDs).
@@ -447,6 +473,11 @@ Manage Azure AD tenant allowlist.
 
 ### Explorer (11 tools)
 
+All explorer responses are **privacy-filtered per viewer**. Every tool below
+accepts an optional `viewer_jwt` (a user's JWT) selecting whose view to
+render; without it the anonymous view is returned, which hides almost
+everything by design. See "Viewing data as a specific user" above.
+
 #### `explorer_sync_status`
 Block explorer indexer sync status and progress.
 
@@ -466,11 +497,13 @@ Transactions or balance for a specific address.
 List tokens indexed by the explorer.
 
 #### `viewable_addresses`
-Get all addresses a wallet can see (own + disclosed via grants).
+List the addresses a user can see: their own linked wallets plus addresses
+disclosed to them via active disclosure grants.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `wallet` | string | Yes | ETH wallet address |
+| `viewer_jwt` | string | Yes | JWT of the user whose visibility set to list |
+| `wallet` | string | No | Wallet address, echoed back for display only |
 
 #### `check_address_visibility`
 Check if an address is visible to a viewer.
@@ -493,7 +526,7 @@ RBAC audit logs. At least one filter required.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `resource_type` | string | Cond. | Filter by resource type |
+| `resource_type` | string | Cond. | Filter by type — common values (not exhaustive): `organization`, `group`, `user`, `membership`, `contract`, `grant`, `disclosure_request`, `disclosure_grant`, `system_setting` |
 | `actor_id` | string | Cond. | Filter by actor ID |
 | `limit` | number | No | Max entries (default 100) |
 
@@ -536,5 +569,14 @@ With Claude Code, you can manage the full privacy proxy conversationally:
 - "Set the ACME token price to $1,250 USD"
 - "Create a disclosure request for user Y from FinCEN"
 - "Show me the compliance logs for the last hour"
-- "What addresses can wallet 0xABC... see in the explorer?"
 - "Check if user did:privado:alice can call eth_sendTransaction on contract 0x123..."
+
+Against the seeded quickstart stack (`make quickstart` — two banks and a
+regulator; persona JWTs are printed by the seed and stored in
+`.quickstart-demo.json`):
+
+- "List the organizations and their groups — who can do what?"
+- "Using Alice's JWT from .quickstart-demo.json, list her transactions in the explorer. Now do the same with Bob's JWT — why is his view empty?"
+- "Using test_request with Bob's JWT, try to read the DemoToken balance — explain the denial."
+- "Using Rita's JWT, list her viewable addresses — where does her access to Alice's wallet come from?"
+- "Show the disclosure grants and the access logs for Rita's grant."

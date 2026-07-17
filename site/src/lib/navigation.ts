@@ -12,6 +12,7 @@ export const navigation: NavGroup[] = [
   {
     title: "Getting Started",
     items: [
+      { title: "What It Does", href: "/docs/what-it-does" },
       { title: "Quick Start", href: "/docs/getting-started" },
       { title: "Architecture", href: "/docs/architecture" },
       { title: "Configuration", href: "/docs/configuration" },

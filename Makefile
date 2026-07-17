@@ -3,6 +3,7 @@
 	contracts-install contracts-build contracts-deploy authproxy \
 	stop restart logs status \
 	demo demo-record demo-process demo-all demo-setup demo-clean \
+	quickstart quickstart-down quickstart-reset \
 	setup-hooks ensure-hooks
 
 # Auto-install hooks on first make usage (works in worktrees where .git is a file)
@@ -71,6 +72,18 @@ dev-stack: ensure-hooks
 # (override with BLOCK_EXPLORER_PATH / CHAIN_INDEXER_PATH).
 full-stack-dev:
 	@./scripts/privacy-dev-up.sh
+
+# One-command demo: self-contained stack (no sibling repos) + a seeded
+# two-banks-and-a-regulator scenario with ready-to-use tokens. The place
+# to start if you are evaluating the product — see ONBOARDING.md.
+quickstart:
+	@./scripts/quickstart.sh
+
+quickstart-down:
+	@./scripts/quickstart.sh --down
+
+quickstart-reset:
+	@./scripts/quickstart.sh --reset
 
 # Stop all services
 stop:

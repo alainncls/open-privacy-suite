@@ -314,26 +314,25 @@ func registerAccessLogs(s *mcp.Server, client *httpClient) {
 		if err != nil {
 			return errorResult("getting logs: %v", err)
 		}
-		var logs []any
-		if err := json.Unmarshal(raw, &logs); err != nil {
+		var envelope struct {
+			Data  []map[string]any `json:"data"`
+			Total int              `json:"total"`
+		}
+		if err := json.Unmarshal(raw, &envelope); err != nil {
 			return errorResult("parsing response: %v", err)
 		}
 
 		lines := section("Access Logs") + "\n"
-		lines += kvf("Count", len(logs)) + "\n"
+		lines += kvf("Total", envelope.Total) + "\n"
 
-		for i, l := range logs {
+		for i, entry := range envelope.Data {
 			if i >= 20 {
-				lines += fmt.Sprintf("\n... and %d more entries", len(logs)-20)
+				lines += fmt.Sprintf("\n... and %d more entries", len(envelope.Data)-20)
 				break
 			}
-			entry, ok := l.(map[string]any)
-			if !ok {
-				continue
-			}
 			lines += fmt.Sprintf("\n%s %s %s → %.0f",
-				getString(entry, "timestamp"),
-				getString(entry, "identity"),
+				getString(entry, "created_at"),
+				getString(entry, "external_id"),
 				getString(entry, "method"),
 				getFloat(entry, "status_code"),
 			)
@@ -344,7 +343,7 @@ func registerAccessLogs(s *mcp.Server, client *httpClient) {
 
 func registerAuditLogs(s *mcp.Server, client *httpClient) {
 	type args struct {
-		ResourceType string `json:"resource_type,omitempty" jsonschema:"filter by resource type"`
+		ResourceType string `json:"resource_type,omitempty" jsonschema:"filter by resource type — common values (not exhaustive): organization, group, user, membership, contract, grant, disclosure_request, disclosure_grant, system_setting"`
 		ActorID      string `json:"actor_id,omitempty" jsonschema:"filter by actor ID"`
 		Limit        int    `json:"limit,omitempty" jsonschema:"max entries (default 100)"`
 	}
