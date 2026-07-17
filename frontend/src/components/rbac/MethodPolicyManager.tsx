@@ -675,10 +675,11 @@ function SimulatorPanel({ orgId, contractAddress, readerMethods, captureFields, 
   const [parties, setParties] = useState<Record<string, string>>({}); // captureField → comma-sep values (what-if)
   const [dids, setDids] = useState<string[]>([]); // dev test-identity DIDs, for the picker
   const [running, setRunning] = useState(false);
-  type SimResult = { result: string; matched_rule?: string; note?: string; captured: Record<string, string[]> };
-  type Verdict = { id: string; role: string; result: string; via?: string };
+  type Surface = { kind: string; signature: string; result: string; additive: boolean; matched_rule?: string };
+  type SimResult = { result: string; matched_rule?: string; note?: string; captured: Record<string, string[]>; surfaces?: Surface[] };
+  type SurfaceRow = { kind: string; signature: string; additive: boolean; admitted: string[]; excluded: { id: string; result: string }[] };
   const [result, setResult] = useState<SimResult | null>(null); // existing-record: one caller
-  const [verdicts, setVerdicts] = useState<Verdict[] | null>(null); // what-if: who-can-read table
+  const [surfaceRows, setSurfaceRows] = useState<SurfaceRow[] | null>(null); // what-if: per-surface admitted-lists
   const [err, setErr] = useState<string | null>(null);
 
   // Populate a DID datalist from the dev identity picker (mockauth only; 403 in
@@ -702,9 +703,11 @@ function SimulatorPanel({ orgId, contractAddress, readerMethods, captureFields, 
   };
   const callerArgs = (id: string) =>
     id.startsWith("0x") ? { caller_did: "", caller_eth_addresses: [id] } : { caller_did: id, caller_eth_addresses: [] };
-  const reset = () => { setErr(null); setResult(null); setVerdicts(null); };
+  const reset = () => { setErr(null); setResult(null); setSurfaceRows(null); };
+  const admits = (r: string) => r === "allow" || r === "admit";
 
   // Existing-record mode: does this one caller pass the gate for a real record?
+  // The response also carries per-surface verdicts (reader + additive event/tx).
   async function runRecord() {
     setRunning(true);
     reset();
@@ -723,13 +726,14 @@ function SimulatorPanel({ orgId, contractAddress, readerMethods, captureFields, 
     }
   }
 
-  // What-if mode: given the parties, show WHO the policy admits — every party
-  // plus a non-party control (which must deny). A party that shows deny means
-  // the reader's allow rule doesn't include that captured field.
+  // What-if mode: given the parties, show — for EVERY governed surface (reader +
+  // each additive event/tx) — who the policy admits, plus a non-party control.
+  // One call per candidate; transpose the returned surfaces into per-surface rows.
   async function runWhatIf() {
     setRunning(true);
     reset();
     const captured = capturedMap();
+    const readerSig = method || readerMethods[0] || "";
     const roleMap = new Map<string, string[]>();
     for (const [field, raw] of Object.entries(parties))
       for (const v of raw.split(",").map((s) => s.trim()).filter(Boolean)) {
@@ -737,16 +741,27 @@ function SimulatorPanel({ orgId, contractAddress, readerMethods, captureFields, 
         if (!roles.includes(field)) roles.push(field);
         roleMap.set(v, roles);
       }
-    const candidates = [...roleMap.entries()].map(([id, roles]) => ({ id, role: roles.join(" + ") }));
-    candidates.push({ id: "did:example:outsider", role: "not a party (control)" });
+    const candidates = [...roleMap.keys()].map((id) => ({ id }));
+    candidates.push({ id: "did:example:outsider" });
     try {
-      const rows: Verdict[] = [];
+      const perCand: { id: string; surfaces: Surface[] }[] = [];
       for (const c of candidates) {
-        const res = await rbacApi.contracts.simulateMethodPolicy(orgId, contractAddress, { method, record_key: "", ...callerArgs(c.id), captured });
-        const d = res.data as SimResult;
-        rows.push({ id: c.id, role: c.role, result: d.result, via: d.matched_rule });
+        const res = await rbacApi.contracts.simulateMethodPolicy(orgId, contractAddress, { method: readerSig, record_key: "", ...callerArgs(c.id), captured });
+        perCand.push({ id: c.id, surfaces: (res.data as SimResult).surfaces ?? [] });
       }
-      setVerdicts(rows);
+      const order = perCand[0]?.surfaces ?? [];
+      const rows: SurfaceRow[] = order.map((s) => {
+        const admitted: string[] = [];
+        const excluded: { id: string; result: string }[] = [];
+        for (const pc of perCand) {
+          const sv = pc.surfaces.find((x) => x.kind === s.kind && x.signature === s.signature);
+          const r = sv?.result ?? "abstain";
+          if (admits(r)) admitted.push(pc.id);
+          else excluded.push({ id: pc.id, result: r });
+        }
+        return { kind: s.kind, signature: s.signature, additive: s.additive, admitted, excluded };
+      });
+      setSurfaceRows(rows);
     } catch (e: unknown) {
       setErr((e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? "Simulation failed.");
     } finally {
@@ -755,8 +770,11 @@ function SimulatorPanel({ orgId, contractAddress, readerMethods, captureFields, 
   }
 
   const badgeCls = (r: string) => r === "allow" ? "bg-emerald-100 text-emerald-800" : r === "deny" ? "bg-error-light text-error-dark" : "bg-amber-100 text-amber-800";
-  const canRun = !running && !!method && (whatIf ? whatIfHasParties : !!recordKey);
+  const canRun = !running && (whatIf ? whatIfHasParties : (!!method && !!recordKey));
   const tab = (active: boolean) => `px-2 py-0.5 rounded border ${active ? "bg-primary text-white border-primary" : "bg-neutral-50 text-neutral-600 border-neutral-200"}`;
+  const label = (id: string) => id.replace(/^did:(test|example):/, "");
+  const surfaceTag = (kind: string) => kind === "reader" ? "read gate" : kind === "event" ? "event · adds" : "tx · adds";
+  const glyph = (r: string) => r === "deny" ? "deny" : r === "abstain" ? "—" : r;
 
   return (
     <div className="p-3 rounded-lg border border-neutral-300 bg-white space-y-2" data-testid="method-policy-simulate">
@@ -764,31 +782,32 @@ function SimulatorPanel({ orgId, contractAddress, readerMethods, captureFields, 
       <div className="text-xs text-neutral-600 flex items-start gap-1">
         <FlaskConical className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
         <span>
-          Dry-run the <strong>reader gate</strong>: would this caller be allowed to read a record? It checks the saved
-          policy against the record&apos;s parties — <strong>no on-chain call</strong>, it does not run <code>createPayment</code>{" "}
-          or any method. (Events / transactions and the live return-address rule aren&apos;t simulated.)
+          Dry-run the policy — <strong>no on-chain call</strong>, it does not run <code>createPayment</code> or any method.
+          The <strong>reader gate</strong> is authoritative (allow/deny); <strong>events &amp; transactions</strong> are
+          additive (they widen a grants/participant baseline this dry-run can&apos;t see, shown as admit / —). The live
+          return-address rule isn&apos;t simulated.
         </span>
       </div>
       {/* mode: test an existing record, or hypothetical parties (validate before any record exists) */}
       <div className="flex gap-1 text-xs">
-        <button type="button" className={tab(mode === "record")} onClick={() => { setMode("record"); setResult(null); }}>Existing record</button>
-        <button type="button" className={tab(mode === "whatif")} onClick={() => { setMode("whatif"); setResult(null); }}>What-if parties</button>
+        <button type="button" className={tab(mode === "record")} onClick={() => { setMode("record"); reset(); }}>Existing record</button>
+        <button type="button" className={tab(mode === "whatif")} onClick={() => { setMode("whatif"); reset(); }}>What-if parties</button>
       </div>
-      <div className="grid grid-cols-2 gap-2">
-        <div className="space-y-0.5">
-          <div className="text-xs text-neutral-500">Reader method to test</div>
-          <select className="border rounded px-2 py-1 text-sm w-full" aria-label="simulate method" value={method} onChange={(e) => setMethod(e.target.value)}>
-            <option value="">reader method…</option>
-            {readerOptions.map((sig) => <option key={sig} value={sig}>{sig}</option>)}
-          </select>
-        </div>
-        {mode === "record" && (
+      {mode === "record" && (
+        <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-0.5">
+            <div className="text-xs text-neutral-500">Reader method to test</div>
+            <select className="border rounded px-2 py-1 text-sm w-full" aria-label="simulate method" value={method} onChange={(e) => setMethod(e.target.value)}>
+              <option value="">reader method…</option>
+              {readerOptions.map((sig) => <option key={sig} value={sig}>{sig}</option>)}
+            </select>
+          </div>
           <div className="space-y-0.5">
             <div className="text-xs text-neutral-500">Record key — an existing record</div>
             <input className="border rounded px-2 py-1 text-sm w-full" aria-label="simulate record key" placeholder="PAY-1" value={recordKey} onChange={(e) => setRecordKey(e.target.value)} />
           </div>
-        )}
-      </div>
+        </div>
+      )}
       {mode === "record" && (
         <div className="grid grid-cols-2 gap-2">
           <div className="space-y-0.5">
@@ -815,32 +834,34 @@ function SimulatorPanel({ orgId, contractAddress, readerMethods, captureFields, 
       )}
       <p className="text-xs text-neutral-400">
         {whatIf
-          ? "Fill the parties, then Simulate to see who the policy admits — each party plus a non-party control (which must be denied)."
-          : "Uses a real captured record. A party captured as an address (e.g. payee) matches on the caller's ETH address, not the DID — fill both to test it."}
+          ? "Fill the parties, then Simulate to see — for every governed surface — who the policy admits, plus a non-party control."
+          : "Uses a real captured record. A party captured as an address (e.g. payee) matches on the caller's ETH address, not the DID."}
       </p>
       {err && <p className="text-xs text-amber-700">{err}</p>}
       {result && !whatIf && (
         <div className="text-xs space-y-1">
-          <div><span className={`px-2 py-0.5 rounded font-medium ${badgeCls(result.result)}`}>{result.result}</span>{result.matched_rule ? <span className="ml-2 text-neutral-500">via {result.matched_rule}</span> : null}</div>
+          <div><span className={`px-2 py-0.5 rounded font-medium ${badgeCls(result.result)}`}>{result.result}</span>{result.matched_rule ? <span className="ml-2 text-neutral-500">via {result.matched_rule}</span> : null} <span className="text-neutral-400">— reader gate</span></div>
           {result.note && <p className="text-amber-700">{result.note}</p>}
+          {result.surfaces && result.surfaces.some((s) => s.additive) && (
+            <div className="text-neutral-500">additive surfaces for this caller: {result.surfaces.filter((s) => s.additive).map((s) => `${s.signature} ${s.result === "admit" ? "✓" : "—"}`).join("; ")}</div>
+          )}
           <div className="text-neutral-500">record admit-set: {Object.entries(result.captured || {}).map(([k, v]) => `${k}=[${v.join(", ")}]`).join("; ") || "(none)"}</div>
         </div>
       )}
-      {verdicts && whatIf && (
-        <div className="text-xs space-y-1 border-t border-neutral-100 pt-2" data-testid="whatif-verdicts">
-          <div className="font-medium text-neutral-600">Who can read <span className="font-mono">{method}</span> with these parties?</div>
-          <table className="w-full">
-            <tbody>
-              {verdicts.map((v) => (
-                <tr key={v.id} className="align-top">
-                  <td className="font-mono pr-2 py-0.5 break-all">{v.id}</td>
-                  <td className="text-neutral-500 pr-2 py-0.5 whitespace-nowrap">{v.role}</td>
-                  <td className="py-0.5"><span className={`px-2 py-0.5 rounded font-medium ${badgeCls(v.result)}`}>{v.result}</span>{v.via ? <span className="ml-1 text-neutral-400">via {v.via}</span> : null}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <p className="text-neutral-400">A captured party showing <span className="text-error-dark">deny</span> means the reader&apos;s allow rule doesn&apos;t include that field.</p>
+      {surfaceRows && whatIf && (
+        <div className="text-xs space-y-1.5 border-t border-neutral-100 pt-2" data-testid="whatif-verdicts">
+          <div className="font-medium text-neutral-600">Who can access each surface with these parties?</div>
+          {surfaceRows.map((row) => (
+            <div key={row.kind + row.signature} className="flex flex-wrap items-baseline gap-x-2">
+              <code className="font-mono">{row.signature}</code>
+              <span className="text-[10px] uppercase tracking-wide text-neutral-400">{surfaceTag(row.kind)}</span>
+              <span className="text-neutral-700">→ {row.admitted.map(label).join(", ") || "(none)"}</span>
+              {row.excluded.length > 0 && (
+                <span className="text-neutral-400">· {row.excluded.map((e) => `${label(e.id)}: ${glyph(e.result)}`).join(", ")}</span>
+              )}
+            </div>
+          ))}
+          <p className="text-neutral-400">read = authoritative gate · adds = additive (widens the grants/participant baseline); an additive &quot;—&quot; may still see it via a grant.</p>
         </div>
       )}
       <div className="flex gap-2">

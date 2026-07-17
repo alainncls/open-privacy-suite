@@ -213,15 +213,24 @@ describe("MethodPolicyManager", () => {
     expect(within(panel).getByText(/did:test:alice/)).toBeInTheDocument();
   });
 
-  it("what-if mode shows a who-can-read table: the party allows, a non-party control denies", async () => {
+  it("what-if lists every governed surface (reader + event + tx): party admitted, outsider excluded", async () => {
     const u = userEvent.setup();
-    // The gate allows iff the caller DID is one of the supplied parties.
+    const EVENT = "PaymentCreated(bytes32,string,address,address)";
+    // The backend returns per-surface verdicts; a party is admitted everywhere,
+    // an outsider is denied (reader) / abstained (additive event/tx).
     (rbacApi.contracts.simulateMethodPolicy as ReturnType<typeof vi.fn>).mockImplementation(
       (_o: string, _a: string, body: { caller_did: string; captured?: Record<string, string[]> }) => {
         const partyVals = Object.values(body.captured ?? {}).flat();
         const isParty = partyVals.includes(body.caller_did);
         return Promise.resolve({
-          data: { result: isParty ? "allow" : "deny", record_type: "payment", matched_rule: isParty ? "captured:payer" : undefined, has_return_source: false, poisoned: false, captured: body.captured ?? {} },
+          data: {
+            result: isParty ? "allow" : "deny", record_type: "payment", has_return_source: false, poisoned: false, captured: body.captured ?? {},
+            surfaces: [
+              { kind: "reader", signature: "getPaymentInfo(string)", result: isParty ? "allow" : "deny", additive: false },
+              { kind: "event", signature: EVENT, result: isParty ? "admit" : "abstain", additive: true },
+              { kind: "transaction", signature: "completePayment(string)", result: isParty ? "admit" : "abstain", additive: true },
+            ],
+          },
         });
       },
     );
@@ -237,18 +246,19 @@ describe("MethodPolicyManager", () => {
     await u.click(screen.getByRole("button", { name: /simulate/i }));
     const panel = screen.getByTestId("method-policy-simulate");
 
-    // Switch to what-if; the single gated reader is auto-selected. Fill one party,
-    // Simulate → a verdict row per candidate (the party + a non-party control).
+    // Switch to what-if; fill one party; Simulate → a row per governed surface.
     await u.click(within(panel).getByRole("button", { name: /what-if parties/i }));
     await u.type(within(panel).getByLabelText("whatif party payer"), "did:test:alice");
     await u.click(within(panel).getByRole("button", { name: /^simulate$/i }));
 
     const verdicts = await within(panel).findByTestId("whatif-verdicts");
-    expect(within(verdicts).getByText("did:test:alice")).toBeInTheDocument();
-    expect(within(verdicts).getByText("did:example:outsider")).toBeInTheDocument();
-    // the party is admitted, the control is not
-    expect(within(verdicts).getAllByText("allow").length).toBeGreaterThanOrEqual(1);
-    expect(within(verdicts).getAllByText("deny").length).toBeGreaterThanOrEqual(1);
+    // all three surfaces are listed — the reader AND the additive event + tx
+    expect(within(verdicts).getByText("getPaymentInfo(string)")).toBeInTheDocument();
+    expect(within(verdicts).getByText(EVENT)).toBeInTheDocument();
+    expect(within(verdicts).getByText("completePayment(string)")).toBeInTheDocument();
+    // the party is admitted on every surface; the outsider is excluded
+    expect(within(verdicts).getAllByText(/→ alice/).length).toBe(3);
+    expect(within(verdicts).getAllByText(/outsider/).length).toBeGreaterThanOrEqual(1);
     // hypothetical parties were sent as `captured`
     const [, , body] = (rbacApi.contracts.simulateMethodPolicy as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(body.captured).toEqual({ payer: ["did:test:alice"] });

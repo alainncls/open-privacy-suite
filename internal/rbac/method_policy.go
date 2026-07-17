@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/big"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -852,6 +853,88 @@ func (d *MethodPolicyDocument) SimulateReader(
 	matched, rule, hasReturn := matchCaptureSide(spec.Allow, caller, byField)
 	res.Allow, res.MatchedRule, res.HasReturnSource = matched, rule, hasReturn
 	return res, true, nil
+}
+
+// SurfaceVerdict is a caller's decision on one governed surface of the policy.
+type SurfaceVerdict struct {
+	Kind        string // "reader" | "event" | "transaction"
+	Signature   string // method or event signature
+	Result      string // reader: "allow"/"deny"/"indeterminate_return_source"; event/tx: "admit"/"abstain"
+	Additive    bool   // event/tx widen a grant/participant baseline; reader is authoritative
+	MatchedRule string
+}
+
+// SimulateSurfaces reports a caller's decision on EVERY governed surface of the
+// policy — the reader gate (rule 70, authoritative) plus each gated event (71)
+// and transaction (72). Events/transactions are additive: they widen a
+// grant/participant baseline this dry-run cannot see, so their verdict is only
+// the record-audience contribution ("admit"/"abstain"). All three reuse the same
+// matchCaptureSide the enforcer uses, so the simulator cannot drift from a real
+// decision. Records are visited in sorted order for a stable display.
+func (d *MethodPolicyDocument) SimulateSurfaces(
+	caller CallerIdentity,
+	load func(recordType string) ([]CapturedField, error),
+) ([]SurfaceVerdict, error) {
+	if d == nil {
+		return nil, nil
+	}
+	rts := make([]string, 0, len(d.Records))
+	for rt := range d.Records {
+		rts = append(rts, rt)
+	}
+	sort.Strings(rts)
+
+	var out []SurfaceVerdict
+	for _, rt := range rts {
+		rec := d.Records[rt]
+		caps, err := load(rt)
+		if err != nil {
+			return nil, err
+		}
+		poisoned := setOncePoisoned(caps)
+		byField := map[string][]string{}
+		for _, c := range caps {
+			byField[c.Field] = append(byField[c.Field], c.Value)
+		}
+		for _, ac := range rec.Access {
+			v := SurfaceVerdict{Kind: "reader", Signature: ac.Method}
+			switch {
+			case poisoned:
+				v.Result = "deny"
+			default:
+				matched, rule, hasReturn := matchCaptureSide(ac.Allow, caller, byField)
+				v.MatchedRule = rule
+				switch {
+				case matched:
+					v.Result = "allow"
+				case hasReturn:
+					v.Result = "indeterminate_return_source"
+				default:
+					v.Result = "deny"
+				}
+			}
+			out = append(out, v)
+		}
+		for _, ev := range rec.Events {
+			v := SurfaceVerdict{Kind: "event", Signature: ev.Event, Additive: true, Result: "abstain"}
+			if !poisoned {
+				if matched, rule, _ := matchCaptureSide(ev.Allow, caller, byField); matched {
+					v.Result, v.MatchedRule = "admit", rule
+				}
+			}
+			out = append(out, v)
+		}
+		for _, tx := range rec.Transactions {
+			v := SurfaceVerdict{Kind: "transaction", Signature: tx.Method, Additive: true, Result: "abstain"}
+			if !poisoned {
+				if matched, rule, _ := matchCaptureSide(tx.Allow, caller, byField); matched {
+					v.Result, v.MatchedRule = "admit", rule
+				}
+			}
+			out = append(out, v)
+		}
+	}
+	return out, nil
 }
 
 // ReturnAddressPaths returns the union of address output paths declared by the

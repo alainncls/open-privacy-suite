@@ -56,3 +56,65 @@ func TestHypotheticalCaptures_WhatIf(t *testing.T) {
 		t.Fatal("bob is among the supplied payer values → allow")
 	}
 }
+
+// TestSimulateSurfaces_FullLinkage proves the simulator reports the whole
+// capture→reader→events→tx wiring: for a captured party the reader ALLOWS and
+// the additive event/tx ADMIT; for a non-party the reader DENIES and the
+// additive surfaces ABSTAIN (they never admit an outsider on their own).
+func TestSimulateSurfaces_FullLinkage(t *testing.T) {
+	const policy = `{"records":{"payment":{
+      "capture":[{"method":"createPayment(string,address,uint256)","key":{"source":"param","index":0},
+        "remember":{"payer":{"source":"sender","merge":"set_once"},"audience":{"source":"visibleTo","merge":"union"}}}],
+      "access":[{"method":"getPaymentInfo(string)","key":{"source":"param","index":0},
+        "allow":[{"callerIn":["payer","audience"]}],"onNoRecord":"deny","else":"deny"}],
+      "events":[{"event":"PaymentProcessed(string,uint8)","key":{"source":"eventParam","index":0},
+        "allow":[{"callerIn":["payer","audience"]}]}],
+      "transactions":[{"method":"processPayment(string,uint8)","key":{"source":"param","index":0},
+        "allow":[{"callerIn":["payer","audience"]}]}]
+    }}}`
+	doc, err := rbac.ParseMethodPolicyDocument([]byte(policy))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	load := func(string) ([]rbac.CapturedField, error) {
+		return hypotheticalCaptures(map[string][]string{"payer": {"did:test:alice"}, "audience": {"did:test:charlie"}}), nil
+	}
+
+	byKind := func(vs []rbac.SurfaceVerdict) map[string]rbac.SurfaceVerdict {
+		m := map[string]rbac.SurfaceVerdict{}
+		for _, v := range vs {
+			m[v.Kind] = v
+		}
+		return m
+	}
+
+	// A captured party: reader allow + additive surfaces admit.
+	party, err := doc.SimulateSurfaces(rbac.NewCallerIdentity("did:test:alice", nil), load)
+	if err != nil {
+		t.Fatalf("simulate surfaces: %v", err)
+	}
+	if len(party) != 3 {
+		t.Fatalf("want 3 surfaces (reader+event+tx), got %d", len(party))
+	}
+	m := byKind(party)
+	if m["reader"].Result != "allow" || m["reader"].Additive {
+		t.Fatalf("reader: want allow/authoritative, got %+v", m["reader"])
+	}
+	if m["event"].Result != "admit" || !m["event"].Additive {
+		t.Fatalf("event: want admit/additive, got %+v", m["event"])
+	}
+	if m["transaction"].Result != "admit" || !m["transaction"].Additive {
+		t.Fatalf("transaction: want admit/additive, got %+v", m["transaction"])
+	}
+
+	// A non-party: reader deny + additive surfaces abstain (never self-admit).
+	out, _ := doc.SimulateSurfaces(rbac.NewCallerIdentity("did:test:eve", nil), load)
+	for _, v := range out {
+		if v.Kind == "reader" && v.Result != "deny" {
+			t.Fatalf("outsider reader: want deny, got %q", v.Result)
+		}
+		if v.Kind != "reader" && v.Result != "abstain" {
+			t.Fatalf("outsider %s: want abstain, got %q", v.Kind, v.Result)
+		}
+	}
+}

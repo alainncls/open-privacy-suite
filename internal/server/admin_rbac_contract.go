@@ -736,7 +736,7 @@ func rawOrNull(b []byte) any {
 // existence probe). Audit-logged.
 //
 // @Summary      Simulate a method access policy decision
-// @Description  Evaluates the capture side of a contract's method policy for a given caller + record, returning allow / deny / indeterminate_return_source plus the record's captured admit-set. No node call; the live return-address resolver is not simulated. Supply `captured` (field→values) to dry-run against HYPOTHETICAL parties instead of a live record — validating a policy before any record exists (record_key then optional). Tier-2 org-admin (the restricted operator token is rejected); org-scoped; audit-logged.
+// @Description  Evaluates the capture side of a contract's method policy for a given caller + record, returning allow / deny / indeterminate_return_source plus the record's captured admit-set. No node call; the live return-address resolver is not simulated. Supply `captured` (field→values) to dry-run against HYPOTHETICAL parties instead of a live record — validating a policy before any record exists (record_key then optional). The response `surfaces` array reports the caller's verdict on every governed surface — the reader gate plus each additive event/transaction. Tier-2 org-admin (the restricted operator token is rejected); org-scoped; audit-logged.
 // @Tags         Admin: RBAC
 // @Accept       json
 // @Produce      json
@@ -804,9 +804,10 @@ func (s *Server) simulateContractMethodPolicy(c *gin.Context) {
 	var capturedRows []rbac.CapturedField
 	// What-if mode (admin supplies `captured`): evaluate against hypothetical
 	// parties with NO DB read, so a policy can be validated before any record is
-	// created. Live mode: load the record's real captured rows.
+	// created. Live mode: load the record's real captured rows. Shared by the
+	// single-reader result and the all-surfaces view below.
 	whatIf := len(input.Captured) > 0
-	res, gated, serr := doc.SimulateReader(input.Method, caller, func(recordType string) ([]rbac.CapturedField, error) {
+	loadCaptures := func(recordType string) ([]rbac.CapturedField, error) {
 		if whatIf {
 			capturedRows = hypotheticalCaptures(input.Captured)
 			return capturedRows, nil
@@ -814,7 +815,8 @@ func (s *Server) simulateContractMethodPolicy(c *gin.Context) {
 		rows, e := s.db.GetRecordCaptures(c.Request.Context(), contract.OrgID, contract.Address, recordType, input.RecordKey)
 		capturedRows = rows
 		return rows, e
-	})
+	}
+	res, gated, serr := doc.SimulateReader(input.Method, caller, loadCaptures)
 	if serr != nil {
 		respondInternalErrorAndLog(c, "failed to load captures",
 			"admin_rbac_contract: GetRecordCaptures failed (simulate)",
@@ -843,6 +845,22 @@ func (s *Server) simulateContractMethodPolicy(c *gin.Context) {
 		captured[cf.Field] = append(captured[cf.Field], cf.Value)
 	}
 
+	// Full linkage: the caller's verdict on every governed surface (the reader
+	// gate plus each additive event/tx), reusing the same matcher — so the
+	// simulator reflects the whole capture→reader→events→tx wiring, not just the
+	// one reader method.
+	surfaceVerdicts, sErr := doc.SimulateSurfaces(caller, loadCaptures)
+	if sErr != nil {
+		respondInternalErrorAndLog(c, "failed to load captures",
+			"admin_rbac_contract: SimulateSurfaces failed (simulate)",
+			"contract_id", contract.ID, "err", sErr)
+		return
+	}
+	surfaces := make([]methodPolicySurfaceVerdict, 0, len(surfaceVerdicts))
+	for _, v := range surfaceVerdicts {
+		surfaces = append(surfaces, methodPolicySurfaceVerdict{Kind: v.Kind, Signature: v.Signature, Result: v.Result, Additive: v.Additive, MatchedRule: v.MatchedRule})
+	}
+
 	// Audit the simulation (it surfaces stakeholder identities) — log the query,
 	// not the admit-set, so the harvest is itself auditable.
 	s.recordAuditActionScoped(c, rbac.AuditActionAccess, rbac.ResourceTypeContract, contract.ID, contract.Name, orgID,
@@ -857,6 +875,7 @@ func (s *Server) simulateContractMethodPolicy(c *gin.Context) {
 		Poisoned:        res.Poisoned,
 		Captured:        captured,
 		Note:            note,
+		Surfaces:        surfaces,
 	})
 }
 

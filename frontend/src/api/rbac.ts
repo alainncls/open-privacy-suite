@@ -189,6 +189,8 @@ export const rbacApi = {
         poisoned: boolean;
         captured: Record<string, string[]>;
         note?: string;
+        // Per-surface verdicts: reader gate (authoritative) + additive events/txs.
+        surfaces?: { kind: string; signature: string; result: string; additive: boolean; matched_rule?: string }[];
       }>(`/orgs/${orgId}/contracts/${address}/method-policies/simulate`, body),
     // Event signatures from ABI (for event rules UI)
     listEvents: (orgId: string, address: string) =>

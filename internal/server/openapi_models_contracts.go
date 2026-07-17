@@ -184,6 +184,21 @@ type methodPolicySimulateResponse struct {
 	Poisoned        bool                `json:"poisoned"`
 	Captured        map[string][]string `json:"captured"` // full admit-set (super-admin only)
 	Note            string              `json:"note,omitempty"`
+	// Surfaces is the caller's verdict on every governed surface — the reader gate
+	// (rule 70, authoritative) plus each gated event (71) and transaction (72),
+	// which are additive. Populated in both live and what-if modes.
+	Surfaces []methodPolicySurfaceVerdict `json:"surfaces,omitempty"`
+}
+
+// methodPolicySurfaceVerdict is one governed surface's decision for the caller.
+// Result is "allow" / "deny" / "indeterminate_return_source" for a reader, or
+// "admit" / "abstain" for an additive event / transaction.
+type methodPolicySurfaceVerdict struct {
+	Kind        string `json:"kind"`      // "reader" | "event" | "transaction"
+	Signature   string `json:"signature"` // method or event signature
+	Result      string `json:"result"`
+	Additive    bool   `json:"additive"` // event/tx widen a grant/participant baseline
+	MatchedRule string `json:"matched_rule,omitempty"`
 }
 
 // contractSyncDeleteRequest is the POST

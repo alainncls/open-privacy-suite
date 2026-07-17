@@ -1632,6 +1632,31 @@ components:
           type: string
         result:
           type: string
+        surfaces:
+          description: |-
+            Surfaces is the caller's verdict on every governed surface — the reader gate
+            (rule 70, authoritative) plus each gated event (71) and transaction (72),
+            which are additive. Populated in both live and what-if modes.
+          items:
+            $ref: '#/components/schemas/internal_server.methodPolicySurfaceVerdict'
+          type: array
+          uniqueItems: false
+      type: object
+    internal_server.methodPolicySurfaceVerdict:
+      properties:
+        additive:
+          description: event/tx widen a grant/participant baseline
+          type: boolean
+        kind:
+          description: '"reader" | "event" | "transaction"'
+          type: string
+        matched_rule:
+          type: string
+        result:
+          type: string
+        signature:
+          description: method or event signature
+          type: string
       type: object
     internal_server.oauthAuthorizeJSONResponse:
       properties:
@@ -7102,8 +7127,10 @@ paths:
         plus the record's captured admit-set. No node call; the live return-address
         resolver is not simulated. Supply `captured` (field→values) to dry-run against
         HYPOTHETICAL parties instead of a live record — validating a policy before
-        any record exists (record_key then optional). Tier-2 org-admin (the restricted
-        operator token is rejected); org-scoped; audit-logged.
+        any record exists (record_key then optional). The response `surfaces` array
+        reports the caller's verdict on every governed surface — the reader gate plus
+        each additive event/transaction. Tier-2 org-admin (the restricted operator
+        token is rejected); org-scoped; audit-logged.
       parameters:
       - description: Organization ID
         in: path
