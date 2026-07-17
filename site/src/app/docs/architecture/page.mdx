@@ -50,7 +50,7 @@ Every JSON-RPC request passes through the following pipeline:
 1. **JWT Validation** -- Verify the access token signature, expiry, and check the revocation blacklist.
 2. **Global Blocklist Check** -- Reject dangerous methods (`debug_*`, `admin_*`, `personal_*`, `miner_*`, `txpool_*`, etc.) regardless of user permissions.
 3. **Multicall Check** -- Block calls to known Multicall contract addresses that could batch unauthorized operations.
-4. **User Load** -- Look up the user record. Verify the user exists, is not banned, and has completed KYC.
+4. **User Load** -- Look up the user record. Verify the user exists, is not banned, and has completed KYC. (The chain-metadata methods on the anonymous allowlist — `eth_blockNumber`, `eth_chainId`, etc. — are exempt from the KYC gate: anonymous callers get them without any account.)
 5. **Permission Resolution** -- Resolve effective permissions from the user's org memberships, group memberships (flat — UNION across all groups), and contract grants (cached).
 6. **Method Check** -- Verify the requested JSON-RPC method is in the user's allowed methods.
 7. **Contract Check** -- If the call targets a contract, verify the user's org owns it and the user has an appropriate grant.

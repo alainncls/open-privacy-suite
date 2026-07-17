@@ -177,7 +177,9 @@ var GlobalBlockedMethods = map[string]bool{
 
 // orgFreeMetadataMethods are chain-level metadata methods that carry no user or org state.
 // Authenticated users may call these on /rpc without an org_id in the path — the same set
-// the anonymous group allows. Banning and KYC still gate access above this check.
+// the anonymous group allows. Banning remains a blanket gate above this check; KYC is
+// exempt for exactly this set (RD-1197) — anonymous callers get these methods with no
+// account at all, so a KYC deny would make signing in stricter than staying anonymous.
 var orgFreeMetadataMethods = map[string]bool{
 	"eth_blocknumber":    true,
 	"eth_chainid":        true,
@@ -612,8 +614,12 @@ func (c *AccessController) resolveAndValidateUser(ctx context.Context, req *Acce
 		}, true, nil
 	}
 
-	// Check KYC requirement
-	if !user.KYC {
+	// Check KYC requirement. Org-free metadata methods are exempt: the
+	// anonymous allowlist serves the same methods with no user at all, so a
+	// blanket deny here would make signing in strictly more restrictive than
+	// staying anonymous (RD-1197). The ban check above stays a blanket deny
+	// on purpose — it is an explicit administrative action.
+	if !user.KYC && !orgFreeMetadataMethods[strings.ToLower(strings.TrimSpace(req.Method))] {
 		return nil, &AccessCheckResult{
 			Allowed: false,
 			Reason:  "KYC verification required",

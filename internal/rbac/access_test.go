@@ -3436,7 +3436,9 @@ func TestAnonymousAccess_DeploymentBlocked(t *testing.T) {
 // chain-metadata methods (same set as the anonymous allowlist) on /rpc without
 // an explicit org_id in the path. These methods carry no user or org state;
 // requiring org context for them would break standard tools (Hardhat, wallets).
-// Ban and KYC gates must still fire — only org-resolution is skipped.
+// The ban gate must still fire; the KYC gate is exempt for exactly these
+// methods (RD-1197) — anonymous requests get them with no user at all, so a
+// blanket KYC deny would make signing in stricter than staying anonymous.
 func TestOrgFreeMetadataMethods(t *testing.T) {
 	store := NewMockCrossOrgStore()
 	controller := NewAccessController(store, 5*time.Minute)
@@ -3502,8 +3504,11 @@ func TestOrgFreeMetadataMethods(t *testing.T) {
 		}
 	})
 
-	// KYC-failed user is blocked even for org-free methods.
-	t.Run("no-KYC user blocked", func(t *testing.T) {
+	// KYC-failed user is allowed for org-free metadata methods (RD-1197):
+	// anonymous gets the same set, so KYC must not make sign-in stricter.
+	// State-touching methods remain KYC-gated — see
+	// TestKYCGateExemptsOrgFreeMetadataMethods.
+	t.Run("no-KYC user allowed on metadata", func(t *testing.T) {
 		noKYC := &User{ID: "user-nokyc", ExternalID: "did:test:nokyc-no-org", KYC: false, Banned: false}
 		store.users[noKYC.ExternalID] = noKYC
 		res, err := controller.CheckAccess(ctx, &AccessCheckRequest{
@@ -3513,8 +3518,8 @@ func TestOrgFreeMetadataMethods(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if res.Allowed {
-			t.Errorf("expected no-KYC user to be denied")
+		if !res.Allowed {
+			t.Errorf("expected no-KYC user to be allowed on metadata method, got denied: %s", res.Reason)
 		}
 	})
 }
