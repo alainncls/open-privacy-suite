@@ -101,7 +101,7 @@ To see user EOA activity, an org admin would need a **disclosure grant** from ea
 
 `VisibilityFull` for org contracts is granted to viewers who are members of a group that meets one of:
 1. `is_org_admin = true` on the group (**tier 2 — org admin** — sees ALL contracts in the org)
-2. The group has a `contract_grant` linking it to the specific contract (any claims — `read`, `write`, `deploy`, `admin`)
+2. The group has a `contract_grant` linking it to the specific contract (any claims, or none — a grant alone confers visibility; the operational claims are `admin`, `upgrade`, `deploy`)
 
 **Tier 3 (contract admin):** Having `'admin' = ANY(group_access.claims)` without `is_org_admin = true` does **not** grant org-wide contract visibility. Contract admins see only contracts explicitly granted to their group via `contract_grant`. Their `admin` claim gives them RBAC bypass (event rule bypass, all functions allowed) on those granted contracts only — not org-wide visibility.
 
@@ -179,7 +179,7 @@ In addition to Explorer API redaction, logs returned by `eth_getLogs` and `eth_g
 - Per-contract admin (group has `admin` in `group_access.claims` + `contract_grant`)
 - Org admin (`is_org_admin = true` group — resolver grants `admin` on all org contracts)
 
-The bypass does NOT apply to users with `deploy`, `write`, `read`, or `upgrade` claims only.
+The bypass does NOT apply to users with `deploy` or `upgrade` claims only — those are operational claims (contract creation / proxy upgrade), not log-visibility grants.
 
 **Participant/sender admission (RD-1162):** a viewer who is a **participant** of a log's transaction — their linked address is the tx `from` or `to` — sees that transaction's logs **on contracts they have a grant to**, even when the event is not in their `event_rules` allowlist and carries no address of theirs (e.g. `PaymentCompleted(bytes32 indexed key, string id)`, keyed by a business identifier). The viewer authored/participated in the tx and already knows its contents, so this reveals nothing new (same rationale as §G21). It is **bounded by contract-grant access** — logs from contracts the viewer has no grant on stay dropped, so a tx that internally touched a foreign-org contract never leaks that contract's logs (mirrors the explorer participant override, §3.7: Redacted→Full, Hidden stays dropped). Participation is threaded in via `TxVisibilityContext.ParticipantTxHashes`: the receipt path derives it from the receipt's `from`/`to`; the `eth_getLogs` path resolves each tx's sender via a batched upstream `eth_getTransactionByHash` (log entries do not carry the sender). It slots **after** the deny-when-no-ABI (RD-875) and M15 dynamic-payload gates — participation relaxes only the allowlist/param/self checks, never the embedded-address protections, so an event with a dynamic non-indexed payload still requires the operator's `events_allow_dynamic_payload` attestation before even its participants see it.
 
