@@ -176,7 +176,7 @@ Whether `fullTxObjects` is `true` or `false`, the `transactions` array is strict
 ### Block Transaction Counts (eth_getBlockTransactionCountByHash/Number)
 These methods return the hex-encoded integer count of transactions in a block. The proxy intercepts these calls, fetches the full block, counts only the transactions the user is a participant in, and returns that personalized count.
 
-When `fullTxObjects=true`, the `transactions` array contains full transaction objects (the same shape as `eth_getTransactionByHash` responses). The filter iterates over each transaction and removes entries where neither `from` nor `to` matches a linked address. Block-level fields (`number`, `hash`, `timestamp`, `gasLimit`, etc.) are preserved, but **`logsBloom`, `gasUsed`, and `blobGasUsed` are forcefully zeroed** on every block-shaped response, for every viewer — these aggregate fields would otherwise leak the existence of redacted logs and the total gas weight of other-org activity across the block.
+When `fullTxObjects=true`, the `transactions` array contains full transaction objects (the same shape as `eth_getTransactionByHash` responses). The filter iterates over each transaction and removes entries where neither `from` nor `to` matches a linked address. Block-level fields (`number`, `hash`, `timestamp`, `gasLimit`, etc.) are preserved, but **`logsBloom`, `gasUsed`, `blobGasUsed`, and `size` are forcefully zeroed** on every block-shaped response, for every viewer — these aggregate fields (bloom, total gas, and the block's serialized byte-length) would otherwise leak the existence of redacted logs and the volume of other-org activity across the block. The block explorer API omits `size` entirely.
 
 ---
 

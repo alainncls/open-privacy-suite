@@ -3502,9 +3502,6 @@
                     "receiptsRoot": {
                         "type": "string"
                     },
-                    "size": {
-                        "type": "integer"
-                    },
                     "stateRoot": {
                         "type": "string"
                     },
