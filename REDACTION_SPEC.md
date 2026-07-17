@@ -304,12 +304,12 @@ The disclosed party themselves always renders at their own grant level via the v
 
 ### 3.8 RPC Layer (`eth_getTransactionByHash`, `eth_getTransactionReceipt`, `eth_getLogs`, `eth_getBlockByNumber`, `eth_getBlockReceipts`)
 
-At the RPC layer, the tx envelope (`eth_getTransactionByHash` / `eth_getTransactionReceipt`) is binary on participation (one of the caller's linked addresses matches `from`/`to`); the **logs** inside a receipt, and `eth_getLogs`, are additionally RBAC/event-rule filtered by `FilterEventLogs` (§3.4.1).
+At the RPC layer, the tx envelope (`eth_getTransactionByHash` / `eth_getTransactionReceipt`) is gated on participation (one of the caller's linked addresses matches `from`/`to`) plus `visibleTo`/admin; the **logs** inside a receipt, and `eth_getLogs`, are additionally RBAC/event-rule filtered by `FilterEventLogs` (§3.4.1). As of RD-1183 the **receipt** envelope is additionally admitted to a viewer entitled to ≥1 of the tx's logs under their event rules (see below).
 
 | Method | Participant behavior | Non-participant behavior | Implemented | Tested |
 |--------|---------------------|--------------------------|-------------|--------|
-| `eth_getTransactionByHash` | Full transaction returned | `null` | Yes | Yes |
-| `eth_getTransactionReceipt` | Receipt returned; logs event-rule filtered, **plus** the participant sees their own tx's logs on granted contracts even if address-less (RD-1162, §3.4.1) | `null` | Yes | Yes |
+| `eth_getTransactionByHash` | Full transaction returned | `null` (tx-by-hash log-entitlement admission is a documented gap, below) | Yes | Yes |
+| `eth_getTransactionReceipt` | Receipt returned; logs event-rule filtered, **plus** the participant sees their own tx's logs on granted contracts even if address-less (RD-1162, §3.4.1) | Receipt returned (logs filtered to the entitled set, `logsBloom` zeroed) when the viewer is entitled to ≥1 of the tx's logs under their event rules (RD-1183); `null` otherwise. Contract-deployment receipts (`to == null`) stay participant/`visibleTo`/admin-only. | Yes | Yes |
 | `eth_getLogs` | Entries where a topic address matches a linked address, **or** (RD-1162) entries of a tx the caller participated in on a granted contract (bounded by grant + no-ABI/M15 gates) | Entry removed from array | Yes | Yes |
 | `eth_getLogs` topics[0..3] | All 4 slots scanned for private addresses | Non-matching entries removed | Yes | Yes |
 | `eth_getLogs` data field (no ABI) | Whole log denied at RPC layer regardless of event_rules; explorer layer also denies via the unified ABIResolver | — | Yes | Yes | G5 closed (RD-875 RPC + RD-889 explorer) — see §3.4 row for `data (when emitter full + NO ABI)` |
@@ -505,6 +505,7 @@ Do not allow a gap to become invisible through test omission. For each known gap
 This makes gaps visible in CI output and prevents accidental regression to worse behavior.
 
 - **RD-1162 `eth_getBlockReceipts` gap:** `eth_getBlockReceipts` still uses the simple topic-address `filterReceiptLogs`, so a participant's address-less own-tx log is **not** admitted there (unlike `eth_getLogs` / `eth_getTransactionReceipt`, §3.4.1). Pinned by `TestFilterBlockReceipts_ParticipantAddresslessOwnTxLog_GAP_RD1162`, which asserts the current (gap) behavior so the fix — migrating `eth_getBlockReceipts` to the event-rules path (`FilterReceiptLogsWithEventRules`) — cannot land silently.
+- **RD-1183 `eth_getTransactionByHash` log-entitlement gap:** the RD-1183 receipt admission (a log-entitled non-participant gets `eth_getTransactionReceipt`) is **not** mirrored on `eth_getTransactionByHash` / the block-index variants, which stay binary on participation/`visibleTo`/admin. The tx envelope carries no logs, so deciding entitlement there requires an out-of-band lookup (fetch the receipt, or query the indexer's log store) — deferred to keep this change self-contained and off the hot path. The interim state is strictly *more* restrictive on tx-by-hash than on the receipt (benign over-restriction, no leak). Follow-up: RD-1191.
 
 ### Cross-redactor consistency (RD-1009 / G24 + follow-up)
 

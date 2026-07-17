@@ -224,60 +224,76 @@ func FilterReceiptLogsWithEventRules(
 	// events" semantics.
 	isAdminOnTo := to != "" && isAdminByContract[to]
 
-	if isParticipant || isVisibleTo || isAdminOnTo {
-		id := rpcResponseID(responseBody)
-
-		// RD-1162: a participant (from/to) of this tx sees ALL of its logs on
-		// contracts they can access — not just logs carrying their address.
-		// Inject the tx hash into the participant set so FilterEventLogs admits
-		// address-less events (e.g. PaymentCompleted) instead of stripping them
-		// (bounded there by contract-grant access). Envelope participation was
-		// already established above; here we propagate it to the log filter,
-		// closing the "participant enough for the receipt, not for its logs"
-		// asymmetry.
-		if isParticipant {
-			var txMeta struct {
-				TransactionHash string `json:"transactionHash"`
-			}
-			if json.Unmarshal(raw, &txMeta) == nil && txMeta.TransactionHash != "" {
-				if visCtx == nil {
-					visCtx = &rbac.TxVisibilityContext{}
-				}
-				if visCtx.ParticipantTxHashes == nil {
-					visCtx.ParticipantTxHashes = make(map[string]bool, 1)
-				}
-				visCtx.ParticipantTxHashes[strings.ToLower(txMeta.TransactionHash)] = true
-			}
+	// RD-1162: a participant (from/to) of this tx sees ALL of its logs on
+	// contracts they can access — not just logs carrying their address. Inject
+	// the tx hash into the participant set so FilterEventLogs admits address-less
+	// events (e.g. PaymentCompleted) instead of stripping them (bounded there by
+	// contract-grant access). Only participants get this; a non-participant
+	// (RD-1183 admission below) must see ONLY the logs their event rules match,
+	// not address-less siblings.
+	if isParticipant {
+		var txMeta struct {
+			TransactionHash string `json:"transactionHash"`
 		}
-
-		// Single-pass: applyEventRulesToReceipt calls FilterEventLogs which
-		// handles both event-rule and default address-based filtering.
-		// Pass the full per-log admin map so the per-log admin bypass in
-		// FilterEventLogs uses the same org-scoped decisions.
-		result := applyEventRulesToReceipt(raw, perms, userAddresses, abiProvider, visCtx, isAdminByContract)
-
-		if id != "" {
-			wrapped, _ := json.Marshal(struct {
-				JSONRPC string          `json:"jsonrpc"`
-				ID      json.RawMessage `json:"id"`
-				Result  json.RawMessage `json:"result"`
-			}{
-				JSONRPC: "2.0",
-				ID:      json.RawMessage(id),
-				Result:  result,
-			})
-			return wrapped
+		if json.Unmarshal(raw, &txMeta) == nil && txMeta.TransactionHash != "" {
+			if visCtx == nil {
+				visCtx = &rbac.TxVisibilityContext{}
+			}
+			if visCtx.ParticipantTxHashes == nil {
+				visCtx.ParticipantTxHashes = make(map[string]bool, 1)
+			}
+			visCtx.ParticipantTxHashes[strings.ToLower(txMeta.TransactionHash)] = true
 		}
-		return result
 	}
 
-	// Non-participant and not in visibleTo: return null.
+	// Filter the logs once. applyEventRulesToReceipt calls FilterEventLogs (both
+	// event-rule and default address-based filtering) and returns how many logs
+	// the viewer is entitled to — the RD-1183 envelope-admission signal.
+	result, entitledLogs := applyEventRulesToReceipt(raw, perms, userAddresses, abiProvider, visCtx, isAdminByContract)
+
+	// Envelope admission:
+	//   - participant / visibleTo / admin: always (existing behavior).
+	//   - RD-1183: a viewer who is NOT a participant/visibleTo/admin but is
+	//     entitled to >=1 of this tx's logs under their own event rules (e.g. a
+	//     payee admitted to PaymentCreated by a must_be:self param rule). They
+	//     already receive that log via eth_getLogs — withholding the receipt
+	//     envelope only breaks their view without protecting anything, and the
+	//     receipt's logs are re-filtered by the same rules. Fail closed otherwise.
+	//   - Deployment receipts (to == "") are excluded from the RD-1183 path: the
+	//     RPC layer never redacts the top-level contractAddress (RD-1143 redaction
+	//     is explorer-layer only), so admitting one to a log-entitled
+	//     non-participant would leak the deployed contract address.
+	admit := isParticipant || isVisibleTo || isAdminOnTo || (to != "" && entitledLogs > 0)
+	if !admit {
+		id := rpcResponseID(responseBody)
+		return []byte(`{"jsonrpc":"2.0","id":` + id + `,"result":null}`)
+	}
+
 	id := rpcResponseID(responseBody)
-	return []byte(`{"jsonrpc":"2.0","id":` + id + `,"result":null}`)
+	if id != "" {
+		wrapped, _ := json.Marshal(struct {
+			JSONRPC string          `json:"jsonrpc"`
+			ID      json.RawMessage `json:"id"`
+			Result  json.RawMessage `json:"result"`
+		}{
+			JSONRPC: "2.0",
+			ID:      json.RawMessage(id),
+			Result:  result,
+		})
+		return wrapped
+	}
+	return result
 }
 
 // applyEventRulesToReceipt extracts logs from a receipt, applies event rule
-// filtering, and puts the filtered logs back.
+// filtering, and puts the filtered logs back. It returns the filtered receipt
+// JSON and the number of logs the viewer is entitled to after filtering — the
+// RD-1183 envelope-admission signal.
+//
+// Every error / no-logs branch returns a count of 0 so a non-participant is
+// NEVER admitted (RD-1183) on a fail-closed receipt or one with no logs field:
+// the count-0 paths must map to a null envelope for such a viewer, not to an
+// unfiltered receipt.
 func applyEventRulesToReceipt(
 	rawReceipt json.RawMessage,
 	perms *rbac.EffectivePermissions,
@@ -285,27 +301,27 @@ func applyEventRulesToReceipt(
 	abiProvider rbac.ABIProvider,
 	visCtx *rbac.TxVisibilityContext,
 	isAdminByContract map[string]bool,
-) json.RawMessage {
+) (json.RawMessage, int) {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(rawReceipt, &m); err != nil {
-		return receiptWithEmptyLogs(rawReceipt) // fail-closed
+		return receiptWithEmptyLogs(rawReceipt), 0 // fail-closed
 	}
 
 	rawLogs, ok := m["logs"]
 	if !ok {
-		return rawReceipt // no logs field — nothing to filter
+		return rawReceipt, 0 // no logs field — nothing to filter, no entitlement
 	}
 
 	var arr []json.RawMessage
 	if err := json.Unmarshal(rawLogs, &arr); err != nil {
-		return receiptWithEmptyLogs(rawReceipt) // fail-closed
+		return receiptWithEmptyLogs(rawReceipt), 0 // fail-closed
 	}
 
 	filtered := rbac.FilterEventLogs(arr, perms, userAddresses, abiProvider, visCtx, isAdminByContract)
 
 	newLogs, err := json.Marshal(filtered)
 	if err != nil {
-		return rawReceipt
+		return rawReceipt, 0
 	}
 	m["logs"] = newLogs
 
@@ -315,9 +331,9 @@ func applyEventRulesToReceipt(
 
 	out, err := json.Marshal(m)
 	if err != nil {
-		return receiptWithEmptyLogs(rawReceipt) // fail-closed
+		return receiptWithEmptyLogs(rawReceipt), 0 // fail-closed
 	}
-	return out
+	return out, len(filtered)
 }
 
 // emptyLogsResponse returns a JSON-RPC response with an empty logs array,

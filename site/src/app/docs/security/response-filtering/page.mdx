@@ -90,9 +90,12 @@ Transaction receipts contain execution results including status, gas used, and -
 | User is a participant? | Response |
 |------------------------|----------|
 | Yes | Receipt (but logs are filtered to only show those involving the user, and `logsBloom` is zeroed) |
-| No | `null` |
+| No, but entitled to ≥1 of the tx's logs under their event rules | Receipt, with the `logs` array filtered to only those entitled logs (`logsBloom` zeroed) |
+| No, and entitled to none of the tx's logs | `null` |
 
-Non-participants receive `null`, consistent with `eth_getTransactionByHash`. Even when a user is a participant, the receipt's `logs` array is filtered using the same rules as `eth_getLogs` (see below), and the `logsBloom` is zeroed out to prevent leaking the total number or presence of redacted logs. Note that "the same rules as `eth_getLogs`" includes the own-transaction rule below: a participant sees every log of their own transaction that was emitted by a contract they have access to — including events that do not carry their address (e.g. an event keyed by a business identifier).
+Even when a user is a participant, the receipt's `logs` array is filtered using the same rules as `eth_getLogs` (see below), and the `logsBloom` is zeroed out to prevent leaking the total number or presence of redacted logs. Note that "the same rules as `eth_getLogs`" includes the own-transaction rule below: a participant sees every log of their own transaction that was emitted by a contract they have access to — including events that do not carry their address (e.g. an event keyed by a business identifier).
+
+A viewer who is **not** a participant (and not in the tx's `visibleTo`, and not an admin) but who **is** entitled to at least one of the transaction's logs under their group's event rules — for example a payment's payee admitted to a `PaymentCreated` event by a `must_be:self` rule on an indexed party parameter — also receives the receipt, with its `logs` filtered to exactly those entitled logs. The `logs` themselves reveal nothing new — the viewer already receives them from `eth_getLogs` (which returns each log's `transactionHash`). Admitting the receipt envelope does additionally expose the envelope fields `from`, `to`, `status`, and `gasUsed`, which `eth_getLogs` does not return; this is the same disclosure posture as a `visibleTo` recipient, who receives the full receipt for a transaction they are named on. It is justified by the viewer's proven log-entitlement (they are a party to at least one of the transaction's events). **Contract-deployment receipts are excluded** from this admission — they are returned only to participants/`visibleTo`/admins, so the deploy receipt's top-level `contractAddress` is never exposed this way.
 
 ---
 
