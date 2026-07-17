@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { AlertDialog } from '@/components/ui/ConfirmDialog';
 import { useAuth } from '@/contexts/AuthContext';
 import { ethLinkApiMethods, EthAddressResponse, userApiMethods, UserOrg } from '@/api/auth';
-import { getRpcEndpoint, getAddNetworkParams } from '@/config/wagmi';
+import { getRpcEndpoint, getAddNetworkParams } from '@/config/rpc';
 
 export function SuccessPage() {
   const navigate = useNavigate();
