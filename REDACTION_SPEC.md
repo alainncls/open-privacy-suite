@@ -775,6 +775,23 @@ changes on-chain after capture is not retroactively applied. The proxy never cal
 a `getParticipants`-style resolver itself; the client-managed alternative (call the
 gated getter, repeat DIDs in `visibleTo`) stays supported and orthogonal.
 
+**Removal semantics.** Clearing a policy (`method_policies = NULL`) is evaluated at
+read time from the live row (`GetContractByAddress` is a direct query, no cache;
+the write also calls `InvalidateOrg`), so it is **immediate and retroactive** —
+it changes what every read returns for all records, historical included, with no
+grandfathering. The two subject classes move in **opposite** directions: the
+reader baseline is permissive, so removing the `access` gate **widens** readers to
+the grant-only baseline; `events`/`transactions` are additive, so removing them
+**narrows** the captured audience back to the deny-by-default baseline. The
+`contract_record_captures` rows are deliberately **not** deleted — they are
+chain-derived and can only be recorded at settlement (unreconstructable for past
+records), so deleting them would permanently deny a record's real parties on any
+future re-gating. The clear/update is audit-logged (`rbac_audit_log`) with the
+full before/after policy; per-record read denials are recorded in `access_logs`
+(`ReasonMethodPolicyDenied`). There is currently no capture-purge action (a
+deliberate data-minimization purge for a decommissioned policy would be a separate,
+audited admin operation).
+
 **Symmetry.** The same decision (`rbac.MethodPolicyDocument.EventAudienceAdmits`)
 is invoked by both the RPC filter (`FilterEventLogs`, via `RecordAudienceGate` on
 `TxVisibilityContext`) and the explorer redactor (`RedactLogs`, via a resolver

@@ -97,6 +97,30 @@ GET /api/v1/admin/orgs/{org_id}/contracts/{address}/method-policies
 - Configure the policy **before** the contract takes traffic, so every record is
   captured from creation.
 
+## Removing a policy
+
+Clearing a policy (`method_policies: null`, or **Clear policy** in the UI) takes
+effect **immediately and applies to every record, including historical ones** —
+the gate is re-evaluated on each read, so there is no grandfathering. Two things
+change, in **opposite** directions:
+
+- **Readers widen.** Record-reader getters (e.g. `getPaymentInfo`) lose the
+  per-record gate and revert to the contract-grant baseline: readable by **any
+  member of a granted group** — for past records too, not just new ones.
+- **The event/transaction audience narrows.** The additive `events` /
+  `transactions` admission disappears, so a record's captured parties **lose** the
+  visibility of its matching event logs and transactions that the policy had
+  added; those revert to the deny-by-default baseline (participant / `visibleTo` /
+  admin only).
+
+The **captured audience is retained**. It is derived from on-chain writer
+transactions and is recorded only at settlement, so it **cannot be reconstructed
+for past records** — deleting it would permanently lock a record's real parties
+out of their own history if the policy were ever re-added. Clearing the policy
+therefore only stops the gate from consulting the captures; re-adding a policy
+resumes gating against them. The clear/update is **audit-logged with the full
+before/after policy**.
+
 ## What to expect
 
 - A denied read returns an opaque error — indistinguishable from "no such

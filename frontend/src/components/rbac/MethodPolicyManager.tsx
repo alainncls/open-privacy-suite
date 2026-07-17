@@ -224,7 +224,7 @@ export function MethodPolicyManager({ orgId, contractAddress, contractAbi, initi
         onOpenChange={setConfirmClear}
         variant="destructive"
         title="Clear the method policy?"
-        description="Record-reader getters on this contract will revert to being readable by any member of a granted group."
+        description="This applies immediately to every record, including past ones. Record-reader getters (e.g. getPaymentInfo) revert to being readable by any member of a granted group, and each record's parties lose the added visibility of its event logs and transactions. The captured audience is kept, so re-adding a policy restores gating."
         confirmLabel="Clear policy"
         isLoading={saving}
         onConfirm={async () => { await save(null); }}
