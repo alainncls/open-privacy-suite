@@ -87,19 +87,20 @@ describe("MethodPolicyManager", () => {
     (rbacApi.contracts.updateMethodPolicies as ReturnType<typeof vi.fn>).mockRejectedValue({
       response: { status: 400, data: { error: "method policy failed ABI validation: nope" } },
     });
-    vi.stubGlobal("confirm", () => true);
     render(<MethodPolicyManager {...baseProps} initialPolicy={{ records: { payment: { capture: [], access: [] } } }} />);
-    await u.click(screen.getByRole("button", { name: /clear policy/i }));
+    await u.click(screen.getByRole("button", { name: /clear policy/i })); // opens the styled confirm dialog
+    const dialog = await screen.findByRole("dialog");
+    await u.click(within(dialog).getByRole("button", { name: /clear policy/i }));
     await waitFor(() => expect(screen.getByText(/nope/i)).toBeInTheDocument());
   });
 
-  it("confirms before clearing", async () => {
+  it("clear shows the app confirm dialog (not window.confirm); cancel makes no API call", async () => {
     const u = userEvent.setup();
-    const confirmSpy = vi.fn(() => false);
-    vi.stubGlobal("confirm", confirmSpy);
     render(<MethodPolicyManager {...baseProps} initialPolicy={{ records: { payment: { capture: [], access: [] } } }} />);
     await u.click(screen.getByRole("button", { name: /clear policy/i }));
-    expect(confirmSpy).toHaveBeenCalled();
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/revert to being readable/i)).toBeInTheDocument();
+    await u.click(within(dialog).getByRole("button", { name: /cancel/i }));
     expect(rbacApi.contracts.updateMethodPolicies).not.toHaveBeenCalled();
   });
 

@@ -13,6 +13,7 @@ import {
   type WizardState,
 } from "@/lib/methodPolicy";
 import { MethodPolicyWizard } from "./MethodPolicyWizard";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { ShieldAlert, ShieldCheck, Check, Loader2, Info, FlaskConical } from "lucide-react";
 
@@ -35,6 +36,7 @@ export function MethodPolicyManager({ orgId, contractAddress, contractAbi, initi
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
 
   const fns = useMemo(() => parseAbiFunctions(contractAbi), [contractAbi]);
   const keyableFns = useMemo(() => functionsWithKeyableParam(fns), [fns]);
@@ -110,10 +112,7 @@ export function MethodPolicyManager({ orgId, contractAddress, contractAbi, initi
     void save(isEmpty ? null : parsed);
   }
   function clearPolicy() {
-    if (typeof window !== "undefined" && !window.confirm(
-      "Clear the method policy? Record-reader getters on this contract will revert to being readable by any member of a granted group."
-    )) return;
-    void save(null);
+    setConfirmClear(true);
   }
 
   return (
@@ -219,6 +218,17 @@ export function MethodPolicyManager({ orgId, contractAddress, contractAbi, initi
       {mode === "simulate" && (
         <SimulatorPanel orgId={orgId} contractAddress={contractAddress} readerMethods={readerMethods} captureFields={captureFields} fns={fns} onClose={() => setMode("none")} />
       )}
+
+      <ConfirmDialog
+        open={confirmClear}
+        onOpenChange={setConfirmClear}
+        variant="destructive"
+        title="Clear the method policy?"
+        description="Record-reader getters on this contract will revert to being readable by any member of a granted group."
+        confirmLabel="Clear policy"
+        isLoading={saving}
+        onConfirm={async () => { await save(null); }}
+      />
     </div>
   );
 }
