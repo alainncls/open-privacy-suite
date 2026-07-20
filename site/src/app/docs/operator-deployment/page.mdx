@@ -66,9 +66,11 @@ Three Docker networks. `proxy-backend` is the only legitimate bridge between the
 
 | Zone | Members |
 |---|---|
-| `indexer-zone` (internal) | `privacy-postgres`, `redis`, `anvil` (dev), `chain-indexer`, `indexer-postgres`, `proxy-backend` |
-| `bff-zone` (internal) | `block-explorer-api` (BFF, privacy build), `block-explorer-postgres`, `proxy-backend`, `block-explorer-frontend` (so nginx can resolve the BFF upstream) |
+| `indexer-zone` | `privacy-postgres`, `redis`, `anvil` (dev), `chain-indexer`, `indexer-postgres`, `proxy-backend` |
+| `bff-zone` | `block-explorer-api` (BFF, privacy build), `block-explorer-postgres`, `proxy-backend`, `block-explorer-frontend` (so nginx can resolve the BFF upstream) |
 | `public` | `proxy-frontend`, `proxy-backend` (port `8080`), `block-explorer-frontend` (port `3001`) |
+
+Both `indexer-zone` and `bff-zone` ship as Docker networks with `internal: false` — the proxy needs `NODE_URL` egress to reach the upstream node. Set `internal: true` on them when the EVM node is co-located inside the zone; the isolation between zones (only `proxy-backend` bridges them) holds regardless of the flag.
 
 Full architecture diagram and rationale: [Architecture → Privacy-mode topology](/docs/architecture#privacy-mode-topology).
 
@@ -99,7 +101,7 @@ The dev script (`scripts/privacy-dev-up.sh`) auto-generates these into `.env.pri
 | `CORS_ALLOWED_ORIGINS` | `(empty)` | Comma-separated list of extra browser origins to allow. The origin derived from `BASE_URL` is always allowed. |
 | `PROXY_VERSION` | `latest` | Registry tag for `gatewayfm/privacy-proxy-{backend,frontend}`. Pin to a release tag in production (e.g. `v0.7.0`). |
 | `EXPLORER_VERSION` | `latest` | Registry tag for the block-explorer images. The privacy compose pulls the `-privacy`-suffixed API image only — the standalone image is for non-privacy deployments. |
-| `INDEXER_VERSION` | `latest` (prod), `0.2.2` (dev) | Registry tag for chain-indexer. Note: the dockerhub tag has no `v` prefix; verify with `docker manifest inspect` before changing. |
+| `INDEXER_VERSION` | `latest` (prod), `0.3.0` (dev) | Registry tag for chain-indexer. Note: the dockerhub tag has no `v` prefix; verify with `docker manifest inspect` before changing. |
 | `BLOCK_EXPLORER_PATH` / `CHAIN_INDEXER_PATH` | `../block-explorer` / `../chain-indexer` | Sibling-clone paths. Consumed by the **dev** compose only. |
 | `ENABLE_OP_DEPOSITS` | `false` | Toggle OP-Stack indexing in chain-indexer. |
 

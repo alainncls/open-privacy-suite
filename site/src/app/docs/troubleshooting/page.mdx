@@ -136,12 +136,12 @@ go test ./internal/...
 | `session not found or expired` | 401 | Auth session expired (10-min TTL) | Start a new authentication flow |
 | `JWZ verification failed` | 401 | Invalid ZK proof | Ensure wallet is using correct credentials and network |
 | `humanity_verification_required` | 403 | User lacks ProofOfHumanity credential | Complete PoH verification at [Billions](https://app.billions.network) |
-| `user is banned` | 403 | User's policy has `banned: true` | Contact org admin to remove ban |
-| `KYC required` | 403 | User's policy has `kyc: false` | Complete KYC verification |
+| `account is banned` | 403 | Banned user on login / refresh (on the `/rpc` data path a ban is masked as an opaque `404 method not found`) | Contact org admin to remove ban |
+| (opaque `method not found`) | 404 | On the `/rpc` path, a non-KYC'd user's call is masked as `method not found` — the proxy does not disclose the reason | Complete KYC verification |
 
 ### Token expiration
 
-Access tokens expire after **30 minutes**. Refresh tokens expire after **7 days**.
+Access tokens expire after **5 minutes** (production; dev/mockauth builds use 30 minutes). Refresh tokens expire after **7 days**.
 
 ```bash
 # Refresh an expired access token
@@ -167,9 +167,8 @@ If the refresh token is also expired, re-authenticate through the web UI.
 
 | Error | Status | Cause | Solution |
 |-------|--------|-------|----------|
-| `method not allowed` | 403 | JSON-RPC method not in user's allowed methods | Check group permissions in admin UI. Ensure the method is in the group's allowed methods list. |
-| `contract access denied` | 403 | User's org does not own the target contract | Verify the contract is registered to the user's org. Check contract grants. |
-| `cross-org access denied` | 403 | Transaction calls a contract owned by another org | Only interact with contracts owned by your organization. |
+| `method not found` | 404 | The JSON-RPC method is not in the user's allowlist, **or** the target contract is not owned by the user's org — direct RBAC denials (method and contract) are masked as an opaque 404, never a 403 | Check group permissions and contract grants in the admin UI. |
+| `transaction denied: cross-org access not permitted` | 403 | A **send** transaction's runtime trace enters a contract owned by another org | Only interact with contracts owned by your organization. |
 | `call denied: cross-org access not permitted` | 403 | An `eth_call` resolved at runtime to an internal call into a foreign-org contract (e.g. a same-org wrapper STATICCALLing another org's contract). | Inspect the trace; either the target contract reaches into another org or a proxy upgrade has re-targeted it. Update grants or stop calling that path. |
 | `call denied: trace depth exceeded; not provable as same-org` | 403 | The `eth_call` trace exceeded the maximum recursion depth, so deeper call targets could not be validated. Failed closed. | Reduce nesting in the called contract or split into multiple calls. |
 | `call denied: tracing temporarily unavailable` | 403 | Upstream `debug_traceCall` failed (timeout, connection refused, malformed response). Failed closed. | Check upstream node health and `debug` namespace exposure. Re-try; if persistent, check the proxy logs for the underlying error. |

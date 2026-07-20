@@ -139,7 +139,7 @@ Contracts deployed through the proxy are **automatically registered** in the RBA
 
 ## Token Refresh
 
-Access tokens expire after 30 minutes. To refresh:
+Access tokens expire after 5 minutes (production; dev/mockauth builds use 30 minutes). To refresh:
 
 ```bash
 # Get a new token from the web UI, or use the refresh endpoint:
@@ -156,9 +156,9 @@ export ETH_RPC_HEADERS="Authorization: Bearer NEW_ACCESS_TOKEN"
 | Error | Cause | Solution |
 |-------|-------|----------|
 | `401 Unauthorized` | Invalid or expired token | Get a new token from the web UI |
-| `403 Forbidden: deploy claim required` | User lacks deploy permission | Ask org admin to grant `deploy` claim |
-| `403 Forbidden: cross-org access denied` | Contract calls another org's contract | Only interact with your org's contracts |
-| `403 Forbidden: method not allowed` | Method not in user's allowlist | Check group permissions |
+| `403 transaction denied: runtime contract creation requires the deploy claim` | User lacks deploy permission | Ask org admin to grant `deploy` claim |
+| `403 transaction denied: cross-org access not permitted` | A transaction's runtime trace enters another org's contract | Only interact with your org's contracts |
+| `404 method not found` | Method not in user's allowlist (RBAC denials are masked as an opaque 404, not a 403) | Check group permissions |
 
 ## Security Model
 
@@ -181,11 +181,11 @@ This section covers production hardening considerations beyond contract deployme
 
 ### HTTPS and Private Networks
 
-The proxy enforces HTTPS for the `BASE_URL` in production (`ENVIRONMENT=production`). However, **private network addresses are exempt** from this requirement -- HTTP is allowed when the proxy is accessed over:
+The proxy enforces HTTPS for the `FRONTEND_URL` in production (`ENVIRONMENT=production`). However, **private network addresses are exempt** from this requirement -- HTTP is allowed when the URL points at:
 
 - RFC1918 private addresses (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`)
 - Tailscale addresses (`100.64.0.0/10`)
-- IPv6 Unique Local Addresses (ULA, `fd00::/8`)
+- IPv6 Unique Local Addresses (ULA, `fc00::/7`)
 
 This allows local and VPN-based development/staging environments to run without TLS while still enforcing HTTPS for internet-facing deployments.
 

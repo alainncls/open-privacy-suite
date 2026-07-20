@@ -84,11 +84,11 @@ func (m *mockPrivadoVerifier) VerifyJWZ(...) (string, error) {
 
 | Test | Description |
 |------|-------------|
-| `TestE2E_AuthorizedRequest` | User with valid policy can make allowed calls |
-| `TestE2E_UnauthorizedRequest_NoToken` | Request without JWT returns 401 |
-| `TestE2E_ForbiddenRequest_DisallowedMethod` | Calling non-whitelisted method returns 403 |
-| `TestE2E_BannedUser` | Banned user returns 403 |
-| `TestE2E_NoKYC` | User without KYC returns 403 |
+| `TestE2E_Proxy_JSONRPCWithAuth` | User with valid policy can make allowed calls |
+| `TestE2E_UnauthorizedRequest_NoToken` | Request without JWT returns an opaque 404 |
+| `TestE2E_ForbiddenRequest_DisallowedMethod` | Calling a non-allowlisted method returns an opaque 404 |
+| `TestE2E_BannedUser` | Banned user returns an opaque 404 |
+| `TestE2E_NoKYC` | User without KYC returns an opaque 404 |
 
 ## E2E Tests (Playwright)
 
@@ -103,15 +103,13 @@ e2e/playwright/
 ├── tsconfig.json
 ├── Dockerfile
 ├── global-setup.ts
-├── helpers/
-│   ├── auth.ts
-│   ├── policy.ts
-│   └── test-context.ts
+├── helpers/            # auth.ts, policy.ts, address.ts, rbac-api.ts, rbac-fixtures.ts, test-context.ts
 └── tests/
-    ├── authorization.spec.ts
-    ├── access-control.spec.ts
-    ├── multicall.spec.ts
-    └── auth-formats.spec.ts
+    └── ui/             # numbered specs: 01-auth, 02-navigation, 03-organizations,
+                        # 05-test-request, 06-admin-auth, 07-batch-operations,
+                        # 08-event-rules, 09-visibleto-caption, 10-disclosure-scope,
+                        # 11-compliance-unsaved-changes, 12-access-logs-denial-reasons,
+                        # 13-compliance-monitor-mode (+ compliance/03-currency-selector-ui)
 ```
 
 ### Test Isolation
@@ -178,13 +176,13 @@ Test reports are generated at:
 
 ```bash
 # Start all services
-make docker-up
+make quickstart
 
 # View logs
 docker-compose logs -f proxy-backend
 
 # Stop all services
-make docker-down
+make quickstart-down
 ```
 
 ## Writing New Tests
@@ -320,7 +318,7 @@ docker-compose up -d
 go test -v ./e2e/...
 
 # Run specific test
-go test -v -run TestE2E_AuthorizedRequest ./e2e/...
+go test -v -run TestE2E_Proxy_JSONRPCWithAuth ./e2e/...
 ```
 
 ### Service URLs When Running Docker

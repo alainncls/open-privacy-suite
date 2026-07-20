@@ -232,7 +232,7 @@ A user can belong to multiple groups. Across memberships:
 
 1. Compute permissions for each membership directly from the group's `GroupAccess` and `ContractGrant` rows (no traversal — see `resolver.go:computeGroupPermissions`, comment `// (flat — no hierarchy walk)`).
 2. Apply **UNION** across all memberships — methods, claims, and contract grants are all combined. A user gets the **most permissive** combined view of every group they belong to.
-3. Rate limits across memberships: **MAXIMUM** is honored (the most generous limit applies).
+3. Rate limiting is **not** aggregated per membership — the proxy forwards the caller's resolved group RPC API key (or the global fallback) upstream, and request-rate quotas are enforced by the upstream RPC proxy against that key.
 
 ### Time-boxed memberships (access windows)
 

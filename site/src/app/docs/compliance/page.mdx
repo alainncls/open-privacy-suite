@@ -12,6 +12,10 @@ The Open Privacy Suite enforces FATF Recommendation 16, known as the "travel rul
 
 This regulatory requirement applies to Virtual Asset Service Providers (VASPs) and similar entities moving customer funds across blockchain networks.
 
+<Callout variant="warning" title="Compliance is disabled by default">
+  The travel-rule pipeline is **off** unless you set `ENABLE_TRAVEL_RULE=true`. While unset, value transfers are **not** screened against thresholds or sanctions lists (the server logs this at startup). The `enforce` / `monitor` setting below only selects behaviour *once compliance is enabled*.
+</Callout>
+
 ---
 
 ## Enforcement Mode: Enforce vs Monitor
@@ -30,7 +34,7 @@ Monitor mode is for phased rollouts and observation periods — running complian
 To set the mode:
 
 - **Per organization** — set **Enforcement mode** in the compliance dashboard, or `PUT /config` with `{ "enforcement_mode": "enforce" | "monitor" }`.
-- **Cluster-wide default** — set the `COMPLIANCE_DEFAULT_MODE` environment variable (`enforce` | `monitor`, default `enforce`). A per-org setting overrides it; the active default is reported by the `/status` endpoint.
+- **Cluster-wide default** — set the `COMPLIANCE_DEFAULT_MODE` environment variable (`enforce` | `monitor`, default `enforce`). A per-org setting overrides it.
 
 > **Audit / change-management note.** Monitor mode converts a *preventive* control into a *detective-only* one for the affected organization. The default is `enforce` (monitor is opt-in), every mode change is recorded in the RBAC audit log, and each monitored violation is preserved in the compliance log marked "would have blocked". Document any move to monitor mode for your ISO 27001 / SOC 2 evidence.
 
@@ -218,8 +222,7 @@ An immutable, append-only audit trail of every compliance decision.
 **Immutability guarantees:**
 
 - BIGSERIAL IDs (append-only)
-- No UPDATE or DELETE operations permitted (enforced at database level)
-- Database triggers enforce append-only semantics
+- The application database role holds only `SELECT, INSERT` on the compliance log — no `UPDATE`/`DELETE` grant — so the running proxy cannot rewrite or delete a decision (enforced by GRANT/role separation, not database triggers). Retention pruning runs under a separate privileged role.
 - Provides reliable audit trail for regulatory review
 
 ---
@@ -332,8 +335,7 @@ To prevent two concurrent transfers from claiming the same travel rule record:
 ### Immutable Audit Trail
 
 - Compliance logs use auto-incrementing BIGSERIAL primary key
-- No UPDATE or DELETE permissions on logs in the application
-- Database triggers enforce append-only semantics
+- No `UPDATE`/`DELETE` grant on the log for the application role (GRANT/role separation, not database triggers)
 - Logs remain even after records are deleted
 - Provides immutable proof of all decisions for regulatory review
 

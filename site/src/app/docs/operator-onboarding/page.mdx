@@ -217,7 +217,7 @@ These are the **role-distinguishing** methods only — every interactive group a
 | Org admin | `[]` (implied) | at least one method | Use `is_org_admin: true` at create time — **super-admin only** (see Part 1). |
 
 <Callout variant="info" title="Claims and methods must be consistent">
-The `admin` claim implies `deploy` + `upgrade`. Only those three claims gate anything; all other access is the method allowlist's job. The API rejects mismatches — e.g. allowing `debug_traceTransaction` without the `deploy` claim returns `400`.
+The `admin` claim implies `deploy` + `upgrade`. Only those three claims gate anything; all other access — including trace methods like `debug_traceCall` / `debug_traceTransaction` — is the method allowlist's job (trace methods were decoupled from the `deploy` claim in RD-1121).
 </Callout>
 
 <Callout variant="warning" title="Interactive clients need a baseline of plumbing methods">
@@ -253,7 +253,7 @@ curl -sS -X PUT "$PROXY/api/v1/admin/orgs/$ORG_ID/groups/$DEPLOY_GROUP_ID/access
   }'
 ```
 
-The `/access` body also accepts optional `rate_limit_rps`, `rate_limit_daily`, and a per-group upstream `rpc_api_key` — see [RBAC → Per-Group RPC API Keys](/docs/rbac#per-group-rpc-api-keys).
+The `/access` body also accepts an optional per-group upstream `rpc_api_key` — see [RBAC → Per-Group RPC API Keys](/docs/rbac#per-group-rpc-api-keys). Which inbound header that key is read from is operator-wide (`RPC_API_KEY_HEADER`), not a per-group field. Request-rate limits are **not** set here; they come from the upstream RPC proxy's tier for that key.
 
 ### Add users to groups
 
@@ -411,7 +411,7 @@ All paths are prefixed `/api/v1/admin`. Day-to-day endpoints (Part 2+) are drive
 |---|---|---|
 | Create organization | `POST /orgs` | Super-admin only |
 | Create group | `POST /orgs/:org_id/groups` | Tier-2 OK (except `is_org_admin` → super-admin) |
-| Set group access (methods, claims, limits) | `PUT /orgs/:org_id/groups/:group_id/access` | Tier-2 OK |
+| Set group access (methods, claims, RPC key) | `PUT /orgs/:org_id/groups/:group_id/access` | Tier-2 OK |
 | Onboard user by DID | `POST /orgs/:org_id/memberships/by-did` | Tier-2 OK |
 | List users | `GET /users` | Scoped to caller's orgs |
 | Add membership by UUID | `POST /users/:user_id/memberships` | Tier-2 OK (target in scope) |
