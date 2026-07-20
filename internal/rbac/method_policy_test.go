@@ -946,3 +946,198 @@ func TestMethodPolicy_Validate_RejectsLiteralShapedFieldName(t *testing.T) {
 		}
 	}
 }
+
+// ---- Zero / default record key rejected on both sides (Copilot review) ----
+
+func TestMethodPolicy_ZeroKeyRejected(t *testing.T) {
+	parsed := mustParseABI(t)
+
+	// createPayment("PAY", <zero address>, 0): index 1 is a zero address, index 2
+	// a zero uint256 — both canonicalize to a NON-empty string, so only the
+	// type-aware guard rejects them.
+	zero := encodeCall(t, "createPayment", "PAY", addr("0x0000000000000000000000000000000000000000"), bigInt(0))
+	if _, err := decodeRecordKey(KeySpec{Source: "param", Index: 1}, zero, parsed); err == nil {
+		t.Fatal("zero-address key must be rejected")
+	}
+	if _, err := decodeRecordKey(KeySpec{Source: "param", Index: 2}, zero, parsed); err == nil {
+		t.Fatal("zero-uint key must be rejected")
+	}
+
+	// A non-empty string "0" is a legitimate business identifier, not a zero key.
+	str0 := encodeCall(t, "createPayment", "0", addr(payeeAddr), bigInt(1))
+	if k, err := decodeRecordKey(KeySpec{Source: "param", Index: 0}, str0, parsed); err != nil || k != "0" {
+		t.Fatalf(`string "0" key must pass verbatim, got %q err=%v`, k, err)
+	}
+
+	// Writer side is symmetric: a zero param used as the capture key aborts the
+	// capture rather than planting a row under a predictable default key. Built
+	// directly (a string-record-key vs address-capture-key policy would fail
+	// Validate; here we exercise the DecodeCaptures guard in isolation).
+	doc := &MethodPolicyDocument{Records: map[string]RecordPolicy{
+		"r": {Capture: []CaptureSpec{{
+			Method:   "createPayment(string,address,uint256)",
+			Key:      KeySpec{Source: "param", Index: 1},
+			Remember: map[string]RememberField{"aud": {Source: "visibleTo", Merge: "union"}},
+		}}},
+	}}
+	if _, err := doc.DecodeCaptures(zero, "did:test:alice", []string{"did:test:bob"}, parsed); err == nil {
+		t.Fatal("capture under a zero-address key must be rejected")
+	}
+}
+
+// ---- Strict single-document parse (Copilot review) ----
+
+func TestMethodPolicy_ParseRejectsTrailingData(t *testing.T) {
+	if _, err := ParseMethodPolicyDocument([]byte(testPaymentPolicyJSON)); err != nil {
+		t.Fatalf("clean policy must parse: %v", err)
+	}
+	if _, err := ParseMethodPolicyDocument([]byte(testPaymentPolicyJSON + `{"records":{}}`)); err == nil {
+		t.Fatal("a second JSON document after the policy must be rejected")
+	}
+	if _, err := ParseMethodPolicyDocument([]byte(testPaymentPolicyJSON + "  garbage")); err == nil {
+		t.Fatal("trailing junk after the policy must be rejected")
+	}
+}
+
+// ---- Colliding 4-byte selector rejected at validation (Copilot review) ----
+
+func TestMethodPolicy_RejectsCollidingSelector(t *testing.T) {
+	// pay15795(string) and pay41467(string) share selector 0x140a2788 (found by
+	// brute force over the keccak space). MethodById would resolve the gated
+	// selector to an arbitrary one of them; validation must reject the policy.
+	const abiJSON = `[
+      {"type":"function","name":"pay15795","stateMutability":"nonpayable","inputs":[{"name":"id","type":"string"}],"outputs":[]},
+      {"type":"function","name":"pay41467","stateMutability":"view","inputs":[{"name":"id","type":"string"}],"outputs":[]}
+    ]`
+	parsed, err := abi.JSON(strings.NewReader(abiJSON))
+	if err != nil {
+		t.Fatalf("parse ABI: %v", err)
+	}
+	if common.Bytes2Hex(parsed.Methods["pay15795"].ID) != common.Bytes2Hex(parsed.Methods["pay41467"].ID) {
+		t.Skip("selectors no longer collide in this build; test premise invalid")
+	}
+	const policy = `{"records":{"r":{
+      "capture":[{"method":"pay15795(string)","key":{"source":"param","index":0},
+        "remember":{"aud":{"source":"visibleTo","merge":"union"}}}],
+      "access":[{"method":"pay15795(string)","key":{"source":"param","index":0},
+        "allow":[{"callerIn":["aud"]}],"onNoRecord":"deny","else":"deny"}]}}}`
+	doc, err := ParseMethodPolicyDocument([]byte(policy))
+	if err != nil {
+		t.Fatalf("parse policy: %v", err)
+	}
+	if err := doc.Validate(abiJSON); err == nil || !strings.Contains(err.Error(), "collides") {
+		t.Fatalf("colliding gated selector must be rejected, got %v", err)
+	}
+}
+
+// ---- Return-address decoder (H2: hostile / oversized / wrong-shape returns) ----
+
+// TestDecodeReturnAddresses_HappyPath confirms the decoder extracts exactly the
+// declared address outputs from a well-formed return tuple.
+func TestDecodeReturnAddresses_HappyPath(t *testing.T) {
+	parsed := mustParseABI(t)
+	calldata := encodeCall(t, "getPaymentInfo", "PAY-1")
+	ret, err := parsed.Methods["getPaymentInfo"].Outputs.Pack(
+		bigInt(1001), bigInt(1699999999), addr(payerAddr), addr(payeeAddr), false)
+	if err != nil {
+		t.Fatalf("pack return: %v", err)
+	}
+
+	got, err := DecodeReturnAddresses(ret, calldata, []string{"payer", "payee"}, parsed)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 2 || !strings.EqualFold(got[0].Hex(), payerAddr) || !strings.EqualFold(got[1].Hex(), payeeAddr) {
+		t.Fatalf("decoded = %v, want [%s %s]", got, payerAddr, payeeAddr)
+	}
+
+	// A single declared path selects only that output.
+	one, err := DecodeReturnAddresses(ret, calldata, []string{"payee"}, parsed)
+	if err != nil || len(one) != 1 || !strings.EqualFold(one[0].Hex(), payeeAddr) {
+		t.Fatalf("single-path decode = %v, err=%v, want [%s]", one, err, payeeAddr)
+	}
+}
+
+// TestDecodeReturnAddresses_FailClosed feeds the decoder the hostile / malformed
+// inputs the design (H2) says it defends against and asserts every one fails
+// closed (errDecode) without panicking. This is the direct coverage the gate
+// relies on — the evaluation matrix only exercises the decoder via a faked
+// resolver error.
+func TestDecodeReturnAddresses_FailClosed(t *testing.T) {
+	parsed := mustParseABI(t)
+	calldata := encodeCall(t, "getPaymentInfo", "PAY-1")
+	validRet, err := parsed.Methods["getPaymentInfo"].Outputs.Pack(
+		bigInt(1001), bigInt(1699999999), addr(payerAddr), addr(payeeAddr), false)
+	if err != nil {
+		t.Fatalf("pack return: %v", err)
+	}
+
+	// A return with a hostile dynamic length prefix: a (bytes, address) tuple
+	// whose bytes length word is overwritten with 2^256-1, claiming far more
+	// data than is present. go-ethereum's Unpack must reject it, not allocate.
+	const dynABIJSON = `[{"type":"function","name":"getBlob","stateMutability":"view",
+	  "inputs":[{"name":"id","type":"string"}],
+	  "outputs":[{"name":"data","type":"bytes"},{"name":"owner","type":"address"}]}]`
+	dynABI, err := abi.JSON(strings.NewReader(dynABIJSON))
+	if err != nil {
+		t.Fatalf("parse dyn ABI: %v", err)
+	}
+	dynCalldata, err := dynABI.Pack("getBlob", "X")
+	if err != nil {
+		t.Fatalf("pack getBlob: %v", err)
+	}
+	hostile, err := dynABI.Methods["getBlob"].Outputs.Pack([]byte{1, 2, 3}, addr(payerAddr))
+	if err != nil {
+		t.Fatalf("pack getBlob return: %v", err)
+	}
+	// Layout: [0:32]=offset(data), [32:64]=owner, [64:96]=len(data). Corrupt the
+	// length word so it claims an enormous byte count.
+	for i := 64; i < 96; i++ {
+		hostile[i] = 0xFF
+	}
+
+	// getPaymentInfo return with the isCompleted bool word set to a non-0/1
+	// value — go-ethereum rejects a malformed bool, exercising a wrong-shape
+	// decode within the size bound.
+	garbageBool := make([]byte, len(validRet))
+	copy(garbageBool, validRet)
+	for i := len(garbageBool) - 32; i < len(garbageBool); i++ {
+		garbageBool[i] = 0xFF
+	}
+
+	unknownSelector := append([]byte{0xde, 0xad, 0xbe, 0xef}, validRet...)
+
+	tests := []struct {
+		name     string
+		ret      []byte
+		calldata []byte
+		paths    []string
+	}{
+		{"oversized > 128 KiB", make([]byte, 128*1024+1), calldata, []string{"payer"}},
+		{"empty return", nil, calldata, []string{"payer"}},
+		{"truncated return", validRet[:64], calldata, []string{"payer"}},
+		{"garbage bool word", garbageBool, calldata, []string{"payer"}},
+		{"hostile dynamic length prefix", hostile, dynCalldata, []string{"owner"}},
+		{"non-address declared path", func() []byte {
+			r, _ := parsed.Methods["getTradeStatus"].Outputs.Pack(uint8(1), bigInt(5))
+			return r
+		}(), encodeCall(t, "getTradeStatus", "TRADE-1"), []string{"status"}},
+		{"calldata under 4 bytes", validRet, []byte{0x01, 0x02}, []string{"payer"}},
+		{"unknown selector", validRet, unknownSelector, []string{"payer"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p := parsed
+			if tc.name == "hostile dynamic length prefix" {
+				p = dynABI
+			}
+			out, err := DecodeReturnAddresses(tc.ret, tc.calldata, tc.paths, p)
+			if err == nil {
+				t.Fatalf("expected fail-closed error, got addrs=%v", out)
+			}
+			if out != nil {
+				t.Fatalf("fail-closed decode must return nil addrs, got %v", out)
+			}
+		})
+	}
+}

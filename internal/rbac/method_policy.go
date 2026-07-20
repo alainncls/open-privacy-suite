@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"reflect"
 	"sort"
@@ -197,6 +198,13 @@ func ParseMethodPolicyDocument(data []byte) (*MethodPolicyDocument, error) {
 	if err := dec.Decode(&doc); err != nil {
 		return nil, fmt.Errorf("method policy: %w", err)
 	}
+	// Require the input to be exactly ONE JSON document: a single Decode would
+	// otherwise accept a valid policy followed by a second value (or trailing
+	// junk), silently ignoring everything after the first. Reject anything past
+	// the first document.
+	if _, err := dec.Token(); err != io.EOF {
+		return nil, errors.New("method policy: unexpected trailing data after policy document")
+	}
 	if doc.Records == nil {
 		return nil, errors.New("method policy: no records")
 	}
@@ -270,6 +278,17 @@ func (d *MethodPolicyDocument) Validate(contractABI string) error {
 	if err != nil {
 		return fmt.Errorf("method policy: parse ABI: %w", err)
 	}
+	// Count how many ABI methods share each 4-byte selector. A gated method
+	// whose selector collides with another ABI method cannot be resolved
+	// reliably at read time — GatedReader/decodeRecordKey look the selector up
+	// via abi.MethodById, which returns an arbitrary one of the colliding
+	// methods (map iteration order). If the wrong (ungated) signature wins, the
+	// gate silently passes the call through. Reject such a policy at save time
+	// rather than let a real 4-byte keccak collision open a bypass.
+	abiSelectorCount := map[string]int{}
+	for _, m := range parsed.Methods {
+		abiSelectorCount["0x"+common.Bytes2Hex(m.ID)]++
+	}
 	methodCount := 0
 	selectorOwners := map[string]string{} // selector → record type, reject >1 (H-2)
 	for recType, rec := range d.Records {
@@ -301,6 +320,9 @@ func (d *MethodPolicyDocument) Validate(contractABI string) error {
 				return fmt.Errorf("method %q not found in ABI", sig)
 			}
 			sel := "0x" + common.Bytes2Hex(m.ID)
+			if abiSelectorCount[sel] > 1 {
+				return fmt.Errorf("method %q (selector %s) collides with another ABI method's selector; cannot gate reliably", sig, sel)
+			}
 			if owner, seen := selectorOwners[sel]; seen && owner != recType {
 				return fmt.Errorf("method %q (selector %s) claimed by more than one record type (%q and %q)", sig, sel, owner, recType)
 			}
@@ -658,6 +680,9 @@ func (d *MethodPolicyDocument) DecodeCaptures(calldata []byte, senderDID string,
 			}
 			if key == "" {
 				return nil, fmt.Errorf("method policy: empty record key for %s", cap.Method)
+			}
+			if isZeroKeyValue(args[cap.Key.Index]) {
+				return nil, fmt.Errorf("method policy: zero/default record key for %s", cap.Method)
 			}
 			if len(key) > MethodPolicyMaxRecordKeyBytes {
 				// Over-long key: never readable (the gate rejects it too), so
@@ -1189,6 +1214,9 @@ func decodeRecordKey(key KeySpec, calldata []byte, parsed abi.ABI) (string, erro
 	if k == "" {
 		return "", errDecode // empty key never matches a stored record (M-2)
 	}
+	if isZeroKeyValue(args[key.Index]) {
+		return "", errDecode // zero/default key (0x0…0, "0", "0x") never identifies a real record
+	}
 	if len(k) > MethodPolicyMaxRecordKeyBytes {
 		return "", errDecode // bound the key (defense in depth) — fail closed
 	}
@@ -1202,6 +1230,49 @@ func canonicalizeArg(args []any, index int) (string, error) {
 		return "", fmt.Errorf("method policy: arg index %d out of range (%d args)", index, len(args))
 	}
 	return canonicalizeValue(args[index])
+}
+
+// isZeroKeyValue reports whether a decoded record-key argument is a type-aware
+// zero / empty value — a zero address, all-zero fixed bytes, empty dynamic
+// bytes, or a zero integer. Such a value is a predictable default, not the
+// high-entropy key the read side depends on, so it is rejected on BOTH the
+// capture (write) and decode (read) paths — keeping the two symmetric and
+// honoring the all-zero-key guard (L3). These forms all canonicalize to a
+// NON-empty string (0x0…0, "0", "0x"), so the plain `== ""` check at each call
+// site would let them through. A non-empty string key such as "0" is a
+// legitimate business identifier and is deliberately NOT treated as zero; the
+// empty string is already rejected by that `== ""` check.
+func isZeroKeyValue(v any) bool {
+	switch v := v.(type) {
+	case string:
+		return false // empty string handled by the canonical "" guard
+	case common.Address:
+		return v == (common.Address{})
+	case common.Hash:
+		return v == (common.Hash{})
+	case [32]byte:
+		return v == ([32]byte{})
+	case []byte:
+		return len(v) == 0
+	case *big.Int:
+		return v == nil || v.Sign() == 0
+	}
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return rv.Uint() == 0
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return rv.Int() == 0
+	case reflect.Array:
+		// bytesN (N != 32) decodes as [N]byte — zero iff every byte is zero.
+		for i := 0; i < rv.Len(); i++ {
+			if rv.Index(i).Uint() != 0 {
+				return false
+			}
+		}
+		return rv.Len() > 0
+	}
+	return false
 }
 
 // canonicalizeValue renders a single decoded ABI value to its canonical string

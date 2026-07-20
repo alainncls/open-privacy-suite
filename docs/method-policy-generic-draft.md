@@ -40,8 +40,8 @@ first, exactly as today; the policy only narrows within them.
           "method": "createPayment(string,address,uint256)",
           "key": { "source": "param", "index": 0 },
           "remember": {
-            "payer":    { "source": "sender",           "merge": "set-once" },
-            "payee":    { "source": "param", "index": 1, "merge": "set-once" },
+            "payer":    { "source": "sender",           "merge": "set_once" },
+            "payee":    { "source": "param", "index": 1, "merge": "set_once" },
             "audience": { "source": "visibleTo",         "merge": "union" }
           }
         },
@@ -76,9 +76,11 @@ Semantics:
 - `key` correlates writer and reader calls: `createPayment("payment-123", …)`
   ↔ `getPaymentInfo("payment-123")`.
 - `remember` fields are typed by their source (address, DID list, scalar).
-  `merge` controls repeated captures for the same key: `set-once` (first
-  write wins — identity fields cannot be rewritten later), `union` (audience
-  accumulates), `overwrite`.
+  `merge` controls repeated captures for the same key: `set_once` (first
+  write wins — identity fields cannot be rewritten later) and `union` (audience
+  accumulates). (`overwrite` is **not implemented** — a silent identity rewrite
+  is exactly what `set_once` guards against; see "Merge modes" under
+  Configuration & operations.)
 - `callerIn` matches the **authenticated** caller: their DID against DID
   values, their linked ETH addresses against address values. The `from` field
   of `eth_call` is ignored for authorization.
@@ -109,7 +111,7 @@ async reconciler (same one that lands visibleTo):
 
 `completePayment("payment-123")` later unions its `visibleTo` into
 `audience` — parties can be added per payment, identity fields cannot be
-rewritten (`set-once`).
+rewritten (`set_once`).
 
 ### Read path — `eth_call` → `getPaymentInfo("payment-123")`
 
@@ -191,8 +193,8 @@ The return-based resolver has nothing to compare against — but capture does:
         "method": "openTrade(string,address,uint256)",
         "key": { "source": "param", "index": 0 },
         "remember": {
-          "initiator":    { "source": "sender",           "merge": "set-once" },
-          "counterparty": { "source": "param", "index": 1, "merge": "set-once" },
+          "initiator":    { "source": "sender",           "merge": "set_once" },
+          "counterparty": { "source": "param", "index": 1, "merge": "set_once" },
           "audience":     { "source": "visibleTo",         "merge": "union" }
         }
       }],
@@ -221,8 +223,8 @@ other methods*:
         "method": "registerInvoice(bytes32,address)",
         "key": { "source": "param", "index": 0 },
         "remember": {
-          "issuer":   { "source": "sender",           "merge": "set-once" },
-          "debtor":   { "source": "param", "index": 1, "merge": "set-once" },
+          "issuer":   { "source": "sender",           "merge": "set_once" },
+          "debtor":   { "source": "param", "index": 1, "merge": "set_once" },
           "audience": { "source": "visibleTo",         "merge": "union" }
         }
       }],
@@ -300,7 +302,7 @@ against the one record the key resolves to.
 
 - How the UI presents capture→access mapping so it is configurable without
   reading this document (this is the hard part).
-- Merge-rule defaults (`set-once` vs `union`) per field type.
+- Merge-rule defaults (`set_once` vs `union`) per field type.
 - Whether `audience` from a *later* writer call (e.g. `completePayment`)
   should retroactively widen read access to the whole record — current draft:
   yes (union), matching how `visibleTo` already behaves for that tx's logs.
@@ -311,9 +313,9 @@ against the one record the key resolves to.
 
 Where the shipped implementation refines this draft:
 
-- **Merge modes.** Only `set-once` and `union` are implemented; `overwrite` is
-  intentionally omitted (a silent identity rewrite is exactly what `set-once`
-  guards against — nothing needed it). `set-once` is enforced as *deny-on-conflict*:
+- **Merge modes.** Only `set_once` and `union` are implemented; `overwrite` is
+  intentionally omitted (a silent identity rewrite is exactly what `set_once`
+  guards against — nothing needed it). `set_once` is enforced as *deny-on-conflict*:
   if two **distinct** values ever land for one (record, field), the key is treated
   as poisoned and all reads of it are denied (fail-safe against a front-running
   writer), rather than "first write silently wins".
