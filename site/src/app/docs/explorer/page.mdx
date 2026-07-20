@@ -19,14 +19,15 @@ graph TD
     User["User / Frontend"]
     BE["Block Explorer Backend<br/><small>DataProvider Abstraction</small>"]
     Proxy["Open Privacy Suite<br/><small>Explorer API + RBAC</small>"]
-    DB["Explorer Database<br/><small>Blocks, Txs, Stats</small>"]
+    IDX["chain-indexer<br/><small>Blocks, Txs, Stats</small>"]
     Eth["Ethereum Node<br/><small>Erigon / Anvil</small>"]
 
     User --> BE
     BE -->|"Proxy Mode (REST)"| Proxy
-    BE -->|"Standalone Mode (Direct)"| DB
-    Proxy --> DB
+    BE -->|"Standalone Mode (INDEXER_URL)"| IDX
+    Proxy --> IDX
     Proxy --> Eth
+    IDX -->|polls| Eth
 
     style Proxy stroke:#8950FA,stroke-width:2px
     style BE stroke:#3b82f6,stroke-width:2px
@@ -37,7 +38,7 @@ graph TD
 The Block Explorer backend implements a `DataProvider` interface that abstracts data retrieval.
 
 ### 1. Standalone Mode (Direct)
-In this mode, the explorer connects directly to its own PostgreSQL database and the Ethereum node. This is suitable for development or deployments where centralized privacy enforcement is not required.
+In this mode, the explorer reads chain data from the **chain-indexer** (set `INDEXER_URL`), with its own PostgreSQL database as a limited direct fallback. This is suitable for development or deployments where centralized privacy enforcement is not required. (The `privacy` Go build tag compiles the chain-indexer client out of the binary entirely, so a privacy-mode build cannot use this mode.)
 
 ### 2. Proxy-Mediated Mode (Centralized)
 In this mode, the explorer backend acts as a client to the Open Privacy Suite. It fetches all processed blockchain data via the **Explorer Data API**.
@@ -54,12 +55,12 @@ The Open Privacy Suite exposes a set of internal REST endpoints specifically for
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /api/explorer/blocks` | List recent blocks with pagination |
-| `GET /api/explorer/blocks/:number` | Get detailed block information |
-| `GET /api/explorer/transactions` | List recent transactions |
-| `GET /api/explorer/addresses/:addr/stats` | Get address-specific activity stats |
+| `GET /api/v1/explorer/blocks` | List recent blocks with pagination |
+| `GET /api/v1/explorer/blocks/:number` | Get detailed block information |
+| `GET /api/v1/explorer/transactions` | List recent transactions |
+| `GET /api/v1/explorer/addresses/:address/stats` | Get address-specific activity stats |
 | *(removed)* | The separate shared-logs endpoint has been replaced by `visibleTo` integration into regular views |
-| `GET /api/explorer/sync/status` | Get indexer synchronization levels |
+| `GET /api/v1/explorer/sync/status` | Get indexer synchronization levels |
 
 ## Identity Forwarding
 
@@ -71,11 +72,10 @@ When operating in Proxy Mode, the Block Explorer forwards the user's **JWT Ident
 
 ## Configuration
 
-To enable Proxy Mode in the Block Explorer, set the following environment variables:
+To enable Proxy Mode in the Block Explorer, set `PRIVACY_PROXY_URL` and leave `INDEXER_URL` unset — the presence of `PRIVACY_PROXY_URL` selects proxy mode (setting both, or neither, is rejected at startup):
 
 ```bash
 # In Block Explorer environment
-DATA_PROVIDER_MODE=proxy
 PRIVACY_PROXY_URL=http://privacy-proxy:8080
 ```
 

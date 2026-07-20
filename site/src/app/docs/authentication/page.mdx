@@ -101,7 +101,7 @@ On success the server returns an access/refresh token pair:
   "access_token": "eyJhbGc...",
   "refresh_token": "eyJhbGc...",
   "token_type": "Bearer",
-  "expires_in": 1800
+  "expires_in": 300
 }
 ```
 
@@ -195,7 +195,7 @@ If a collision is judged to be a key-compromise event rather than intentional sh
   { name: "BILLIONS_CREDENTIAL_TYPE", default: "ProofOfHumanity", description: "Credential type name declared by the schema" },
   { name: "BILLIONS_CREDENTIAL_QUERY_FILE", default: "(none)", description: "Path to a JSON file containing the credentialSubject predicate (e.g. {\"credentialSubject\":{\"isHuman\":{\"$eq\":1}}}). Required when PoH enabled." },
   { name: "PRIVADO_RPC_URL", default: "https://rpc-mainnet.privado.id", description: "Privado network RPC endpoint (backs the privado:main state resolver)" },
-  { name: "BILLIONS_RPC_URL", default: "https://billions-rpc.example.com", description: "RPC endpoint for the Billions identity chain (chainID 45056). Backs the billions:main state resolver so DIDs created in the Billions app can authenticate." },
+  { name: "BILLIONS_RPC_URL", default: "https://billions-rpc.eu-north-2.gateway.fm", description: "RPC endpoint for the Billions identity chain (chainID 45056). Backs the billions:main state resolver so DIDs created in the Billions app can authenticate." },
   { name: "BILLIONS_STATE_CONTRACT", default: "0x3C9acB2205Aa72A05F6D77d708b5Cf85FCa3a896", description: "On-chain identity state contract for the Billions chain. Defaults to the shared iden3 cross-chain address; override only if Billions moves it." },
   { name: "IPFS_GATEWAY", default: "https://ipfs-proxy-cache.privado.id", description: "IPFS gateway for credential schemas" },
   { name: "JWT_SECRET", default: "(auto-generated in dev)", description: "Access token signing secret" },
@@ -362,7 +362,7 @@ Bootstrap the first admin with the `X-Admin-Token` (M2M) endpoint above, then gr
 | 400 | `session parameter required` | Missing session ID in callback |
 | 400 | `jwz_token required` | Missing proof token |
 | 401 | `session not found or expired` | Invalid or expired session (10 min TTL) |
-| 401 | `JWZ verification failed` | Invalid ZK proof |
+| 401 | `verification failed` | Invalid ZK proof (the verbose "JWZ verification failed" is logged server-side only) |
 | 403 | `humanity_verification_required` | User lacks PoH credential |
 | 500 | `VERIFIER_ID not configured` | Missing configuration |
 
@@ -381,6 +381,6 @@ Bootstrap the first admin with the `X-Admin-Token` (M2M) endpoint above, then gr
 |--------|-------|-------|
 | 401 | `missing Authorization header` | No Bearer token provided |
 | 401 | `invalid token` | Malformed or invalid JWT |
-| 403 | `user is banned` | User's policy has `banned: true` |
-| 403 | `KYC required` | User's policy has `kyc: false` |
-| 403 | `method not allowed` | Method not in user's `allow_methods` |
+| 403 | `account is banned` | Banned user on login / refresh (the admin dashboard returns `user is banned`) |
+
+On the JSON-RPC data path, RBAC denials — method not allowed, KYC not completed, contract not permitted, and even a ban — are deliberately returned as an opaque **`404 method not found`**; the proxy does not disclose *why* a call was denied. The operator-facing denial reasons are recorded in the access log and surfaced in [Troubleshooting → RBAC](/docs/troubleshooting).

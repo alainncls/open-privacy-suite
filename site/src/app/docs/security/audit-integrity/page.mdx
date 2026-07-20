@@ -8,10 +8,10 @@ export const metadata = {
 
 # Audit Log Integrity
 
-The proxy protects its audit trail against silent tampering with a SHA-256 hash chain. Every row in `access_logs` and `rbac_audit_log` includes `entry_hash = SHA-256(prev_row.entry_hash || canonical_row_content)`. If anyone edits a row in place, the hash no longer matches and the verifier flags it. If anyone deletes a row from the middle, the next row's hash no longer matches and the verifier flags it. If anyone replaces a row and recomputes every downstream hash, the tail no longer matches the SIEM-forwarded tail snapshot.
+The proxy protects its audit trail against silent tampering with a SHA-256 hash chain. Every row in `access_logs` and `rbac_audit_log` includes `entry_hash = SHA-256(prev_row.entry_hash || canonical_row_content)`. If anyone edits a row in place, the hash no longer matches and the verifier flags it. If anyone deletes a row from the middle, the next row's hash no longer matches and the verifier flags it. If anyone replaces a row and recomputes every downstream hash, the tail no longer matches the signed checkpoint (or the external S3 Object-Lock anchor, when configured).
 
 <Callout variant="warning" title="Threat model — be honest about what this defends against">
-  The DB-resident hash chain catches accidental corruption, lazy tampering (delete a row, forget to recompute), and any attacker with DB read access but not write. It does not defend on its own against an attacker with DB write access; that's what role separation and the external anchor are for. The defenses that raise the bar against a write-capable attacker — role separation, SIEM-forwarded tail, S3 Object Lock anchor, HSM-signed entries — are documented further down. The hash chain alone is the floor, not the ceiling.
+  The DB-resident hash chain catches accidental corruption, lazy tampering (delete a row, forget to recompute), and any attacker with DB read access but not write. It does not defend on its own against an attacker with DB write access; that's what role separation and the external anchor are for. The defenses that raise the bar against a write-capable attacker — role separation, signed checkpoints, the S3 Object Lock anchor, HSM-signed entries — are documented further down. The hash chain alone is the floor, not the ceiling.
 </Callout>
 
 ---
@@ -48,7 +48,7 @@ The canonical content format is versioned per table (`hash_format_version` colum
 The proxy ships an in-process worker that runs the verifier every `AUDIT_INTEGRITY_VERIFY_INTERVAL` (default 15 minutes) across every configured chain. On detection it:
 
 - Logs `slog.Error` with the chain name, row id, and mismatch reason.
-- Increments `privacy_proxy_audit_chain_integrity_violations_total{chain,reason}` (Prometheus).
+- Increments a Prometheus tamper-violation counter (labelled by chain and reason).
 - Emits a SIEM event of type `audit.chain.tamper_detected` via `SIEM_WEBHOOK_URL` — **preferred** notification path because the customer's SIEM already routes to their alerting (PagerDuty / Slack / Datadog).
 - Optionally POSTs a JSON payload to `AUDIT_TAMPER_WEBHOOK_URL` (generic webhook fallback for smaller deployments).
 
@@ -61,10 +61,14 @@ Set `AUDIT_INTEGRITY_VERIFY_INTERVAL=0` to disable the scheduled worker if you p
 For auditor spot-checks, incident response, or scheduled cron, use the CLI:
 
 ```bash
-privacy-cli audit verify \
-  --database-url "$AUDIT_DB_URL" \
-  --chain all
+# access_logs lives in the audit database
+privacy-cli audit verify --database-url "$AUDIT_DATABASE_URL" --chain access_logs
+
+# rbac_audit_log lives in the main database
+privacy-cli audit verify --database-url "$DATABASE_URL" --chain rbac_audit_log
 ```
+
+The two hash chains live in different databases (`access_logs` in the audit DB, `rbac_audit_log` in the main DB), so verify each against its own DSN — a single `--chain all` against one connection cannot span both.
 
 The CLI is read-only. Connect with the **admin role** (or a dedicated read-only audit role), not the runtime app credential — the app role has only `INSERT`/`SELECT` on the audit tables by design.
 

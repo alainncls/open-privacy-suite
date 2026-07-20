@@ -1,6 +1,5 @@
 import { Callout } from "@/components/mdx/callout";
 import { ApiEndpoint } from "@/components/mdx/api-endpoint";
-import { EnvTable } from "@/components/mdx/env-table";
 export const metadata = {
   title: "Selective Disclosure",
   description:
@@ -127,19 +126,21 @@ The scope defines what data can be accessed:
 
 ### User Disclosure Dashboard
 
-<ApiEndpoint method="GET" path="/api/v1/disclosure/requests?status=pending" description="List pending disclosure requests for your data" />
+<ApiEndpoint method="GET" path="/api/v1/me/disclosure/requests?status=pending" description="List pending disclosure requests for your data" />
 
-<ApiEndpoint method="GET" path="/api/v1/disclosure/grants?status=active" description="List active disclosure grants you have given" />
+<ApiEndpoint method="GET" path="/api/v1/me/disclosure/grants?status=active" description="List active disclosure grants you have given" />
 
-<ApiEndpoint method="POST" path="/api/v1/disclosure/requests/{id}/approve" description="Approve a disclosure request" />
+<ApiEndpoint method="POST" path="/api/v1/me/disclosure/requests/{id}/approve" description="Approve a disclosure request" />
 
 ```json
 {
-  "grant_duration_days": 30
+  "grant_duration_hours": 720
 }
 ```
 
-<ApiEndpoint method="POST" path="/api/v1/disclosure/requests/{id}/reject" description="Reject a disclosure request" />
+`grant_duration_hours` is optional and defaults to **24**.
+
+<ApiEndpoint method="POST" path="/api/v1/me/disclosure/requests/{id}/reject" description="Reject a disclosure request" />
 
 ```json
 {
@@ -149,7 +150,7 @@ The scope defines what data can be accessed:
 
 ### Admin / Auditor Access
 
-<ApiEndpoint method="POST" path="/api/v1/disclosure/requests" description="Create a new disclosure request" />
+<ApiEndpoint method="POST" path="/api/v1/admin/disclosure/requests" description="Create a new disclosure request" />
 
 ```json
 {
@@ -200,7 +201,7 @@ Response includes own addresses and disclosed addresses with their disclosure le
 }
 ```
 
-<ApiEndpoint method="GET" path="/api/v1/explorer/grant/{grant_id}/{address_id}" description="View address details via grant (uses opaque address_id)" />
+<ApiEndpoint method="GET" path="/api/v1/explorer/grant/{grant_id}/resolve/{address_id}" description="View address details via grant (uses opaque address_id)" />
 
 <ApiEndpoint method="GET" path="/api/v1/explorer/grant/{grant_id}/{address_id}/transactions" description="Get pseudonymized transactions for a disclosed address" />
 
@@ -287,11 +288,10 @@ The system supports generating compliance reports:
 
 ## Configuration
 
-<EnvTable vars={[
-  { name: "DISCLOSURE_REQUEST_TTL", default: "7d", description: "How long pending requests remain valid" },
-  { name: "DISCLOSURE_GRANT_MAX_TTL", default: "365d", description: "Maximum grant duration" },
-  { name: "DISCLOSURE_AUDIT_RETENTION", default: "7y", description: "How long to retain audit logs" },
-]} />
+Disclosure timeouts are set **per request**, not via environment variables:
+
+- **Request expiry** — set per request via `expires_in_hours` in the create-request body (`0` = no expiration).
+- **Grant duration** — set per approval via `grant_duration_hours` (default **24**); there is no server-wide maximum-duration clamp.
 
 ## Best Practices
 

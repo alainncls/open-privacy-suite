@@ -60,7 +60,10 @@ These variables **must** be set when `ENVIRONMENT=production`. The server will r
 | `JWT_REFRESH_SECRET` | Secret for signing refresh tokens |
 | `VERIFIER_ID` | Your Privado verifier DID |
 | `ADMIN_API_TOKEN` | Shared token for admin API authentication (M2M / bootstrap) |
-| `DATABASE_URL` | PostgreSQL connection string |
+| `NODE_URL` | Target Ethereum node URL |
+| `BASE_URL` | Public URL for auth callbacks |
+
+`DATABASE_URL` is **not** enforced here — it has a built-in localhost default, so a production deploy without it starts and silently targets `localhost:5432`. Set it explicitly.
 
 ---
 
@@ -140,7 +143,7 @@ At startup the proxy migrates the audit database (as the admin DSN), then reads 
 
 <EnvTable vars={[
   { name: "PRIVADO_RPC_URL", default: "https://rpc-mainnet.privado.id", description: "Privado network RPC endpoint (backs the privado:main state resolver)" },
-  { name: "BILLIONS_RPC_URL", default: "https://billions-rpc.example.com", description: "RPC endpoint for the Billions identity chain (chainID 45056). Lets users sign in with the Billions app, not just Privado ID." },
+  { name: "BILLIONS_RPC_URL", default: "https://billions-rpc.eu-north-2.gateway.fm", description: "RPC endpoint for the Billions identity chain (chainID 45056). Lets users sign in with the Billions app, not just Privado ID." },
   { name: "BILLIONS_STATE_CONTRACT", default: "0x3C9acB2205Aa72A05F6D77d708b5Cf85FCa3a896", description: "Billions on-chain identity state contract. Defaults to the shared iden3 cross-chain address; override only if Billions moves it." },
   { name: "IPFS_GATEWAY", default: "https://ipfs-proxy-cache.privado.id", description: "IPFS gateway for schemas" },
   { name: "JWT_SECRET", default: "(auto in dev)", description: "Access token signing secret" },
@@ -378,7 +381,7 @@ cp rpc-namespaces.example.json rpc-namespaces.json
 
 | Token | TTL | Notes |
 |-------|-----|-------|
-| Access Token | 30 minutes | Short-lived; use refresh to renew |
+| Access Token | 5 minutes | Short-lived; use refresh to renew (dev/mockauth builds use 30 min) |
 | Refresh Token | 7 days | Rotated on each refresh |
 | Auth Session | 10 minutes | Time to complete the auth flow |
 | ETH Link Challenge | 5 minutes | Signature challenge expiry |
@@ -484,7 +487,7 @@ The prod manifest (`docker-compose.privacy.yml`) pulls the proxy-backend image r
 
 | Env var | Default | Purpose |
 |---------|---------|---------|
-| `INDEXER_VERSION` | `0.2.2` (dev) / `latest` (prod) | Tag pulled from `gatewayfm/chain-indexer` (dev, dockerhub) or `ghcr.io/gateway-fm/chain-indexer` (prod). Verify any new pin with `docker manifest inspect` before changing — the dev default has no `v` prefix because the dockerhub tag doesn't carry one. |
+| `INDEXER_VERSION` | `0.3.0` (dev) / `latest` (prod) | Tag pulled from `gatewayfm/chain-indexer` (dev, dockerhub) or `ghcr.io/gateway-fm/chain-indexer` (prod). Verify any new pin with `docker manifest inspect` before changing — the dev default has no `v` prefix because the dockerhub tag doesn't carry one. |
 | `BLOCK_EXPLORER_PATH` | `../block-explorer` | Sibling-clone location for the block-explorer source (dev only — both api and frontend build from this path). |
 | `CHAIN_INDEXER_PATH` | `../chain-indexer` | Sibling-clone location for chain-indexer (only used when overriding the published image with a local build via `docker-compose.override.yml`). |
 
@@ -558,7 +561,7 @@ Both `access_logs` and `rbac_audit_log` are protected by a SHA-256 hash chain. E
 When a violation is detected, the verifier:
 
 - Logs a structured `slog.Error` with the chain name, the offending row id, and the mismatch reason.
-- Increments Prometheus counter `privacy_proxy_audit_chain_integrity_violations_total{chain,reason}`.
+- Increments a Prometheus tamper-violation counter (labelled by chain and reason).
 - Emits a SIEM event of type `audit.chain.tamper_detected` via the existing `SIEM_WEBHOOK_URL` forwarder (preferred channel — the customer's SIEM already routes to PagerDuty / Slack / Datadog).
 - POSTs a JSON payload to `AUDIT_TAMPER_WEBHOOK_URL` if configured.
 

@@ -15,15 +15,19 @@ Open Privacy Suite is a privacy-preserving JSON-RPC proxy that sits between clie
 ```mermaid
 graph TD
     Client["Client (Wallet)<br/><small>MetaMask, ethers.js, any JSON-RPC client</small>"]
-    Proxy["Open Privacy Suite<br/><small>Auth → RBAC → Trace → Forward</small>"]
+    Proxy["Open Privacy Suite<br/><small>Auth → RBAC → Trace → Forward → Redact</small>"]
     Eth["Ethereum Node<br/><small>JSON-RPC execution layer (Erigon)</small>"]
-    DB["PostgreSQL<br/><small>Policies, RBAC, audit logs</small>"]
+    DB["PostgreSQL<br/><small>Policies, RBAC</small>"]
+    Audit["Audit database<br/><small>append-only access log, restricted role</small>"]
+    Redis["Redis<br/><small>sessions, cache, RBAC — optional</small>"]
     Privado["Privado RPC<br/><small>Identity state verification</small>"]
     IPFS["IPFS Gateway<br/><small>Credential schemas</small>"]
 
     Client --> Proxy
     Proxy --> Eth
     Proxy -.-> DB
+    Proxy -.-> Audit
+    Proxy -.-> Redis
     Proxy -.->|"auth only"| Privado
     Proxy -.->|"auth only"| IPFS
 
@@ -31,6 +35,8 @@ graph TD
 ```
 
 The proxy is the **sole gateway** between clients and the blockchain. There are no alternative paths to the Ethereum node. If the proxy denies access, the user has no way to reach the network.
+
+Policies and RBAC live in PostgreSQL. The access log is written to a **separate, append-only audit database** with a restricted insert-only role, so the tamper-evident audit trail is isolated from the operational data (see [Audit integrity](/docs/security/audit-integrity)). **Redis** is optional — configure it for any multi-instance deployment, where it holds shared sessions, cache, and RBAC state.
 
 ## Core Components
 
@@ -82,7 +88,9 @@ graph TD
 |---------|-------------|-------------|
 | Open Privacy Suite (API + RPC) | `8080` | JSON-RPC proxy and admin REST API |
 | Frontend (Admin UI) | `5173` | Vite dev server for the admin dashboard |
-| PostgreSQL | `5432` | Policy storage, RBAC, audit logs |
+| PostgreSQL | `5432` | Policy storage, RBAC |
+| Audit database | `5432` | Append-only access log — separate database + restricted role (may share the server) |
+| Redis | `6379` | Sessions, cache, RBAC — optional; required for multi-instance |
 | Ethereum Node (Anvil/Erigon) | `8545` | JSON-RPC execution layer |
 
 ## Privacy-mode topology
@@ -100,6 +108,8 @@ graph LR
     EXPDB[(block-explorer-postgres)]
     IDXDB[(indexer-postgres)]
     PXDB[(privacy-postgres)]
+    AUDIT[(audit database<br/><small>append-only, restricted role</small>)]
+    REDIS[(redis<br/><small>sessions, cache</small>)]
 
     Client --> EXPF
     EXPF --"/api/* to BFF"--> BFF
@@ -108,6 +118,8 @@ graph LR
     PROXY --> NODE
     PROXY --> IDX
     PROXY --> PXDB
+    PROXY --> AUDIT
+    PROXY --> REDIS
     IDX --> IDXDB
     IDX --"polls"--> NODE
 ```

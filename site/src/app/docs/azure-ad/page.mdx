@@ -78,7 +78,7 @@ Verify Azure AD is enabled in the backend logs:
 
 ```bash
 docker-compose logs proxy-backend | grep "Azure AD"
-# Should show: Azure AD authentication enabled (tenant: <your-tenant-id>)
+# Should show: Azure AD authentication enabled ... tenant=<your-tenant-id>
 ```
 
 Then add your tenant to the allowlist:
