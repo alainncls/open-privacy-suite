@@ -1635,34 +1635,58 @@ func TestRedactLogs_EventRules_ParamRules_VisibleToOnlyHelpsIfTopic0Matches(t *t
 	}
 }
 
-// TestRedactLogs_OrdinaryVisibleTo_NoGrant_Dropped_RD1208 mirrors the RPC
-// layer's RD-1208 fix at the explorer: a HIDDEN (no-grant) emitting contract
-// must NOT be resurrected to Full by ordinary visibleTo. Grant eligibility is
-// load-bearing (REDACTION_SPEC §3.7.1 / RD-874); only the per-contract
-// allow_visibleto_unlock semantic turns visibleTo into a standalone grant.
+// TestRedactLogs_OrdinaryVisibleTo_NoGrantEmitter_RD1208 pins the explorer
+// half of RD-1208: ordinary (non-unlock) visibleTo must not grant a no-grant
+// viewer access to a contract's event logs. Grant eligibility is load-bearing
+// (REDACTION_SPEC §3.7.1 / RD-874).
 //
-// This must hold even with NO event-rule checker wired — proving the drop is
-// enforced by the visibleTo/grant boundary itself, not by the downstream
-// deny-all event-rule backstop (which only fires when a checker is present).
-// A resolvable ABI is wired so the deny-when-no-ABI gate does not mask the
-// decision, and the event's params are static so the M15 gate does not fire.
-func TestRedactLogs_OrdinaryVisibleTo_NoGrant_Dropped_RD1208(t *testing.T) {
+// State modelled: a REGISTERED org contract with no grant resolves to
+// VisibilityRedacted/ReasonNoAccess (GetBatchVisibilityDetailed) — grant
+// holders resolve to VisibilityFull, and VisibilityHidden is an unregistered
+// address / EOA. So the no-grant emitter is VisibilityRedacted, NOT Hidden.
+func TestRedactLogs_OrdinaryVisibleTo_NoGrantEmitter_RD1208(t *testing.T) {
 	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	engine := newEngine(VisibilityMap{addr: VisibilityHidden})
-	engine.SetABIResolver(&stubABIResolver{byAddr: map[string]string{addr: testEventABI}})
-	// Deliberately NO event-rule checker wired.
-
 	topic := eventTopic0("PrivateTransfer(address,address,uint256)")
-	logs := []Log{{ID: 1, Address: addr, TxHash: "0xshared", Topic0: &topic, Data: "0x"}}
-	result, err := engine.RedactLogsWithOpts(context.Background(), logs, "did:test", &RedactOpts{
-		VisibleTxHashes: map[string]bool{"0xshared": true},
+
+	// Isolating the visibility/visibleTo layer (no event-rule checker wired):
+	// ordinary visibleTo must NOT upgrade the no-grant emitter to Full. The
+	// emitting contract renders [PRIVATE]; its real address must never leak.
+	// Before the fix the visibleTo level-up promoted Redacted->Full and the
+	// emitter (and its payload) rendered in the clear.
+	t.Run("no-grant emitter not revealed via visibleTo", func(t *testing.T) {
+		engine := newEngine(VisibilityMap{addr: VisibilityRedacted})
+		logs := []Log{{ID: 1, Address: addr, TxHash: "0xshared", Topic0: &topic, Data: "0x"}}
+		result, err := engine.RedactLogsWithOpts(context.Background(), logs, "did:test", &RedactOpts{
+			VisibleTxHashes: map[string]bool{"0xshared": true},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected the log kept (field-redacted), got %d", len(result))
+		}
+		if strings.EqualFold(result[0].Address, addr) {
+			t.Errorf("ordinary visibleTo must not reveal a no-grant emitter at Full (RD-1208); emitter leaked as %s", result[0].Address)
+		}
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(result) != 0 {
-		t.Errorf("ordinary visibleTo must not resurrect a hidden no-grant emitter (RD-1208), got %d logs", len(result))
-	}
+
+	// Production config (wireExplorerRedactor wires the event-rule checker):
+	// a no-grant emitter resolves to deny-all, so the log is dropped entirely.
+	// Ordinary visibleTo must not rescue it.
+	t.Run("no-grant emitter dropped in production", func(t *testing.T) {
+		engine := newEngine(VisibilityMap{addr: VisibilityRedacted})
+		engine.SetEventRuleChecker(&stubEventRuleChecker{}) // no entry => deny-all
+		logs := []Log{{ID: 1, Address: addr, TxHash: "0xshared", Topic0: &topic, Data: "0x"}}
+		result, err := engine.RedactLogsWithOpts(context.Background(), logs, "did:test", &RedactOpts{
+			VisibleTxHashes: map[string]bool{"0xshared": true},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result) != 0 {
+			t.Errorf("ordinary visibleTo must not rescue a no-grant emitter's log in production (RD-1208), got %d logs", len(result))
+		}
+	})
 }
 
 // TestRedactLogs_GetLinkedAddressesError_Propagates pins the audit

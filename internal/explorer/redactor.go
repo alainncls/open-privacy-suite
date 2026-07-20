@@ -2212,22 +2212,23 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 			level = VisibilityFull
 		}
 
-		// visibleTo override (additive): if the tx that produced this log
-		// was shared with the viewer, upgrade a REDACTED emitting contract
-		// to Full — widening an already-permitted viewer's view of a tx
-		// explicitly shared with them. It must NOT resurrect a HIDDEN
-		// (no-grant) emitter: per REDACTION_SPEC §3.7.1 / RD-874 grant
-		// eligibility is load-bearing, and ordinary visibleTo never grants
-		// NEW contract-level event access (RD-1208). The standalone-grant
-		// path is the per-contract allow_visibleto_unlock semantic, handled
-		// at the top of this loop via unlockableContracts. A Hidden emitter
-		// falls through to the drop below — the fail-closed decision does
-		// not rely on the downstream deny-all event-rule backstop. Mirrors
-		// rbac.FilterEventLogs's access==nil deny.
-		if level == VisibilityRedacted && visibleTxHashes[strings.ToLower(l.TxHash)] {
-			level = VisibilityFull
-		}
-
+		// Ordinary (non-unlock) visibleTo does NOT alter the emitting
+		// contract's visibility level. Grant eligibility is load-bearing
+		// (REDACTION_SPEC §3.7.1 / RD-874): a viewer holding a contract grant
+		// already resolves to VisibilityFull, so a shared-tx level-up would
+		// only ever fire for a NO-grant emitter — a registered contract with
+		// no grant resolves to VisibilityRedacted/ReasonNoAccess (an
+		// unregistered address / EOA to VisibilityHidden). Upgrading that to
+		// Full is exactly the leak RD-1208 closes: a transaction sender must
+		// not expose a contract's event payloads to a DID the contract owner
+		// never granted. So there is no ordinary-visibleTo level-up here. A
+		// no-grant emitter stays Redacted (its addresses field-redacted) and
+		// is denied by the event-rule deny-all gate below; the legitimate
+		// additive widening (an allowlisted topic0 whose param rule failed)
+		// is applied there via the visibleTxHashes fallback, which is reached
+		// only for grant holders (non-empty event rules). The only
+		// standalone-grant path is the per-contract allow_visibleto_unlock
+		// semantic, handled at the top of this loop via unlockableContracts.
 		if level == VisibilityHidden {
 			continue
 		}
