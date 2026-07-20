@@ -2212,9 +2212,19 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 			level = VisibilityFull
 		}
 
-		// visibleTo override: if the tx that produced this log was shared
-		// with the viewer, upgrade Hidden/Redacted to Full.
-		if (level == VisibilityHidden || level == VisibilityRedacted) && visibleTxHashes[strings.ToLower(l.TxHash)] {
+		// visibleTo override (additive): if the tx that produced this log
+		// was shared with the viewer, upgrade a REDACTED emitting contract
+		// to Full — widening an already-permitted viewer's view of a tx
+		// explicitly shared with them. It must NOT resurrect a HIDDEN
+		// (no-grant) emitter: per REDACTION_SPEC §3.7.1 / RD-874 grant
+		// eligibility is load-bearing, and ordinary visibleTo never grants
+		// NEW contract-level event access (RD-1208). The standalone-grant
+		// path is the per-contract allow_visibleto_unlock semantic, handled
+		// at the top of this loop via unlockableContracts. A Hidden emitter
+		// falls through to the drop below — the fail-closed decision does
+		// not rely on the downstream deny-all event-rule backstop. Mirrors
+		// rbac.FilterEventLogs's access==nil deny.
+		if level == VisibilityRedacted && visibleTxHashes[strings.ToLower(l.TxHash)] {
 			level = VisibilityFull
 		}
 

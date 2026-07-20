@@ -1635,6 +1635,36 @@ func TestRedactLogs_EventRules_ParamRules_VisibleToOnlyHelpsIfTopic0Matches(t *t
 	}
 }
 
+// TestRedactLogs_OrdinaryVisibleTo_NoGrant_Dropped_RD1208 mirrors the RPC
+// layer's RD-1208 fix at the explorer: a HIDDEN (no-grant) emitting contract
+// must NOT be resurrected to Full by ordinary visibleTo. Grant eligibility is
+// load-bearing (REDACTION_SPEC §3.7.1 / RD-874); only the per-contract
+// allow_visibleto_unlock semantic turns visibleTo into a standalone grant.
+//
+// This must hold even with NO event-rule checker wired — proving the drop is
+// enforced by the visibleTo/grant boundary itself, not by the downstream
+// deny-all event-rule backstop (which only fires when a checker is present).
+// A resolvable ABI is wired so the deny-when-no-ABI gate does not mask the
+// decision, and the event's params are static so the M15 gate does not fire.
+func TestRedactLogs_OrdinaryVisibleTo_NoGrant_Dropped_RD1208(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	engine := newEngine(VisibilityMap{addr: VisibilityHidden})
+	engine.SetABIResolver(&stubABIResolver{byAddr: map[string]string{addr: testEventABI}})
+	// Deliberately NO event-rule checker wired.
+
+	topic := eventTopic0("PrivateTransfer(address,address,uint256)")
+	logs := []Log{{ID: 1, Address: addr, TxHash: "0xshared", Topic0: &topic, Data: "0x"}}
+	result, err := engine.RedactLogsWithOpts(context.Background(), logs, "did:test", &RedactOpts{
+		VisibleTxHashes: map[string]bool{"0xshared": true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Errorf("ordinary visibleTo must not resurrect a hidden no-grant emitter (RD-1208), got %d logs", len(result))
+	}
+}
+
 // TestRedactLogs_GetLinkedAddressesError_Propagates pins the audit
 // fix for finding #5 — pre-fix the redactor swallowed
 // GetLinkedAddresses errors via `if err == nil` and silently treated
