@@ -94,6 +94,30 @@ describe("MethodPolicyManager", () => {
     await waitFor(() => expect(screen.getByText(/nope/i)).toBeInTheDocument());
   });
 
+  it("clear propagates the cleared contract to the parent (no stale policy on reopen)", async () => {
+    const u = userEvent.setup();
+    // The PUT returns the updated contract with method_policies cleared.
+    (rbacApi.contracts.updateMethodPolicies as ReturnType<typeof vi.fn>).mockResolvedValue({
+      data: { id: "c1", address: "0xabc", abi: paymentABI, method_policies: null },
+    });
+    const onContractUpdated = vi.fn();
+    render(
+      <MethodPolicyManager
+        {...baseProps}
+        initialPolicy={{ records: { payment: { capture: [], access: [] } } }}
+        onContractUpdated={onContractUpdated}
+      />,
+    );
+    await u.click(screen.getByRole("button", { name: /clear policy/i }));
+    const dialog = await screen.findByRole("dialog");
+    await u.click(within(dialog).getByRole("button", { name: /clear policy/i }));
+    await waitFor(() => expect(rbacApi.contracts.updateMethodPolicies).toHaveBeenCalledTimes(1));
+    // The parent MUST be told, with method_policies cleared, or a reopened
+    // dialog re-mounts with the stale cached policy (the reported bug).
+    await waitFor(() => expect(onContractUpdated).toHaveBeenCalledTimes(1));
+    expect(onContractUpdated.mock.calls[0][0].method_policies).toBeNull();
+  });
+
   it("clear shows the app confirm dialog (not window.confirm); cancel makes no API call", async () => {
     const u = userEvent.setup();
     render(<MethodPolicyManager {...baseProps} initialPolicy={{ records: { payment: { capture: [], access: [] } } }} />);

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { rbacApi } from "@/api/rbac";
-import type { MethodPolicyDocument } from "@/types/rbac";
+import type { Contract, MethodPolicyDocument } from "@/types/rbac";
 import {
   parseAbiFunctions,
   parseAbiEvents,
@@ -23,11 +23,16 @@ interface Props {
   contractAbi?: string;
   initialPolicy?: MethodPolicyDocument | null;
   isReadonlyAdmin?: boolean;
+  // Propagate the saved/cleared policy to the parent so its cached contract
+  // (and a reopened settings dialog) reflect the new state — mirrors the
+  // visibleTo-unlock toggle (RD-1075). Without this, "Clear policy" updates
+  // only this component's local state and the stale policy reappears on reopen.
+  onContractUpdated?: (contract: Contract) => void;
 }
 
 type Mode = "none" | "wizard" | "json" | "simulate";
 
-export function MethodPolicyManager({ orgId, contractAddress, contractAbi, initialPolicy, isReadonlyAdmin }: Props) {
+export function MethodPolicyManager({ orgId, contractAddress, contractAbi, initialPolicy, isReadonlyAdmin, onContractUpdated }: Props) {
   const [policy, setPolicy] = useState<MethodPolicyDocument | null>(initialPolicy ?? null);
   const [mode, setMode] = useState<Mode>("none");
   const [w, setW] = useState<WizardState>({ records: [] });
@@ -69,10 +74,13 @@ export function MethodPolicyManager({ orgId, contractAddress, contractAbi, initi
     setSaving(true);
     resetBanners();
     try {
-      await rbacApi.contracts.updateMethodPolicies(orgId, contractAddress, doc);
+      const res = await rbacApi.contracts.updateMethodPolicies(orgId, contractAddress, doc);
       setPolicy(doc);
       setMode("none");
       setSuccess(doc ? "Method policy saved." : "Method policy cleared.");
+      // Propagate the updated contract (PUT returns it with method_policies
+      // set/cleared) so the parent's cached copy and a reopened dialog aren't stale.
+      onContractUpdated?.(res.data);
       return true;
     } catch (e: unknown) {
       const err = e as { response?: { status?: number; data?: { error?: string } } };

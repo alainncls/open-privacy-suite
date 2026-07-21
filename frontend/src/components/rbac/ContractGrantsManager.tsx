@@ -391,6 +391,7 @@ export default function ContractGrantsManager({
         contractAbi={contract.abi}
         initialPolicy={contract.method_policies}
         isReadonlyAdmin={isReadonlyAdmin}
+        onContractUpdated={onContractUpdated}
       />
 
       {pendingUnlockEnable && (
