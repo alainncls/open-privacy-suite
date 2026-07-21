@@ -44,6 +44,20 @@ The same modes are available directly, for example
 `./scripts/e2e-harness.sh playwright`. Run the script with `--help` for
 advanced chaos/soak timing controls and dry-run support.
 
+The entry point is a Bash 3.2-compatible launcher, so stock macOS shells fail
+with a clear prerequisite message instead of trying to parse the Linux harness
+implementation. The implementation requires Bash 4.1 or newer, `flock`, and a
+`ps` command with GNU `--ppid` support; it also requires Docker Engine with the
+Compose v2 plugin. Set `E2E_BASH` to an explicit modern Bash path when it is not
+first on `PATH`. `./scripts/e2e-harness.sh preflight MODE` performs a fast,
+non-mutating host-capability check for `go`, `playwright`, `privacy`, or `all`;
+`make e2e-doctor` additionally validates the repository and Compose fixtures.
+
+The repository's automatically installed local hooks warn and skip only their
+harness-backed E2E lanes when this preflight reports an unsupported host. Unit
+and frontend failures still block the hook, explicit `make e2e-*` commands
+remain fail-closed, and CI/server E2E gates are never converted to skips.
+
 The Go lanes never assume shared services on the usual Postgres or Anvil
 ports. The harness starts run-owned Postgres and Anvil containers, publishes
 Docker-assigned ports on `127.0.0.1` only, passes their URLs to the test
