@@ -1,4 +1,4 @@
-.PHONY: build build-prod test test-unit test-e2e test-privacy-bypass run dev-stack full-stack-dev run-binary clean clean-build e2e e2e-debug e2e-down e2e-clean \
+.PHONY: build build-prod test test-unit test-e2e test-privacy-bypass run dev-stack full-stack-dev run-binary clean clean-build e2e e2e-debug e2e-down e2e-clean demo-e2e demo-e2e-debug demo-e2e-down \
 	db-migrate db-status db-new-migration install-tern seed \
 	contracts-install contracts-build contracts-deploy authproxy \
 	stop restart logs status \
@@ -188,6 +188,13 @@ test-privacy-bypass:
 # fall back to the v2 plugin (docker compose) on CI runners that ship only v2.
 COMPOSE := $(shell command -v docker-compose >/dev/null 2>&1 && echo docker-compose || echo docker compose)
 E2E_COMPOSE = $(COMPOSE) -p privacy-proxy-e2e -f docker-compose.e2e.yml
+BLOCK_EXPLORER_PATH ?= ../block-explorer
+BLOCK_EXPLORER_GIT_COMMIT ?= $(shell git -C "$(BLOCK_EXPLORER_PATH)" rev-parse --short HEAD 2>/dev/null || echo unknown)
+BLOCK_EXPLORER_VERSION ?= $(shell git -C "$(BLOCK_EXPLORER_PATH)" describe --tags --always --dirty 2>/dev/null || echo dev)
+BLOCK_EXPLORER_BUILD_TIME ?= $(BUILD_TIME)
+export BLOCK_EXPLORER_PATH BLOCK_EXPLORER_GIT_COMMIT BLOCK_EXPLORER_VERSION BLOCK_EXPLORER_BUILD_TIME
+DEMO_E2E_COMPOSE = $(COMPOSE) --env-file e2e/demo.env -p privacy-proxy-demo-e2e -f docker-compose.privacy.dev.yml -f docker-compose.demo-e2e.yml
+DEMO_E2E_SERVICES = privacy-postgres redis anvil indexer-postgres chain-indexer proxy-backend proxy-frontend block-explorer-postgres block-explorer-api block-explorer-frontend
 
 # Run Playwright E2E tests with Docker Compose (isolated environment)
 e2e: ensure-hooks
@@ -211,6 +218,28 @@ e2e-down:
 e2e-clean:
 	$(E2E_COMPOSE) down -v --remove-orphans
 	@docker volume rm privacy-proxy-e2e_e2e-postgres-data 2>/dev/null || true
+
+# Cross-product demo acceptance suite: proxy + indexer + real block explorer.
+# BLOCK_EXPLORER_PATH may point at a sibling worktree; CI checks out the pinned
+# explorer revision next to this repository before invoking this target.
+demo-e2e: ensure-hooks
+	@status=0; \
+	FOUNDRY_AUTO_DETECT_REMAPPINGS=false forge build --root contracts --skip script && \
+	$(DEMO_E2E_COMPOSE) up -d --build $(DEMO_E2E_SERVICES) && \
+	$(DEMO_E2E_COMPOSE) build playwright-demo && \
+	$(DEMO_E2E_COMPOSE) run --rm --no-deps playwright-demo || status=$$?; \
+	$(DEMO_E2E_COMPOSE) down -v --remove-orphans; \
+	exit $$status
+
+demo-e2e-debug: ensure-hooks
+	FOUNDRY_AUTO_DETECT_REMAPPINGS=false forge build --root contracts --skip script
+	$(DEMO_E2E_COMPOSE) up -d --build $(DEMO_E2E_SERVICES)
+	$(DEMO_E2E_COMPOSE) build playwright-demo
+	$(DEMO_E2E_COMPOSE) run --rm --no-deps playwright-demo npx playwright test --project=demo --debug
+	@echo "Services still running. Run 'make demo-e2e-down' to stop them."
+
+demo-e2e-down:
+	$(DEMO_E2E_COMPOSE) down -v --remove-orphans
 
 # Install frontend dependencies
 frontend-install:

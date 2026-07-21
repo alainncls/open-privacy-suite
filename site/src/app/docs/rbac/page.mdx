@@ -548,5 +548,5 @@ Mutating methods (`eth_sendTransaction`) are translated to `debug_traceCall` aga
 
 ### Limitations
 
-- Cross-org impersonation is structurally blocked (admin in Org A can only dry-run users with a membership in Org A).
-- A "View as user" dashboard mode (continuous browse-as) is not part of this release.
+- Cross-org impersonation is structurally blocked (admin in Org A can only dry-run or browse as users with a membership in Org A).
+- Dashboard View-as is read-only and scoped to one explicit organization. It applies the target user's visibility without merging the admin's broader grants; see [View as user](/docs/security/view-as-user).

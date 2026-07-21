@@ -254,6 +254,10 @@ services:
     environment:
       - VITE_API_TARGET=http://proxy-backend:8080
       - VITE_ALLOW_MOCK_LOGIN=true
+      # Browser-facing explorer URL used by the RBAC "View as in Explorer"
+      # handoff. Override in the containerized demo E2E stack with the
+      # explorer service name; local dev keeps the published host port.
+      - VITE_BLOCK_EXPLORER_URL=${VITE_BLOCK_EXPLORER_URL:-http://localhost:${HOST_PORT_EXPLORER:-3001}}
     volumes:
       - ./frontend:/app
       - /app/node_modules
