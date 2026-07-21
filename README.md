@@ -94,47 +94,28 @@ The full OpenAPI 3.1 document is **generated from handler annotations**
 ## Testing
 
 ```bash
-make test-unit   # Go unit tests
-make e2e         # Playwright E2E tests (131+ tests)
+make test-unit                 # Go unit tests
+make e2e-doctor                # Check server prerequisites
+make e2e                       # All finite E2E lanes
+make e2e-chaos                 # Fault and recovery run
+E2E_SOAK_DURATION=8h make e2e-soak
 ```
 
-**Database layer tests (uses testcontainers automatically):**
+Database-layer tests use testcontainers automatically and require Docker:
+
 ```bash
 go test ./internal/db/... -v
 ```
 
-**Note**: Database tests automatically use testcontainers (Docker required).
+### E2E harness
 
-### E2E Tests
+The server-safe harness runs both Go tag sets, Playwright, and the privacy
+network-boundary suite with a unique Docker Compose project and per-run
+artifacts. Chaos and soak are explicit long-running modes. On a shared machine,
+use the harness instead of invoking `docker-compose.e2e.yml` directly.
 
-E2E tests use Playwright and Docker to run a full integration suite with 131+ tests covering RBAC, authentication, and access control.
-
-**Run all E2E tests:**
-```bash
-make e2e
-# This starts all services and runs Playwright tests
-```
-
-**Or run manually:**
-```bash
-# Start services
-docker-compose -f docker-compose.e2e.yml up -d postgres anvil proxy-backend
-
-# Run tests
-docker-compose -f docker-compose.e2e.yml run --rm playwright npm test
-
-# Stop services
-docker-compose -f docker-compose.e2e.yml down
-```
-
-**Run specific test suites:**
-```bash
-# Run only function selector tests
-docker-compose -f docker-compose.e2e.yml run --rm playwright npm test -- --grep "Function Selector"
-
-# Run only hierarchy tests
-docker-compose -f docker-compose.e2e.yml run --rm playwright npm test -- --grep "Hierarchy"
-```
+See [Server E2E harness](docs/e2e-server-harness.md) for prerequisites, lane
+commands, artifacts, retained-stack cleanup, and concurrent-run guidance.
 
 ## Test Identities (Development)
 

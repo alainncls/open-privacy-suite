@@ -25,10 +25,12 @@ echo ""
 echo ">>> Running frontend tests..."
 make frontend-test
 
-# Run E2E tests
+# Run the Dockerized browser lane. The complete server gate is deliberately
+# available as `make e2e` without making every local commit start privacy and
+# both Go E2E lanes after the unit suite.
 echo ""
-echo ">>> Running E2E tests..."
-make e2e
+echo ">>> Running Playwright E2E tests..."
+make e2e-playwright
 
 echo ""
 echo "=========================================="

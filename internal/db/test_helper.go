@@ -4,7 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
+	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -163,14 +166,65 @@ func ResetTestDatabase(database *DB) error {
 	return nil
 }
 
-// SetupTestContainer starts a PostgreSQL testcontainer and returns the connection string
-// This is the recommended approach for tests - no need for external PostgreSQL
-// The container is automatically cleaned up when the test finishes
-// If Docker is not available or testcontainers fails, falls back to external PostgreSQL
+var harnessDatabaseSequence uint64
+
+func uniqueHarnessDatabaseURL(baseURL string) (string, error) {
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return "", fmt.Errorf("parse E2E_DATABASE_URL: %w", err)
+	}
+	baseName := strings.TrimPrefix(parsed.Path, "/")
+	if baseName == "" || strings.Contains(baseName, "/") {
+		return "", fmt.Errorf("E2E_DATABASE_URL must contain one database name")
+	}
+
+	var sanitized strings.Builder
+	for _, char := range strings.ToLower(baseName) {
+		if char >= 'a' && char <= 'z' || char >= '0' && char <= '9' || char == '_' {
+			sanitized.WriteRune(char)
+		} else {
+			sanitized.WriteByte('_')
+		}
+	}
+	name := strings.Trim(sanitized.String(), "_")
+	if name == "" {
+		name = "e2e"
+	}
+	if name[0] >= '0' && name[0] <= '9' {
+		name = "e2e_" + name
+	}
+	if len(name) > 24 {
+		name = name[:24]
+	}
+	name = fmt.Sprintf("%s_h%d_%d", name, os.Getpid(), atomic.AddUint64(&harnessDatabaseSequence, 1))
+
+	parsed.Path = "/" + name
+	parsed.RawPath = ""
+	return parsed.String(), nil
+}
+
+// SetupTestContainer creates a fresh child database on the harness-owned
+// PostgreSQL server, or starts an isolated PostgreSQL testcontainer.
+// Callers that intentionally support TEST_DATABASE_URL must opt in before
+// calling this helper.
+// There is deliberately no implicit localhost fallback: ResetTestDatabase deletes
+// data, so a failed testcontainer must never redirect a run to an unowned database.
 func SetupTestContainer(t *testing.T) (string, func()) {
 	ctx := context.Background()
 
-	// Try to start PostgreSQL container
+	if baseURL := strings.TrimSpace(os.Getenv("E2E_DATABASE_URL")); baseURL != "" {
+		dbURL, err := uniqueHarnessDatabaseURL(baseURL)
+		if err != nil {
+			t.Fatalf("invalid E2E_DATABASE_URL: %v", err)
+		}
+		if err := EnsureTestDatabase(dbURL); err != nil {
+			t.Fatalf("could not create a fresh database on harness-owned PostgreSQL: %v", err)
+		}
+		t.Log("using a fresh child database on harness-owned PostgreSQL")
+		return dbURL, func() {}
+	}
+
+	// Start an isolated PostgreSQL container.
 	postgresContainer, err := postgres.RunContainer(ctx,
 		testcontainers.WithImage("postgres:15-alpine"),
 		postgres.WithDatabase("testdb"),
@@ -183,36 +237,16 @@ func SetupTestContainer(t *testing.T) (string, func()) {
 		),
 	)
 	if err != nil {
-		// If testcontainers fails (Docker not available, network issues, etc.),
-		// fall back to external PostgreSQL
-		testcontainersErr := err
-		t.Logf("Warning: testcontainers failed (%v), falling back to external PostgreSQL", testcontainersErr)
-		t.Logf("Make sure PostgreSQL is running: docker-compose up -d postgres")
-
-		// Use external PostgreSQL as fallback
-		dbURL := "postgres://postgres:postgres@localhost:5432/privacy_proxy_test?sslmode=disable"
-		if err := EnsureTestDatabase(dbURL); err != nil {
-			t.Fatalf("Both testcontainers and external PostgreSQL failed. Start PostgreSQL with: docker-compose up -d postgres\nTestcontainers error: %v\nExternal PostgreSQL error: %v", testcontainersErr, err)
-		}
-
-		// Return external DB URL with no-op cleanup
-		return dbURL, func() {}
+		t.Fatalf("failed to start isolated PostgreSQL testcontainer: %v (Docker is required; no implicit external fallback is used)", err)
 	}
 
 	// Get connection string
 	connStr, err := postgresContainer.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		// If we can't get connection string, try to terminate and fall back
-		connStrErr := err
-		postgresContainer.Terminate(ctx)
-		t.Logf("Warning: failed to get connection string (%v), falling back to external PostgreSQL", connStrErr)
-
-		dbURL := "postgres://postgres:postgres@localhost:5432/privacy_proxy_test?sslmode=disable"
-		if err := EnsureTestDatabase(dbURL); err != nil {
-			t.Fatalf("Both testcontainers and external PostgreSQL failed. Start PostgreSQL with: docker-compose up -d postgres\nConnection string error: %v\nExternal PostgreSQL error: %v", connStrErr, err)
+		if terminateErr := postgresContainer.Terminate(ctx); terminateErr != nil {
+			t.Logf("failed to terminate PostgreSQL testcontainer after connection-string error: %v", terminateErr)
 		}
-
-		return dbURL, func() {}
+		t.Fatalf("failed to get isolated PostgreSQL testcontainer connection string: %v", err)
 	}
 
 	// Cleanup function

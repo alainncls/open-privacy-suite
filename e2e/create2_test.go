@@ -782,13 +782,17 @@ func TestCreate2RuntimeDeployment_DeniedWithoutDeployClaim(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, factoryContract)
 
-	writerGrant := &rbac.ContractGrant{
-		ID:         uuid.New().String(),
-		ContractID: factoryContract.ID,
-		GroupID:    writerGroupID,
-		Functions:  nil, // all functions
+	existingWriterGrant, err := env.srv.DB().GetContractGrantByContractAndGroup(ctx, factoryContract.ID, writerGroupID)
+	require.NoError(t, err)
+	if existingWriterGrant == nil {
+		writerGrant := &rbac.ContractGrant{
+			ID:         uuid.New().String(),
+			ContractID: factoryContract.ID,
+			GroupID:    writerGroupID,
+			Functions:  nil, // all functions
+		}
+		require.NoError(t, env.srv.DB().CreateContractGrant(ctx, writerGrant))
 	}
-	require.NoError(t, env.srv.DB().CreateContractGrant(ctx, writerGrant))
 
 	// Writer user tries to call factory.deployChild() — this involves a CREATE2
 	// internally, which the proxy's runtime tracing should detect. The runtime

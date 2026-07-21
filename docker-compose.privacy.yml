@@ -48,8 +48,15 @@ services:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=${PRIVACY_POSTGRES_PASSWORD:?PRIVACY_POSTGRES_PASSWORD is required in privacy mode}
       - POSTGRES_DB=privacy_proxy
+      # Password for the restricted runtime role provisioned by the audit-DB
+      # bootstrap hook. The proxy never uses the owner identity for audit writes.
+      - AUDIT_APP_PASSWORD=${AUDIT_APP_PASSWORD:?AUDIT_APP_PASSWORD is required in privacy mode (restricted audit-DB role)}
     volumes:
       - privacy-postgres-data:/var/lib/postgresql/data
+      # On first database initialization, provision privacy_proxy_audit and the
+      # restricted privacy_proxy_app LOGIN role. Audit schema migrations remain
+      # application-owned and run through AUDIT_ADMIN_DATABASE_URL below.
+      - ./scripts/init-audit-db.sh:/docker-entrypoint-initdb.d/10-init-audit-db.sh:ro
     networks:
       - indexer-zone
     healthcheck:
@@ -153,6 +160,10 @@ services:
       - TZ=UTC
       - NODE_URL=http://anvil:8545
       - DATABASE_URL=postgres://postgres:${PRIVACY_POSTGRES_PASSWORD:?PRIVACY_POSTGRES_PASSWORD is required in privacy mode}@privacy-postgres:5432/privacy_proxy?sslmode=disable
+      # The owner DSN runs audit migrations and retention pruning; normal audit
+      # reads/writes use the restricted append-only role provisioned above.
+      - AUDIT_ADMIN_DATABASE_URL=postgres://postgres:${PRIVACY_POSTGRES_PASSWORD:?PRIVACY_POSTGRES_PASSWORD is required in privacy mode}@privacy-postgres:5432/privacy_proxy_audit?sslmode=disable
+      - AUDIT_DATABASE_URL=postgres://privacy_proxy_app:${AUDIT_APP_PASSWORD:?AUDIT_APP_PASSWORD is required in privacy mode (restricted audit-DB role)}@privacy-postgres:5432/privacy_proxy_audit?sslmode=disable
       - PORT=8080
       # ENVIRONMENT acts as a binary kill switch in code: anything
       # other than the literal string "production" unlocks dev

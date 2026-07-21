@@ -49,12 +49,13 @@ run_test "Go E2E Tests" "make test-e2e 2>&1 | tail -20"
 # Run frontend tests
 run_test "Frontend Tests" "make frontend-test 2>&1 | tail -20"
 
-# Run E2E tests (this takes longer, runs in Docker)
-echo -e "${YELLOW}▶ Running: E2E Tests (this may take a while...)${NC}"
-if make e2e 2>&1 | tail -50; then
-    echo -e "${GREEN}✓ E2E Tests passed${NC}"
+# Run the Dockerized browser lane. The Go lanes already ran above; the full
+# server/nightly gate (make e2e) also includes privacy and would duplicate them.
+echo -e "${YELLOW}▶ Running: Playwright E2E Tests (this may take a while...)${NC}"
+if make e2e-playwright 2>&1 | tail -50; then
+    echo -e "${GREEN}✓ Playwright E2E Tests passed${NC}"
 else
-    echo -e "${RED}✗ E2E Tests FAILED${NC}"
+    echo -e "${RED}✗ Playwright E2E Tests FAILED${NC}"
     FAILED=1
 fi
 

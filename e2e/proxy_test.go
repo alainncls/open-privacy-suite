@@ -4,11 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"io"
 	"net"
 	"net/http"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -103,47 +104,60 @@ func setupE2E(t *testing.T) (*server.Server, string, func()) {
 }
 
 func setupE2EWithVerifier(t *testing.T, verifier server.PrivadoVerifier) (*server.Server, string, func()) {
-	// Use test database URL from environment or testcontainers
-	dbURL := os.Getenv("TEST_DATABASE_URL")
-	var cleanupDB func()
-
+	// The server harness provides a run-owned database. TEST_DATABASE_URL remains
+	// an explicit developer/CI override; otherwise testcontainers owns the DB.
+	dbURL := os.Getenv("E2E_DATABASE_URL")
 	if dbURL == "" {
-		// Use testcontainers for automatic PostgreSQL setup
-		var cleanup func()
-		dbURL, cleanup = db.SetupTestContainer(t)
-		cleanupDB = cleanup
-		t.Cleanup(cleanupDB)
-	} else {
-		// Use external PostgreSQL (for CI or when explicitly set)
-		if err := db.EnsureTestDatabase(dbURL); err != nil {
-			t.Fatalf("PostgreSQL not available. Start it with: docker-compose up -d postgres\nOr: make docker-up\nError: %v", err)
-		}
-		cleanupDB = func() {}
+		dbURL = os.Getenv("TEST_DATABASE_URL")
 	}
 
-	// Connect to database and reset it for clean test state
+	var rawCleanupDB func()
+	if dbURL == "" {
+		dbURL, rawCleanupDB = db.SetupTestContainer(t)
+	} else {
+		if err := db.EnsureTestDatabase(dbURL); err != nil {
+			t.Fatalf("configured E2E PostgreSQL is unavailable: %v", err)
+		}
+		rawCleanupDB = func() {}
+	}
+
+	var cleanupDBOnce sync.Once
+	cleanupDB := func() {
+		cleanupDBOnce.Do(rawCleanupDB)
+	}
+	// Register immediately so setup failures cannot leak a testcontainer.
+	t.Cleanup(cleanupDB)
+
+	// Connect to database and reset it for clean test state.
 	database, err := db.New(dbURL)
 	if err != nil {
-		t.Fatalf("Failed to connect to database: %v", err)
+		t.Fatalf("failed to connect to E2E database: %v", err)
 	}
 	if err := db.ResetTestDatabase(database); err != nil {
-		t.Fatalf("Failed to reset test database: %v", err)
+		database.Close()
+		t.Fatalf("failed to reset E2E database: %v", err)
 	}
 	database.Close()
 
-	// Find an available port first
-	listener, err := net.Listen("tcp", ":0")
+	// Keep the listener bound while the server is constructed, eliminating the
+	// ephemeral-port close-and-rebind race on busy shared machines.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Fatalf("failed to find available port: %v", err)
+		t.Fatalf("failed to reserve E2E server port: %v", err)
 	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	listener.Close()
+	t.Cleanup(func() {
+		_ = listener.Close()
+	})
+	serverAddr := listener.Addr().String()
+	serverURL := "http://" + serverAddr
 
-	serverAddr := fmt.Sprintf(":%d", port)
-	serverURL := fmt.Sprintf("http://localhost:%d", port)
+	nodeURL := os.Getenv("E2E_NODE_URL")
+	if nodeURL == "" {
+		nodeURL = "http://localhost:8545"
+	}
 
 	cfg := &config.Config{
-		NodeURL:     "http://localhost:8545",
+		NodeURL:     nodeURL,
 		DatabaseURL: dbURL,
 		// RD-1147: audit logs live in a separate DB via the real server.New path.
 		// For e2e, co-locate the audit schema in this same testcontainer DB (the
@@ -167,48 +181,67 @@ func setupE2EWithVerifier(t *testing.T, verifier server.PrivadoVerifier) (*serve
 		AllowMockLogin: true,
 	}
 
-	// Use mock verifier if provided, otherwise create real one
+	// Use mock verifier if provided, otherwise create the real one.
 	srv, err := server.NewWithVerifier(cfg, verifier)
 	if err != nil {
-		t.Fatalf("Failed to create server: %v", err)
+		t.Fatalf("failed to create E2E server: %v", err)
 	}
 
-	// Reset database for fresh test (clears data, preserves schema)
+	httpServer := &http.Server{ReadHeaderTimeout: 5 * time.Second}
+	var cleanupOnce sync.Once
+	cleanup := func() {
+		cleanupOnce.Do(func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := httpServer.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				t.Logf("failed to stop E2E HTTP server cleanly: %v", err)
+			}
+			srv.Stop()
+			cleanupDB()
+		})
+	}
+	t.Cleanup(cleanup)
+
+	// Reset database for a fresh test after server migrations complete.
 	if err := db.ResetTestDatabase(srv.DB()); err != nil {
-		t.Fatalf("failed to reset test database: %v", err)
+		t.Fatalf("failed to reset E2E database after server setup: %v", err)
 	}
 
-	// Start server in goroutine
+	serverErrors := make(chan error, 1)
 	go func() {
-		if err := srv.Run(serverAddr); err != nil {
-			t.Logf("Server error: %v", err)
-		}
+		serverErrors <- srv.RunWithListener(httpServer, listener)
 	}()
 
-	// Wait for server to start and be ready
-	maxRetries := 10
-	for i := 0; i < maxRetries; i++ {
-		resp, err := http.Get(serverURL + "/health")
-		if err == nil {
-			resp.Body.Close()
+	// Wait for server readiness, but fail immediately if the listener exits.
+	client := &http.Client{Timeout: time.Second}
+	ready := false
+	for i := 0; i < 10; i++ {
+		select {
+		case runErr := <-serverErrors:
+			if runErr != nil && !errors.Is(runErr, http.ErrServerClosed) {
+				t.Fatalf("E2E server exited during startup: %v", runErr)
+			}
+		default:
+		}
+
+		resp, requestErr := client.Get(serverURL + "/health")
+		if requestErr == nil {
+			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
+				ready = true
 				break
 			}
 		}
-		if i == maxRetries-1 {
-			t.Fatalf("server failed to start on %s", serverURL)
-		}
 		time.Sleep(100 * time.Millisecond)
 	}
-
-	cleanup := func() {
-		// Database cleanup handled by test isolation
-		if cleanupDB != nil {
-			cleanupDB()
-		}
+	if !ready {
+		t.Fatalf("E2E server failed to start on %s", serverAddr)
 	}
 
-	return srv, serverURL, cleanup
+	// Server/database lifetime is owned by t.Cleanup so fixture cleanups
+	// registered later run before shutdown. Keep the returned function as a
+	// compatibility no-op for the many legacy `defer cleanup()` call sites.
+	return srv, serverURL, func() {}
 }
 
 // getJWTToken performs the auth flow and returns a JWT access token

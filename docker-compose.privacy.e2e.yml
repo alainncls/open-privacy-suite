@@ -1,0 +1,50 @@
+# E2E-only image provenance overlay for docker-compose.privacy.yml.
+#
+# The production manifest remains the topology oracle. This overlay changes
+# only how the five first-party images are obtained: the current proxy tree is
+# built locally, while the public explorer and indexer repositories are built
+# from harness-managed, pinned checkouts. Clearing `image` makes Compose assign
+# project-scoped image names, so concurrent runs cannot overwrite each other's
+# tags and `down --rmi local` can remove only this run's images.
+
+services:
+  chain-indexer:
+    image: !reset null
+    build:
+      context: ${E2E_CHAIN_INDEXER_PATH:?E2E_CHAIN_INDEXER_PATH is required}
+      dockerfile: Dockerfile
+
+  proxy-backend:
+    image: !reset null
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+      target: prod
+      args:
+        VERSION: ${E2E_BUILD_VERSION:-e2e}
+        GIT_COMMIT: ${E2E_BUILD_GIT_COMMIT:-unknown}
+        BUILD_TIME: ${E2E_BUILD_TIME:-unknown}
+
+  proxy-frontend:
+    image: !reset null
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: prod
+
+  block-explorer-api:
+    image: !reset null
+    build:
+      context: ${E2E_BLOCK_EXPLORER_PATH:?E2E_BLOCK_EXPLORER_PATH is required}/backend
+      dockerfile: Dockerfile.api
+      target: privacy
+      args:
+        VERSION: ${E2E_BLOCK_EXPLORER_VERSION:-e2e}
+        GIT_COMMIT: ${E2E_BLOCK_EXPLORER_GIT_COMMIT:-unknown}
+        BUILD_TIME: ${E2E_BUILD_TIME:-unknown}
+
+  block-explorer-frontend:
+    image: !reset null
+    build:
+      context: ${E2E_BLOCK_EXPLORER_PATH:?E2E_BLOCK_EXPLORER_PATH is required}/frontend
+      dockerfile: Dockerfile

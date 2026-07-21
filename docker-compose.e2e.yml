@@ -1,9 +1,10 @@
 # E2E test configuration - runs in complete isolation from local dev
-# Usage: docker-compose -p privacy-proxy-e2e -f docker-compose.e2e.yml up -d --build
+# Usage: ./scripts/e2e-harness.sh playwright
+# The harness supplies a unique Compose project and per-run artifact paths.
 #
 # Key differences from dev docker-compose.yml:
-# 1. Uses isolated project name (privacy-proxy-e2e) via Makefile -p flag
-# 2. Uses anonymous volume for postgres (not shared with dev)
+# 1. Uses a unique, per-run project name supplied by the E2E harness
+# 2. Uses a project-scoped volume for postgres (not shared with dev)
 # 3. No host port mappings - services communicate only via internal network
 # 4. Ephemeral - all data destroyed on `docker-compose down -v`
 
@@ -16,7 +17,7 @@ services:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=privacy_proxy
-    # Anonymous volume - data is ephemeral, destroyed on down -v
+    # Project-scoped volume - data is ephemeral, destroyed on down -v
     volumes:
       - e2e-postgres-data:/var/lib/postgresql/data
     networks:
@@ -117,13 +118,14 @@ services:
     volumes:
       - ./e2e/playwright:/app
       - /app/node_modules
-      - ./e2e/playwright/test-results:/app/test-results
-      - ./e2e/playwright/playwright-report:/app/playwright-report
+      - "${E2E_PLAYWRIGHT_RESULTS_DIR:-./e2e/playwright/test-results}:/app/test-results"
+      - "${E2E_PLAYWRIGHT_REPORT_DIR:-./e2e/playwright/playwright-report}:/app/playwright-report"
     environment:
       - PROXY_URL=http://proxy-backend:8080
       - ADMIN_URL=http://proxy-backend:8080
       - FRONTEND_URL=http://proxy-frontend:80
       - CI=${CI:-false}
+      - E2E_PLAYWRIGHT_WORKERS=${E2E_PLAYWRIGHT_WORKERS:-1}
 
       - ADMIN_API_TOKEN=e2e-test-admin-token
     depends_on:

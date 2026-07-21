@@ -126,11 +126,12 @@ jobs:
         run: |
           go test ./internal/... -v -race -coverprofile=coverage.out -covermode=atomic
 
-      - name: Run Go E2E tests
+      - name: Run every Go E2E build-tag lane through the isolated harness
         env:
-          TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/privacy_proxy_test?sslmode=disable
-        run: |
-          go test ./e2e/... -v -race -p 1
+          E2E_RUN_ID: gha-go-${{ github.run_id }}-${{ github.run_attempt }}
+          E2E_PROJECT: privacy-proxy-e2e-go-${{ github.run_id }}-${{ github.run_attempt }}
+          E2E_ARTIFACT_DIR: ${{ github.workspace }}/.tmp/e2e-runs/gha-go-${{ github.run_id }}-${{ github.run_attempt }}
+        run: make e2e-go
 
       - name: Check coverage threshold
         run: |
