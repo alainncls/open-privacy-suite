@@ -17,6 +17,11 @@ on:
   schedule:
     - cron: '0 3 * * *' # 03:00 UTC nightly
   workflow_dispatch:
+    inputs:
+      explorer_ref:
+        description: Explorer branch, tag, or SHA used by demo acceptance
+        required: false
+        default: main
   pull_request:
     types: [labeled, synchronize, reopened]
 
@@ -24,6 +29,9 @@ on:
 concurrency:
   group: e2e-playwright-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   playwright:
@@ -53,5 +61,49 @@ jobs:
           path: |
             e2e/playwright/playwright-report/
             e2e/playwright/test-results/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  demo-acceptance:
+    name: Demo acceptance (proxy + explorer)
+    if: >-
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'e2e')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout Open Privacy Suite
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          path: privacy-proxy
+          submodules: recursive
+
+      - name: Checkout block explorer
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: gateway-fm/ops-explorer
+          ref: ${{ inputs.explorer_ref || vars.BLOCK_EXPLORER_E2E_REF || 'main' }}
+          path: block-explorer
+          persist-credentials: false
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@b00af27efadbc7b4ca8b82abbd903b17cc874d2a # v1
+        with:
+          version: v1.7.1
+
+      - name: Run demo acceptance suite
+        working-directory: privacy-proxy
+        env:
+          BLOCK_EXPLORER_PATH: ../block-explorer
+        run: make demo-e2e
+
+      - name: Upload demo acceptance report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0 # v7.0.1
+        with:
+          name: demo-acceptance-report
+          path: |
+            privacy-proxy/e2e/playwright/playwright-report/
+            privacy-proxy/e2e/playwright/test-results/
           retention-days: 14
           if-no-files-found: ignore

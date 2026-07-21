@@ -118,7 +118,10 @@ func (s *Server) getDisclosedAddressesForViewer(ctx context.Context, viewerDID s
 	}
 	defer rows.Close()
 
-	var result []DisclosedAddress
+	// Preserve the API contract: an authenticated viewer with no grants gets
+	// an empty JSON array, never null. The explorer frontend and acceptance
+	// suite rely on this distinction for exact disclosure counters.
+	result := make([]DisclosedAddress, 0)
 
 	for rows.Next() {
 		var grantID string
