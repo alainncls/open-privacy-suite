@@ -2206,11 +2206,19 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 
 		level := visMap[contractAddrLower]
 
-		// Participant override: if the viewer is from/to of the parent tx,
-		// upgrade Redacted emitting contracts so they can see their own logs.
-		if level == VisibilityRedacted && isParticipant {
-			level = VisibilityFull
-		}
+		// Participant admission is GRANT-BOUNDED (mirrors rbac.FilterEventLogs,
+		// whose participant bypass is bounded by `access != nil` — RD-1162).
+		// A viewer holding a grant on the emitting contract already resolves to
+		// VisibilityFull, so there is no participant level-up here: it would
+		// only ever fire for a NO-grant emitter (VisibilityRedacted/
+		// ReasonNoAccess — a registered contract with no grant; VisibilityHidden
+		// is an unregistered address / EOA), and a tx that internally touched a
+		// contract the viewer has no grant on must not leak that contract's
+		// event payload just because the viewer is a party to the outer tx.
+		// The counterparty EOA the viewer transacted with is still revealed by
+		// the transaction-level participant override in RedactTransactions
+		// (§3.7); this governs only the emitting contract's log payload.
+		// (RPC/explorer unification into one decision engine: RD-1214.)
 
 		// Ordinary (non-unlock) visibleTo does NOT alter the emitting
 		// contract's visibility level. Grant eligibility is load-bearing
