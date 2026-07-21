@@ -145,22 +145,9 @@ Required env vars (all fail-closed — missing → compose aborts):
 - `JWT_SECRET`, `JWT_REFRESH_SECRET` — Open Privacy Suite signing keys.
 - `ADMIN_API_TOKEN` — initial admin token for bootstrap.
 - `PRIVACY_POSTGRES_PASSWORD` — Open Privacy Suite's postgres.
-- `AUDIT_APP_PASSWORD` — password for the restricted
-  `privacy_proxy_app` audit-database role. Use a distinct, randomly generated
-  value; the proxy uses this identity for append-only runtime audit access.
 - `INDEXER_POSTGRES_PASSWORD` — chain-indexer's postgres.
 - `REDIS_PASSWORD` — Open Privacy Suite's redis.
 - `BLOCK_EXPLORER_POSTGRES_PASSWORD` — BFF's postgres (verifications).
-
-On the first initialization of `privacy-postgres`, the mounted
-`scripts/init-audit-db.sh` hook creates `privacy_proxy_audit` and the restricted
-`privacy_proxy_app` login. `proxy-backend` uses an owner connection
-(`AUDIT_ADMIN_DATABASE_URL`) only for audit migrations and retention pruning,
-while `AUDIT_DATABASE_URL` uses the restricted role for normal append-only
-audit reads and writes. PostgreSQL initialization hooks do not rerun for an
-existing data volume; upgrade an existing deployment by provisioning the audit
-database and role before starting the new proxy image, or recreate the volume
-only when discarding its contents is explicitly acceptable.
 
 Optional env vars (have sane defaults):
 

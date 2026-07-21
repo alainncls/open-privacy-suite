@@ -5,12 +5,7 @@
 //
 // Run with:
 //
-//	make test-privacy-bypass
-//
-// Or directly:
-//
-//	JWT_SECRET=x JWT_REFRESH_SECRET=y \
-//	  go test -tags privacy_bypass -timeout 10m ./e2e/...
+//	make e2e-privacy
 //
 // Each run uses a unique Compose project and Docker-assigned public ports by
 // default. Set E2E_PRIVACY_PROJECT to give an external harness a stable project

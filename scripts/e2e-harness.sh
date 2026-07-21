@@ -432,6 +432,7 @@ readonly GO_COMPOSE_OVERRIDE="${ARTIFACT_DIR}/generated/go-compose.override.yml"
 mkdir -p -- "$LOG_DIR"
 STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 GIT_SHA=unknown
+GIT_DIRTY=unknown
 
 if [[ "$MODE" != "down" ]]; then
   mkdir -p -- "$PLAYWRIGHT_RESULTS_DIR" "$PLAYWRIGHT_REPORT_DIR" "${ARTIFACT_DIR}/generated"
@@ -447,6 +448,13 @@ if [[ "$MODE" != "down" ]]; then
   fi
   if command -v git >/dev/null 2>&1; then
     GIT_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || printf unknown)"
+    if GIT_CHANGES="$(git -C "$REPO_ROOT" status --porcelain --untracked-files=normal 2>/dev/null)"; then
+      if [[ -n "$GIT_CHANGES" ]]; then
+        GIT_DIRTY=true
+      else
+        GIT_DIRTY=false
+      fi
+    fi
   fi
   {
     printf "run_id=%s\n" "$RUN_ID"
@@ -454,6 +462,7 @@ if [[ "$MODE" != "down" ]]; then
     printf "project=%s\n" "$PROJECT"
     printf "privacy_project=%s\n" "$PRIVACY_PROJECT"
     printf "git_sha=%s\n" "$GIT_SHA"
+    printf "git_dirty=%s\n" "$GIT_DIRTY"
     printf "started_at=%s\n" "$STARTED_AT"
     printf "repo_root=%s\n" "$REPO_ROOT"
     printf "privacy_compose_override=%s\n" "$PRIVACY_COMPOSE_OVERRIDE"
@@ -692,17 +701,20 @@ prepare_privacy_sources() {
   local expected_sha=""
   local explorer_dirty=unknown
   local indexer_dirty=unknown
+  local explorer_source_mode=managed-clone
+  local indexer_source_mode=managed-clone
+  local explorer_effective_version="$BLOCK_EXPLORER_REF"
 
-  if (( DRY_RUN == 1 && BLOCK_EXPLORER_PATH_SUPPLIED == 1 )); then
-    [[ "$E2E_BLOCK_EXPLORER_PATH" == /* ]] ||
-      E2E_BLOCK_EXPLORER_PATH="${REPO_ROOT}/${E2E_BLOCK_EXPLORER_PATH}"
-    BLOCK_EXPLORER_SHA=dry-run
-  elif (( BLOCK_EXPLORER_PATH_SUPPLIED == 1 )); then
+  if (( BLOCK_EXPLORER_PATH_SUPPLIED == 1 )); then
+    explorer_source_mode=supplied
     E2E_BLOCK_EXPLORER_PATH="$(canonical_source_path "$E2E_BLOCK_EXPLORER_PATH")"
     BLOCK_EXPLORER_SHA="$(validate_source_checkout block-explorer "$E2E_BLOCK_EXPLORER_PATH" backend/Dockerfile.api frontend/Dockerfile)"
+    if [[ "$BLOCK_EXPLORER_REF" == "$DEFAULT_BLOCK_EXPLORER_REF" && "$BLOCK_EXPLORER_SHA" != "$DEFAULT_BLOCK_EXPLORER_SHA" ]]; then
+      die "block-explorer ref $BLOCK_EXPLORER_REF resolved to $BLOCK_EXPLORER_SHA, expected pinned commit $DEFAULT_BLOCK_EXPLORER_SHA; set E2E_BLOCK_EXPLORER_REF when using a different commit"
+    fi
     explorer_dirty="$(source_dirty_state "$E2E_BLOCK_EXPLORER_PATH")"
   else
-    if [[ "$BLOCK_EXPLORER_REPOSITORY" == "$DEFAULT_BLOCK_EXPLORER_REPO" && "$BLOCK_EXPLORER_REF" == "$DEFAULT_BLOCK_EXPLORER_REF" ]]; then
+    if [[ "$BLOCK_EXPLORER_REF" == "$DEFAULT_BLOCK_EXPLORER_REF" ]]; then
       expected_sha="$DEFAULT_BLOCK_EXPLORER_SHA"
     fi
     clone_pinned_source block-explorer "$BLOCK_EXPLORER_REPOSITORY" "$BLOCK_EXPLORER_REF" "$E2E_BLOCK_EXPLORER_PATH" "$expected_sha" backend/Dockerfile.api frontend/Dockerfile || return $?
@@ -711,16 +723,16 @@ prepare_privacy_sources() {
   fi
 
   expected_sha=""
-  if (( DRY_RUN == 1 && CHAIN_INDEXER_PATH_SUPPLIED == 1 )); then
-    [[ "$E2E_CHAIN_INDEXER_PATH" == /* ]] ||
-      E2E_CHAIN_INDEXER_PATH="${REPO_ROOT}/${E2E_CHAIN_INDEXER_PATH}"
-    CHAIN_INDEXER_SHA=dry-run
-  elif (( CHAIN_INDEXER_PATH_SUPPLIED == 1 )); then
+  if (( CHAIN_INDEXER_PATH_SUPPLIED == 1 )); then
+    indexer_source_mode=supplied
     E2E_CHAIN_INDEXER_PATH="$(canonical_source_path "$E2E_CHAIN_INDEXER_PATH")"
     CHAIN_INDEXER_SHA="$(validate_source_checkout chain-indexer "$E2E_CHAIN_INDEXER_PATH" Dockerfile)"
+    if [[ "$CHAIN_INDEXER_REF" == "$DEFAULT_CHAIN_INDEXER_REF" && "$CHAIN_INDEXER_SHA" != "$DEFAULT_CHAIN_INDEXER_SHA" ]]; then
+      die "chain-indexer ref $CHAIN_INDEXER_REF resolved to $CHAIN_INDEXER_SHA, expected pinned commit $DEFAULT_CHAIN_INDEXER_SHA; set E2E_CHAIN_INDEXER_REF when using a different commit"
+    fi
     indexer_dirty="$(source_dirty_state "$E2E_CHAIN_INDEXER_PATH")"
   else
-    if [[ "$CHAIN_INDEXER_REPOSITORY" == "$DEFAULT_CHAIN_INDEXER_REPO" && "$CHAIN_INDEXER_REF" == "$DEFAULT_CHAIN_INDEXER_REF" ]]; then
+    if [[ "$CHAIN_INDEXER_REF" == "$DEFAULT_CHAIN_INDEXER_REF" ]]; then
       expected_sha="$DEFAULT_CHAIN_INDEXER_SHA"
     fi
     clone_pinned_source chain-indexer "$CHAIN_INDEXER_REPOSITORY" "$CHAIN_INDEXER_REF" "$E2E_CHAIN_INDEXER_PATH" "$expected_sha" Dockerfile || return $?
@@ -728,15 +740,22 @@ prepare_privacy_sources() {
     (( DRY_RUN == 1 )) || indexer_dirty="$(source_dirty_state "$E2E_CHAIN_INDEXER_PATH")"
   fi
 
+  if (( BLOCK_EXPLORER_PATH_SUPPLIED == 1 )); then
+    explorer_effective_version="local-${BLOCK_EXPLORER_SHA:0:12}"
+  fi
+
   export E2E_BLOCK_EXPLORER_PATH E2E_CHAIN_INDEXER_PATH
-  export E2E_BLOCK_EXPLORER_VERSION="$BLOCK_EXPLORER_REF"
+  export E2E_BLOCK_EXPLORER_VERSION="$explorer_effective_version"
   export E2E_BLOCK_EXPLORER_GIT_COMMIT="$BLOCK_EXPLORER_SHA"
 
   {
     printf "block_explorer_source_path=%s\n" "$E2E_BLOCK_EXPLORER_PATH"
+    printf "block_explorer_source_mode=%s\n" "$explorer_source_mode"
+    printf "block_explorer_effective_version=%s\n" "$explorer_effective_version"
     printf "block_explorer_resolved_sha=%s\n" "$BLOCK_EXPLORER_SHA"
     printf "block_explorer_dirty=%s\n" "$explorer_dirty"
     printf "chain_indexer_source_path=%s\n" "$E2E_CHAIN_INDEXER_PATH"
+    printf "chain_indexer_source_mode=%s\n" "$indexer_source_mode"
     printf "chain_indexer_resolved_sha=%s\n" "$CHAIN_INDEXER_SHA"
     printf "chain_indexer_dirty=%s\n" "$indexer_dirty"
   } >> "${ARTIFACT_DIR}/run.env"
@@ -749,6 +768,7 @@ resource_ids_for_project() {
   docker container ls -aq --filter "label=com.docker.compose.project=${project}" 2>/dev/null || true
   docker network ls -q --filter "label=com.docker.compose.project=${project}" 2>/dev/null || true
   docker volume ls -q --filter "label=com.docker.compose.project=${project}" 2>/dev/null || true
+  docker image ls -q --filter "reference=${project}-*" 2>/dev/null || true
 }
 
 assert_project_unused() {
@@ -757,7 +777,7 @@ assert_project_unused() {
   local resources
   resources="$(resource_ids_for_project "$project")"
   if [[ -n "$resources" ]]; then
-    die "Compose project '$project' already owns resources; choose another E2E_RUN_ID/E2E_PROJECT or explicitly run down"
+    die "Compose project '$project' already owns resources or matching image refs; choose another E2E_RUN_ID/E2E_PROJECT or explicitly run down"
   fi
 }
 

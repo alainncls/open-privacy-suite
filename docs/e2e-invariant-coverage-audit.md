@@ -3,7 +3,8 @@
 - **Audit date:** 2026-07-21 UTC
 - **Branch:** `main`
 - **Audited commit:** `9bcb6d901fff169b4b53c9ea1111b8f355ab38a7`
-- **Repository:** `gateway-fm/privacy-proxy`
+- **Repository:** `gateway-fm/open-privacy-suite` (formerly
+  `gateway-fm/privacy-proxy`)
 
 ## Scope and method
 
@@ -24,10 +25,11 @@ For this report:
 - A test only counts as a `main` gate if the normal Make/CI invocation compiles
   and runs it.
 
-This was a static coverage and harness audit. The Go toolchain is unavailable in
-the audit environment, so this is not a green test-run report. No Docker stack
-was started or stopped; that was intentional because coexistence safety is one
-of the audited properties.
+This coverage classification is a static snapshot of latest `main` at the
+audited commit above. Runtime harness validation for the implementation branch
+is reported separately below. Green runtime lanes show that the covered paths
+execute successfully; they do not add the missing assertions or erase the
+missing invariant scenarios identified by this audit.
 
 ## Status in this implementation branch
 
@@ -40,6 +42,15 @@ explicit chaos and soak modes. No new product-behavior or isolation-regression
 test cases are added. The missing invariant scenarios in P0.2, the P0.3
 isolation guard tests, the exact-oracle work in P0.4, and the P1 packs therefore
 remain the prioritized coverage backlog.
+
+### Measured runtime finding — production privacy audit DB wiring
+
+The live harness run found that the production privacy Compose on latest main
+lacks the audit-database bootstrap and `AUDIT_ADMIN_DATABASE_URL` /
+`AUDIT_DATABASE_URL` settings required by the current proxy binary. The E2E-only
+Compose overlay supplies those values and the initialization hook solely as a
+test fixture so the topology can be measured. It does not modify or fix the
+production manifest; the production deployment gap remains open.
 
 ## Executive conclusion
 

@@ -139,17 +139,7 @@ func setupE2EWithVerifier(t *testing.T, verifier server.PrivadoVerifier) (*serve
 	}
 	database.Close()
 
-	// Keep the listener bound while the server is constructed, eliminating the
-	// ephemeral-port close-and-rebind race on busy shared machines.
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("failed to reserve E2E server port: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = listener.Close()
-	})
-	serverAddr := listener.Addr().String()
-	serverURL := "http://" + serverAddr
+	listenerAddresses := make(chan string, 1)
 
 	nodeURL := os.Getenv("E2E_NODE_URL")
 	if nodeURL == "" {
@@ -172,7 +162,7 @@ func setupE2EWithVerifier(t *testing.T, verifier server.PrivadoVerifier) (*serve
 		JWTSecret:             "test-secret",
 		JWTRefreshSecret:      "test-refresh-secret",
 		VerifierID:            "did:privado:verifier:test",
-		BaseURL:               serverURL,
+		BaseURL:               "http://127.0.0.1",
 		Environment:           "development",
 		// AllowMockLogin is inert without the mockauth build tag
 		// (auth_prod.go stubs tryMockLogin out); enabling it here is
@@ -187,7 +177,14 @@ func setupE2EWithVerifier(t *testing.T, verifier server.PrivadoVerifier) (*serve
 		t.Fatalf("failed to create E2E server: %v", err)
 	}
 
-	httpServer := &http.Server{ReadHeaderTimeout: 5 * time.Second}
+	httpServer := &http.Server{
+		Addr:              "127.0.0.1:0",
+		ReadHeaderTimeout: 5 * time.Second,
+		BaseContext: func(listener net.Listener) context.Context {
+			listenerAddresses <- listener.Addr().String()
+			return context.Background()
+		},
+	}
 	var cleanupOnce sync.Once
 	cleanup := func() {
 		cleanupOnce.Do(func() {
@@ -209,8 +206,20 @@ func setupE2EWithVerifier(t *testing.T, verifier server.PrivadoVerifier) (*serve
 
 	serverErrors := make(chan error, 1)
 	go func() {
-		serverErrors <- srv.RunWithListener(httpServer, listener)
+		serverErrors <- srv.RunWithServer(httpServer)
 	}()
+
+	var serverAddr string
+	select {
+	case serverAddr = <-listenerAddresses:
+	case runErr := <-serverErrors:
+		t.Fatalf("E2E server exited before binding a listener: %v", runErr)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for E2E server listener")
+	}
+	serverURL := "http://" + serverAddr
+	// Server retains cfg; publish the assigned URL before sending any requests.
+	cfg.BaseURL = serverURL
 
 	// Wait for server readiness, but fail immediately if the listener exits.
 	client := &http.Client{Timeout: time.Second}
@@ -218,7 +227,7 @@ func setupE2EWithVerifier(t *testing.T, verifier server.PrivadoVerifier) (*serve
 	for i := 0; i < 10; i++ {
 		select {
 		case runErr := <-serverErrors:
-			if runErr != nil && !errors.Is(runErr, http.ErrServerClosed) {
+			if runErr != nil {
 				t.Fatalf("E2E server exited during startup: %v", runErr)
 			}
 		default:

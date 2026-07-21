@@ -89,23 +89,31 @@ The supported environment controls are:
 
 Never reuse an active run ID or project name for a concurrent run.
 
-## Privacy source builds
+## Privacy source builds and fixture configuration
 
 The privacy lane keeps `docker-compose.privacy.yml` as the production-topology
-source of truth. An E2E-only Compose overlay changes only the provenance of the
-five first-party images: proxy backend and frontend are built from the current
+source of truth. An E2E-only Compose overlay changes the provenance of the five
+first-party images: proxy backend and frontend are built from the current
 working tree, while the explorer and indexer images are built from the pinned
-public sources above. The explorer API explicitly uses its `privacy` build
-target, preserving the compile-time removal of direct indexer access. Service
-configuration, trust-zone networks, and the negative-network assertions remain
+public sources above. It also supplies test-only audit-database bootstrap and
+DSNs required to start the current proxy binary. The production manifest is not
+modified by the harness; this fixture makes its missing audit wiring measurable
+and is not a product fix. The explorer API explicitly uses its `privacy` build
+target, preserving the compile-time removal of direct indexer access.
+Trust-zone networks, published ports, and the negative-network assertions remain
 the production privacy topology.
 
 When no `E2E_*_PATH` override is supplied, source checkouts live under the
 run's artifact directory and are shallow clones of the configured repository
 and ref. Repository and ref overrides are useful for testing an alternate
 public fork or release; path overrides are useful for an existing local
-checkout. Keep all three values paired with the component they name, and use a
-unique run ID when comparing revisions concurrently.
+checkout. The canonical default refs enforce their exact canonical commit SHA,
+including when the repository URL points at a mirror or the source path is
+supplied by the caller. For a noncanonical fork or local checkout, set that
+component's matching `E2E_*_REF` to the intended nondefault ref as well as its
+repository or path override. Run metadata records each resolved source SHA and
+whether its checkout was dirty. Keep all three values paired with the component
+they name, and use a unique run ID when comparing revisions concurrently.
 
 Compose assigns run-project-local names to locally built images. Normal
 success, failure, and interrupt cleanup removes those images together with the

@@ -1004,14 +1004,6 @@ func (s *Server) RunWithServer(httpServer *http.Server) error {
 	return httpServer.ListenAndServe()
 }
 
-// RunWithListener runs the server on an already-bound listener. Test harnesses
-// use this to reserve an ephemeral loopback port without a close-and-rebind race.
-func (s *Server) RunWithListener(httpServer *http.Server, listener net.Listener) error {
-	router := s.setupRouter()
-	httpServer.Handler = router
-	return httpServer.Serve(listener)
-}
-
 func (s *Server) setupRouter() *gin.Engine {
 	router := gin.Default()
 
