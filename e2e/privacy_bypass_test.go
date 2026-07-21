@@ -47,7 +47,11 @@
 package e2e
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -56,6 +60,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -110,6 +115,386 @@ func publicHostPort(key string) string {
 	return "0"
 }
 
+var privacyProjectNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+
+const privacyOwnershipMarkerDir = "/tmp/privacy-proxy-e2e-project-locks"
+
+type privacyProjectResources struct {
+	Containers []string
+	Networks   []string
+	Volumes    []string
+	Images     []string
+}
+
+func (r privacyProjectResources) empty() bool {
+	return len(r.Containers) == 0 && len(r.Networks) == 0 && len(r.Volumes) == 0 && len(r.Images) == 0
+}
+
+func (r privacyProjectResources) String() string {
+	return fmt.Sprintf("containers=%v networks=%v volumes=%v images=%v", r.Containers, r.Networks, r.Volumes, r.Images)
+}
+
+type privacyProjectOwnership struct {
+	project           string
+	markerDescription string
+	verifyFn          func() error
+	releaseFn         func() error
+}
+
+func (o *privacyProjectOwnership) verify() error {
+	if o == nil || o.verifyFn == nil {
+		return fmt.Errorf("privacy project ownership is unverified")
+	}
+	return o.verifyFn()
+}
+
+func (o *privacyProjectOwnership) release() error {
+	if o == nil || o.releaseFn == nil {
+		return fmt.Errorf("privacy project ownership cannot be released")
+	}
+	return o.releaseFn()
+}
+
+type privacyOwnershipDependencies struct {
+	listResources    func(string) (privacyProjectResources, error)
+	harnessOwnership func(string, string) (*privacyProjectOwnership, bool, error)
+	directOwnership  func(string) (*privacyProjectOwnership, error)
+}
+
+func defaultPrivacyOwnershipDependencies() privacyOwnershipDependencies {
+	return privacyOwnershipDependencies{
+		listResources:    dockerPrivacyProjectResources,
+		harnessOwnership: harnessPrivacyProjectOwnership,
+		directOwnership:  createDirectPrivacyProjectOwnership,
+	}
+}
+
+func validatePrivacyProjectName(project string) error {
+	if len(project) == 0 || len(project) > 63 || !privacyProjectNamePattern.MatchString(project) {
+		return fmt.Errorf("Compose project must start with a lowercase letter or digit, contain only a-z, 0-9, underscore, or hyphen, and be at most 63 characters (got %q)", project)
+	}
+	return nil
+}
+
+func dockerPrivacyProjectResources(project string) (privacyProjectResources, error) {
+	containers, err := dockerResourceIDs("container", "ls", "-aq", "--filter", "label=com.docker.compose.project="+project)
+	if err != nil {
+		return privacyProjectResources{}, fmt.Errorf("inventory project containers: %w", err)
+	}
+	networks, err := dockerResourceIDs("network", "ls", "-q", "--filter", "label=com.docker.compose.project="+project)
+	if err != nil {
+		return privacyProjectResources{}, fmt.Errorf("inventory project networks: %w", err)
+	}
+	volumes, err := dockerResourceIDs("volume", "ls", "-q", "--filter", "label=com.docker.compose.project="+project)
+	if err != nil {
+		return privacyProjectResources{}, fmt.Errorf("inventory project volumes: %w", err)
+	}
+	imagesByLabel, err := dockerResourceIDs("image", "ls", "-q", "--filter", "label=com.docker.compose.project="+project)
+	if err != nil {
+		return privacyProjectResources{}, fmt.Errorf("inventory project images by label: %w", err)
+	}
+	imagesByReference, err := dockerResourceIDs("image", "ls", "-q", "--filter", "reference="+project+"-*")
+	if err != nil {
+		return privacyProjectResources{}, fmt.Errorf("inventory project images by reference: %w", err)
+	}
+	return privacyProjectResources{
+		Containers: containers,
+		Networks:   networks,
+		Volumes:    volumes,
+		Images:     uniqueStrings(append(imagesByLabel, imagesByReference...)),
+	}, nil
+}
+
+func dockerResourceIDs(args ...string) ([]string, error) {
+	cmd := exec.Command("docker", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("docker %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return uniqueStrings(strings.Fields(string(out))), nil
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func acquirePrivacyProjectOwnership(repoRoot, project string, deps privacyOwnershipDependencies) (*privacyProjectOwnership, error) {
+	if err := validatePrivacyProjectName(project); err != nil {
+		return nil, err
+	}
+	resources, err := deps.listResources(project)
+	if err != nil {
+		return nil, err
+	}
+	harnessOwner, markerPresent, markerErr := deps.harnessOwnership(repoRoot, project)
+	if markerPresent {
+		if markerErr != nil {
+			return nil, fmt.Errorf("invalid harness privacy-project ownership marker: %w", markerErr)
+		}
+		if harnessOwner == nil {
+			return nil, fmt.Errorf("harness ownership marker was reported present without an owner")
+		}
+		if err := harnessOwner.verify(); err != nil {
+			return nil, fmt.Errorf("verify harness privacy-project ownership: %w", err)
+		}
+		return harnessOwner, nil
+	}
+	if markerErr != nil {
+		return nil, fmt.Errorf("inspect harness privacy-project ownership marker: %w", markerErr)
+	}
+	if !resources.empty() {
+		return nil, fmt.Errorf("Compose project already has resources but no verified owner marker (%s)", resources)
+	}
+
+	directOwner, err := deps.directOwnership(project)
+	if err != nil {
+		return nil, fmt.Errorf("acquire direct privacy-project ownership: %w", err)
+	}
+	resources, err = deps.listResources(project)
+	if err != nil {
+		releaseErr := directOwner.release()
+		return nil, fmt.Errorf("recheck project resources after ownership acquisition: %w (release marker: %v)", err, releaseErr)
+	}
+	if !resources.empty() {
+		releaseErr := directOwner.release()
+		return nil, fmt.Errorf("Compose project acquired resources during ownership check (%s); refusing to continue (release marker: %v)", resources, releaseErr)
+	}
+	return directOwner, nil
+}
+
+func claimPrivacyProjectForTest(t *testing.T, repoRoot, project string, cleanup func() error) (*privacyProjectOwnership, error) {
+	return claimPrivacyProjectForTestWithDeps(t, repoRoot, project, defaultPrivacyOwnershipDependencies(), cleanup)
+}
+
+func claimPrivacyProjectForTestWithDeps(t *testing.T, repoRoot, project string, deps privacyOwnershipDependencies, cleanup func() error) (*privacyProjectOwnership, error) {
+	t.Helper()
+	owner, err := acquirePrivacyProjectOwnership(repoRoot, project, deps)
+	if err != nil {
+		return nil, err
+	}
+	t.Cleanup(func() {
+		// This check is deliberately adjacent to the destructive callback. A
+		// marker that disappeared or changed after startup turns cleanup into a
+		// fail-closed leak, never a down against an unverified project.
+		if err := owner.verify(); err != nil {
+			t.Errorf("refusing destructive cleanup for unverified Compose project %q: %v", project, err)
+			return
+		}
+		if err := cleanup(); err != nil {
+			t.Errorf("cleanup verified Compose project %q: %v", project, err)
+			return
+		}
+		if err := owner.release(); err != nil {
+			t.Errorf("release Compose project %q ownership marker: %v", project, err)
+		}
+	})
+	return owner, nil
+}
+
+func harnessPrivacyProjectOwnership(repoRoot, project string) (*privacyProjectOwnership, bool, error) {
+	artifactDir := strings.TrimSpace(os.Getenv("E2E_ARTIFACT_DIR"))
+	if artifactDir == "" {
+		return nil, false, nil
+	}
+	if !filepath.IsAbs(artifactDir) {
+		artifactDir = filepath.Join(repoRoot, artifactDir)
+	}
+	artifactDir = filepath.Clean(artifactDir)
+	roots := []string{artifactDir}
+	if filepath.Base(artifactDir) == "privacy" {
+		roots = append(roots, filepath.Dir(artifactDir))
+	}
+
+	markerNames := []string{".harness-owner", "run.env", ".privacy-project-owner"}
+	var candidates []string
+	for _, root := range roots {
+		found := false
+		for _, name := range markerNames {
+			_, err := os.Lstat(filepath.Join(root, name))
+			if err == nil {
+				found = true
+				continue
+			}
+			if !os.IsNotExist(err) {
+				return nil, true, fmt.Errorf("inspect ownership marker %s: %w", filepath.Join(root, name), err)
+			}
+		}
+		if found {
+			candidates = append(candidates, root)
+		}
+	}
+	if len(candidates) == 0 {
+		return nil, false, nil
+	}
+	if len(candidates) != 1 {
+		return nil, true, fmt.Errorf("ambiguous harness ownership roots: %v", candidates)
+	}
+
+	expectedRunID := strings.TrimSpace(os.Getenv("E2E_RUN_ID"))
+	expectedBaseProject := strings.TrimSpace(os.Getenv("E2E_PROJECT"))
+	if expectedRunID == "" || expectedBaseProject == "" {
+		return nil, true, fmt.Errorf("harness markers require non-empty E2E_RUN_ID and E2E_PROJECT")
+	}
+	expected := map[string]string{
+		"run_id":          expectedRunID,
+		"project":         expectedBaseProject,
+		"privacy_project": project,
+	}
+	snapshots := make(map[string][]byte, len(markerNames))
+	metadata := make(map[string]map[string]string, len(markerNames))
+	for _, name := range markerNames {
+		path := filepath.Join(candidates[0], name)
+		data, err := readRegularOwnershipFile(path)
+		if err != nil {
+			return nil, true, err
+		}
+		parsed, err := parseOwnershipMetadata(path, data)
+		if err != nil {
+			return nil, true, err
+		}
+		for key, want := range expected {
+			if got := parsed[key]; got != want {
+				return nil, true, fmt.Errorf("ownership marker %s has %s=%q, want %q", path, key, got, want)
+			}
+		}
+		snapshots[path] = append([]byte(nil), data...)
+		metadata[name] = parsed
+	}
+	if got := metadata[".privacy-project-owner"]["kind"]; got != "privacy" {
+		return nil, true, fmt.Errorf("privacy-project marker kind=%q, want privacy", got)
+	}
+
+	verify := func() error {
+		for path, want := range snapshots {
+			got, err := readRegularOwnershipFile(path)
+			if err != nil {
+				return err
+			}
+			if !bytes.Equal(got, want) {
+				return fmt.Errorf("ownership marker changed after acquisition: %s", path)
+			}
+		}
+		return nil
+	}
+	owner := &privacyProjectOwnership{
+		project:           project,
+		markerDescription: "verified harness marker " + filepath.Join(candidates[0], ".privacy-project-owner"),
+		verifyFn:          verify,
+		releaseFn:         func() error { return nil },
+	}
+	return owner, true, nil
+}
+
+func readRegularOwnershipFile(path string) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, fmt.Errorf("inspect ownership marker %s: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("ownership marker is not a regular file: %s", path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read ownership marker %s: %w", path, err)
+	}
+	return data, nil
+}
+
+func parseOwnershipMetadata(path string, data []byte) (map[string]string, error) {
+	metadata := make(map[string]string)
+	for _, line := range strings.Split(string(data), "\n") {
+		if line == "" {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok || key == "" {
+			return nil, fmt.Errorf("invalid ownership metadata line in %s: %q", path, line)
+		}
+		if _, duplicate := metadata[key]; duplicate {
+			return nil, fmt.Errorf("duplicate ownership metadata key %q in %s", key, path)
+		}
+		metadata[key] = value
+	}
+	return metadata, nil
+}
+
+func createDirectPrivacyProjectOwnership(project string) (*privacyProjectOwnership, error) {
+	if err := validatePrivacyProjectName(project); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(privacyOwnershipMarkerDir, 0o700); err != nil {
+		return nil, fmt.Errorf("create ownership marker directory: %w", err)
+	}
+	nonceBytes := make([]byte, 16)
+	if _, err := rand.Read(nonceBytes); err != nil {
+		return nil, fmt.Errorf("generate ownership nonce: %w", err)
+	}
+	nonce := hex.EncodeToString(nonceBytes)
+	markerPath := filepath.Join(privacyOwnershipMarkerDir, project+".go-owner")
+	markerBody := []byte(fmt.Sprintf("version=1\nproject=%s\nnonce=%s\n", project, nonce))
+	marker, err := os.OpenFile(markerPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("create exclusive ownership marker %s: %w", markerPath, err)
+	}
+	removeCreatedMarker := func() {
+		_ = marker.Close()
+		_ = os.Remove(markerPath)
+	}
+	if _, err := marker.Write(markerBody); err != nil {
+		removeCreatedMarker()
+		return nil, fmt.Errorf("write ownership marker %s: %w", markerPath, err)
+	}
+	if err := marker.Sync(); err != nil {
+		removeCreatedMarker()
+		return nil, fmt.Errorf("sync ownership marker %s: %w", markerPath, err)
+	}
+	if err := marker.Close(); err != nil {
+		_ = os.Remove(markerPath)
+		return nil, fmt.Errorf("close ownership marker %s: %w", markerPath, err)
+	}
+
+	verify := func() error {
+		got, err := readRegularOwnershipFile(markerPath)
+		if err != nil {
+			return err
+		}
+		if !bytes.Equal(got, markerBody) {
+			return fmt.Errorf("direct ownership nonce changed for project %s", project)
+		}
+		return nil
+	}
+	owner := &privacyProjectOwnership{
+		project:           project,
+		markerDescription: "direct nonce marker " + markerPath,
+		verifyFn:          verify,
+	}
+	owner.releaseFn = func() error {
+		if err := verify(); err != nil {
+			return err
+		}
+		if err := os.Remove(markerPath); err != nil {
+			return fmt.Errorf("remove owned marker %s: %w", markerPath, err)
+		}
+		return nil
+	}
+	if err := owner.verify(); err != nil {
+		return nil, fmt.Errorf("verify new ownership marker: %w", err)
+	}
+	return owner, nil
+}
+
 func TestPrivacyModeBypassClosure(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skipf("docker not installed: %v", err)
@@ -160,16 +545,18 @@ func TestPrivacyModeBypassClosure(t *testing.T) {
 		"SSO_REDIRECT_URI=https://explorer.e2e.invalid/api/auth/callback",
 	}
 
-	// Register teardown before `up`: Compose can create networks, volumes, and
-	// some containers before returning a partial-start error.
-	t.Cleanup(func() {
+	ownership, err := claimPrivacyProjectForTest(t, repoRoot, project, func() error {
 		capturePrivacyComposeArtifacts(t, composeFile, env, repoRoot, project)
 		down := dockerCompose(composeFile, env, repoRoot, project, "down", "-v", "--remove-orphans", "--rmi", "local")
 		if out, err := down.CombinedOutput(); err != nil {
-			t.Errorf("compose down failed (project %s may have leaked resources):\n%s\nerror: %v", project, string(out), err)
+			return fmt.Errorf("compose down failed (project %s may have leaked resources): %w\n%s", project, err, string(out))
 		}
+		return nil
 	})
-	t.Logf("using isolated Compose project %q", project)
+	if err != nil {
+		t.Fatalf("refusing to use Compose project %q: %v", project, err)
+	}
+	t.Logf("using isolated Compose project %q (%s)", project, ownership.markerDescription)
 
 	internalServices := loadInternalServices(t, repoRoot)
 
@@ -239,27 +626,120 @@ func TestPrivacyModeBypassClosure(t *testing.T) {
 		}
 	})
 
-	t.Run("block-explorer /api/* proxied to Open Privacy Suite (not local api)", func(t *testing.T) {
-		// Hitting the frontend's /api/ should land at Open Privacy Suite's
-		// /api/v1/explorer/ — we can tell it hit Open Privacy Suite (and
-		// not nothing) by getting a well-formed HTTP response. 401
-		// (unauthenticated), 403, or 404 (no matching sub-route) are
-		// all acceptable for this negative-path assertion; 502
-		// (connection refused to missing upstream) or 503 would
-		// indicate the wrong nginx config is in play.
-		resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/api/v1/explorer/stats", explorerPort))
+	t.Run("block-explorer privacy API returns exact Open Privacy Suite response", func(t *testing.T) {
+		// This is a controlled OPS-specific oracle, not merely "not 502".
+		// The privacy BFF requires a display identity, then forwards this grant
+		// request to OPS and passes its status/body through byte-for-byte. The
+		// fixed UUID is deliberately absent, so OPS's getGrantTransactions
+		// handler returns its exact JSON 404. Local BFF/static fallbacks use
+		// different status, content type, or body shapes.
+		const (
+			missingGrantID = "00000000-0000-0000-0000-000000000000"
+			addressID      = "11111111-1111-1111-1111-111111111111"
+		)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		url := fmt.Sprintf("http://127.0.0.1:%d/api/privacy/grant/%s/%s/transactions", explorerPort, missingGrantID, addressID)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err != nil {
-			t.Fatalf("GET /api/*: %v", err)
+			t.Fatalf("build controlled OPS oracle request: %v", err)
+		}
+		req.AddCookie(&http.Cookie{Name: "explorer_auth", Value: explorerDisplayOnlyJWT()})
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("GET controlled OPS oracle: %v", err)
 		}
 		defer resp.Body.Close()
-		if resp.StatusCode == http.StatusBadGateway || resp.StatusCode == http.StatusServiceUnavailable {
-			body, _ := io.ReadAll(resp.Body)
-			t.Fatalf("frontend nginx returned %d — implies it's trying to reach a non-existent local api. Privacy-mode nginx config not in place.\nbody: %s", resp.StatusCode, string(body))
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("read controlled OPS oracle response: %v", err)
 		}
-		// Any other HTTP status means Open Privacy Suite received the request,
-		// which is what we're checking.
-		t.Logf("proxied /api/v1/explorer/stats status=%d (expected: Open Privacy Suite received the request)", resp.StatusCode)
+		const wantBody = `{"error":"grant not found"}`
+		if resp.StatusCode != http.StatusNotFound || resp.Header.Get("Content-Type") != "application/json" || string(body) != wantBody {
+			t.Fatalf("controlled OPS oracle mismatch: status=%d content-type=%q body=%q; want status=404 content-type=application/json body=%s", resp.StatusCode, resp.Header.Get("Content-Type"), string(body), wantBody)
+		}
+		var payload map[string]json.RawMessage
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatalf("controlled OPS oracle returned invalid JSON: %v", err)
+		}
+		if len(payload) != 1 {
+			t.Fatalf("controlled OPS oracle schema has keys %v; want only error", payload)
+		}
 	})
+}
+
+func explorerDisplayOnlyJWT() string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
+	claims := fmt.Sprintf(`{"sub":"did:e2e:privacy-routing-oracle","exp":%d}`, time.Now().Add(time.Hour).Unix())
+	payload := base64.RawURLEncoding.EncodeToString([]byte(claims))
+	return header + "." + payload + ".unsigned"
+}
+
+func TestPrivacyProjectCollisionFailsClosed(t *testing.T) {
+	cases := []struct {
+		name      string
+		resources privacyProjectResources
+	}{
+		{name: "container", resources: privacyProjectResources{Containers: []string{"unrelated-container"}}},
+		{name: "network", resources: privacyProjectResources{Networks: []string{"unrelated-network"}}},
+		{name: "volume", resources: privacyProjectResources{Volumes: []string{"unrelated-volume"}}},
+		{name: "image", resources: privacyProjectResources{Images: []string{"unrelated-image"}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			original := []byte("unrelated sentinel data must survive\n")
+			sentinelPath := filepath.Join(t.TempDir(), "unrelated-sentinel")
+			if err := os.WriteFile(sentinelPath, original, 0o600); err != nil {
+				t.Fatalf("write sentinel: %v", err)
+			}
+			downCalls := 0
+			markerCreated := false
+			assertUntouched := func() {
+				t.Helper()
+				got, err := os.ReadFile(sentinelPath)
+				if err != nil {
+					t.Errorf("unrelated sentinel was removed: %v", err)
+					return
+				}
+				if !bytes.Equal(got, original) {
+					t.Errorf("unrelated sentinel changed: got %q, want %q", got, original)
+				}
+				if downCalls != 0 {
+					t.Errorf("destructive cleanup ran %d times after ownership collision", downCalls)
+				}
+				if markerCreated {
+					t.Error("direct ownership marker was created despite a pre-existing project resource")
+				}
+			}
+			// Registered first so it runs after any cleanup the claim helper might
+			// accidentally register (testing cleanups are LIFO).
+			t.Cleanup(assertUntouched)
+
+			deps := privacyOwnershipDependencies{
+				listResources: func(string) (privacyProjectResources, error) {
+					return tc.resources, nil
+				},
+				harnessOwnership: func(string, string) (*privacyProjectOwnership, bool, error) {
+					return nil, false, nil
+				},
+				directOwnership: func(string) (*privacyProjectOwnership, error) {
+					markerCreated = true
+					return nil, fmt.Errorf("must not create a marker for a colliding project")
+				},
+			}
+			owner, err := claimPrivacyProjectForTestWithDeps(t, "unused", "privacy-collision-test", deps, func() error {
+				downCalls++
+				return os.Remove(sentinelPath)
+			})
+			if err == nil {
+				t.Fatal("expected project ownership collision to fail closed")
+			}
+			if owner != nil {
+				t.Fatalf("collision returned unexpected owner: %+v", owner)
+			}
+			assertUntouched()
+		})
+	}
 }
 
 // ----- helpers -----
