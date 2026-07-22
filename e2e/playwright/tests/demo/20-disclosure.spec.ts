@@ -84,23 +84,26 @@ test.describe('selective disclosure', () => {
         address_labels: Record<string, string>;
       };
       const txs = historyBody.transactions;
-      expect(txs).toHaveLength(1);
+      // A disclosure grant covers the target address's history, not only the
+      // one canary transaction created for this scenario. The fixture's target
+      // wallet also participates in setup transactions, so assert the
+      // authorization boundary and required canary rather than an accidental
+      // chain-history cardinality.
+      expect(txs.length).toBeGreaterThanOrEqual(1);
       if (expectedLevel === 'full') {
         expect(history.text.toLowerCase()).toContain(m.transactions.targetIncrement.hash.toLowerCase());
-        expect(txs[0].tx_hash?.toLowerCase()).toBe(m.transactions.targetIncrement.hash.toLowerCase());
+        expect(txs.map(tx => tx.tx_hash?.toLowerCase())).toContain(m.transactions.targetIncrement.hash.toLowerCase());
       } else {
-        expect(txs[0].tx_hash).toBeUndefined();
-        expect(txs[0].value).toBe('hidden');
+        expect(txs.every(tx => tx.tx_hash === undefined && tx.value === 'hidden')).toBe(true);
         assertNoCanary(history.text, [
           m.personas.target.address,
           m.transactions.targetIncrement.hash,
         ], `${expectedLevel} transaction history`);
         if (expectedLevel === 'pseudonymous') {
-          expect([txs[0].from, txs[0].to]).toContain(expectedDisplay);
+          expect(txs.some(tx => [tx.from, tx.to].includes(expectedDisplay))).toBe(true);
           expect(historyBody.address_labels[expectedDisplay]).toBe('disclosed');
         } else {
-          expect(txs[0].from).toBe('[PRIVATE]');
-          expect(txs[0].to).toBe('[PRIVATE]');
+          expect(txs.every(tx => tx.from === '[PRIVATE]' && tx.to === '[PRIVATE]')).toBe(true);
           expect(historyBody.address_labels).toEqual({});
         }
       }
@@ -131,9 +134,9 @@ test.describe('selective disclosure', () => {
       await page.goto(`/grant/${disclosed.grant_id}/${disclosed.address_id}`);
       await expect(page.getByText(expectedDisplay, { exact: true }).first()).toBeVisible();
       await expect(page.getByRole('tab', { name: 'Transactions', exact: true })).toBeVisible();
-      await expect(page.locator('table tbody tr')).toHaveCount(1);
+      await expect(page.locator('table tbody tr')).toHaveCount(txs.length);
       if (expectedLevel !== 'full') {
-        await expect(page.getByText('hidden', { exact: true })).toBeVisible();
+        await expect(page.getByText('hidden', { exact: true }).first()).toBeVisible();
       }
       await page.getByRole('tab', { name: 'Activity Logs', exact: true }).click();
       await expect(page.getByText('eth_call', { exact: true })).toBeVisible();

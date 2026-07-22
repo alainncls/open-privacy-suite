@@ -94,20 +94,20 @@ test.describe('demo transaction matrix', () => {
     await expect(page.getByText('1 internal call', { exact: false })).toBeVisible();
     const rows = page.locator('[data-testid="trace-row"]');
     await expect(rows).toHaveCount(2);
-    await expect(rows.nth(1).getByText('increment', { exact: false })).toBeVisible();
+    await expect(rows.nth(1).getByText(INCREMENT, { exact: true })).toBeVisible();
     await expect(rows.nth(1).locator('[data-testid="address-label"]')).toHaveCount(2);
     await expect(rows.nth(1).getByText('My Org', { exact: true })).toHaveCount(2);
 
     await setExplorerAuthCookie(context, m.personas.admin.token);
     await page.goto(`/tx/${m.transactions.writerMint.hash}`);
-    await expect(page.getByText('mint', { exact: false })).toBeVisible();
     await expect(page.getByRole('heading', { name: /Transaction Details/i })).toBeVisible();
+    await expect(page.getByText(new RegExp(MINT, 'i'))).toBeVisible();
     await expect(page.getByRole('tab', { name: /Logs \(1\)/i })).toBeVisible();
     await expect(page.getByText('ERC-20 Tokens Transferred', { exact: false })).toBeVisible();
     await expect(page.getByText('Mine', { exact: true })).toBeVisible();
     await expect(page.getByText('My Org', { exact: true })).toBeVisible();
     await page.getByRole('tab', { name: /Logs \(1\)/i }).click();
-    await expect(page.getByText('Transfer', { exact: false })).toBeVisible();
+    await expect(page.getByText('Transfer', { exact: true })).toBeVisible();
 
     const mintDetail = await explorerGet(context, `/api/transactions/${m.transactions.writerMint.hash}`);
     expect(mintDetail.status, mintDetail.text).toBe(200);
@@ -123,7 +123,19 @@ test.describe('demo transaction matrix', () => {
     const transfers = mintTransfers.body as Array<{ from: string; to: string; value: string }>;
     expect(transfers).toHaveLength(1);
     expect(transfers[0].from.toLowerCase()).toBe('0x0000000000000000000000000000000000000000');
-    expect(transfers[0].to.toLowerCase()).toBe(m.personas.writer.address.toLowerCase());
+    // An org admin can inspect the contract event but does not automatically
+    // gain the member's wallet identity. This must remain redacted unless the
+    // member explicitly discloses it; otherwise the transfer endpoint becomes
+    // a same-org address-discovery oracle.
+    expect(transfers[0].to).toBe('[PRIVATE]');
+
+    await setExplorerAuthCookie(context, m.personas.writer.token);
+    const writerMintTransfers = await explorerGet(context, `/api/transactions/${m.transactions.writerMint.hash}/transfers`);
+    expect(writerMintTransfers.status, writerMintTransfers.text).toBe(200);
+    const writerTransfers = writerMintTransfers.body as Array<{ from: string; to: string; value: string }>;
+    expect(writerTransfers).toHaveLength(1);
+    expect(writerTransfers[0].from.toLowerCase()).toBe('0x0000000000000000000000000000000000000000');
+    expect(writerTransfers[0].to.toLowerCase()).toBe(m.personas.writer.address.toLowerCase());
 
     const writerAddress = await explorerGet(context, `/api/addresses/${m.personas.writer.address}`);
     expect(writerAddress.status, writerAddress.text).toBe(200);
@@ -132,17 +144,17 @@ test.describe('demo transaction matrix', () => {
     expect(writerInfo.internalTxCount).toBe(0);
 
     await page.goto(`/address/${m.contracts.forwarder.address}`);
-    await expect(page.getByTestId('tab-internal')).toContainText(`Internal txns (${forwarderInfo.internalTxCount})`);
-    await expect(page.getByTestId('tab-transactions')).toContainText(`Transactions (${forwarderInfo.txCount})`);
+    await expect(page.getByTestId('tab-internal')).toContainText(`Internal txns${forwarderInfo.internalTxCount}`);
+    await expect(page.getByTestId('tab-transactions')).toContainText(`Transactions${forwarderInfo.txCount}`);
     await page.getByTestId('tab-internal').click();
-    await expect(page.locator('[data-testid="tx-row"]')).toHaveCount(1);
+    await expect(page.locator('table tbody tr')).toHaveCount(1);
     await expect(page.getByText('call', { exact: true })).toBeVisible();
     await expect(page.getByText('My Org', { exact: true })).toBeVisible();
 
     await page.goto(`/address/${m.contracts.counter.address}`);
-    await expect(page.getByTestId('tab-internal')).toContainText('Internal txns (1)');
+    await expect(page.getByTestId('tab-internal')).toContainText('Internal txns1');
     await page.getByTestId('tab-internal').click();
-    await expect(page.locator('[data-testid="tx-row"]')).toHaveCount(1);
+    await expect(page.locator('table tbody tr')).toHaveCount(1);
     await expect(page.getByText('My Org', { exact: true })).toBeVisible();
   });
 });

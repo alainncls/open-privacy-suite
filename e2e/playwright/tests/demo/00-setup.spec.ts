@@ -308,7 +308,6 @@ test('build the real demo acceptance scenario', async ({ request }) => {
   const targetReceipt = await waitForReceipt(request, targetIncrement.result!);
   await waitForExplorerTransaction(request, personas.writer.token, writerIncrement.result!);
   await waitForExplorerTransaction(request, personas.target.token, targetIncrement.result!);
-  await waitForExplorerTransaction(request, personas.writer.token, forwardedIncrement.result!);
   await waitForExplorerTransaction(request, personas.admin.token, mintHash);
 
   const disclosures: DemoDisclosureGrant[] = [];
@@ -349,6 +348,7 @@ test('build the real demo acceptance scenario', async ({ request }) => {
   expect(forwardedIncrement.status, JSON.stringify(forwardedIncrement.raw)).toBe(200);
   expect(forwardedIncrement.result).toMatch(/^0x[0-9a-f]{64}$/i);
   const forwardedIncrementReceipt = await waitForReceipt(request, forwardedIncrement.result!);
+  await waitForExplorerTransaction(request, personas.writer.token, forwardedIncrement.result!);
 
   await adminPut(request, adminToken, `/api/v1/admin/orgs/${orgA.id}/compliance/config`, {
     enabled: true,

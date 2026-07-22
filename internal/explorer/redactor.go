@@ -1213,6 +1213,16 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 
 		baseFromLevel := visMap[strings.ToLower(t.From)]
 		baseToLevel := visMap[strings.ToLower(t.To)]
+		// The EVM zero address is a protocol constant used for ERC-20 mints and
+		// burns, never an identity that privacy policy can protect. Treat it as
+		// public so a visible counterparty does not lose the derived transfer
+		// row (or see a misleading [PRIVATE] sender/recipient).
+		if isZeroEVMAddress(t.From) {
+			baseFromLevel = VisibilityFull
+		}
+		if isZeroEVMAddress(t.To) {
+			baseToLevel = VisibilityFull
+		}
 		fromLevel := baseFromLevel
 		toLevel := baseToLevel
 
@@ -1330,6 +1340,12 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 			// amount because the auditor's expectation is to see the volume).
 			if !adminAuditView && !txVisibleViaGrant {
 				redacted.Value = JSONString("")
+			}
+			if isZeroEVMAddress(t.From) {
+				redacted.From = t.From
+			}
+			if isZeroEVMAddress(t.To) {
+				redacted.To = t.To
 			}
 			result = append(result, redacted)
 			continue
@@ -2503,6 +2519,13 @@ func (r *RedactionEngine) RedactTokenHolders(ctx context.Context, holders []Toke
 // cannot identify the address — it will render as "[PRIVATE]" either way.
 func isNonIdentifiable(level VisibilityLevel) bool {
 	return level == VisibilityHidden || level == VisibilityRedacted
+}
+
+// isZeroEVMAddress reports whether addr is the canonical EVM zero address.
+// It is a protocol constant, never a private identity.
+func isZeroEVMAddress(addr string) bool {
+	normalized := strings.TrimPrefix(strings.ToLower(addr), "0x")
+	return len(normalized) == 40 && strings.Trim(normalized, "0") == ""
 }
 
 // applyRedaction modifies an address string based on its visibility level

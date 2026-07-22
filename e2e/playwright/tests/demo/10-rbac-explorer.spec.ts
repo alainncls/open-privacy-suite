@@ -14,7 +14,10 @@ test.describe('RBAC and explorer parity', () => {
       data: COUNT,
     }, 'latest']);
     expect(read.status, JSON.stringify(read.raw)).toBe(200);
-    expect(BigInt(read.result!)).toBe(2n);
+    // Setup performs two direct increments and then one increment through the
+    // Forwarder to exercise the internal-transaction path. RBAC reads must
+    // observe the actual final state, not the pre-forwarder fixture value.
+    expect(BigInt(read.result!)).toBe(3n);
 
     const write = await proxyRpc<string>(request, m.personas.reader.token, m.orgs.a.id, 'eth_sendTransaction', [{
       from: m.personas.reader.address,
