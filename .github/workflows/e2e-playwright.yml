@@ -89,6 +89,18 @@ jobs:
           path: block-explorer
           persist-credentials: false
 
+      - name: Checkout chain indexer
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: gateway-fm/chain-indexer
+          ref: ${{ vars.CHAIN_INDEXER_E2E_REF || 'main' }}
+          path: chain-indexer
+          persist-credentials: false
+
+      - name: Build chain-indexer image
+        working-directory: chain-indexer
+        run: docker build -t ghcr.io/gateway-fm/chain-indexer:$(grep '^INDEXER_VERSION=' ../privacy-proxy/e2e/demo.env | cut -d= -f2) .
+
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@b00af27efadbc7b4ca8b82abbd903b17cc874d2a # v1
         with:
