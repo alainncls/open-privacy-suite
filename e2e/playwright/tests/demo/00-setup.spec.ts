@@ -5,6 +5,7 @@ import { getJWTToken } from '../../helpers/auth';
 import { RBACApiClient, fns, type Group, type User } from '../../helpers/rbac-api';
 import {
   anvilRpc,
+  encodeBytesData,
   encodeAddressWord,
   encodeUintWord,
   linkAddress,
@@ -25,6 +26,8 @@ const ARTIFACT_DIR = process.env.CONTRACT_ARTIFACT_DIR || '../../contracts/out';
 const COUNT = '0x06661abd';
 const INCREMENT = '0xd09de08a';
 const TRANSFER = '0xa9059cbb';
+const MINT = '0x40c10f19';
+const FORWARD = '0x6fadcf72';
 const BALANCE_OF = '0x70a08231';
 const READ_METHODS = [
   'eth_call',
@@ -91,6 +94,14 @@ async function adminPut(
   });
   await requireResponse(response, `PUT ${path}`);
   return response.json();
+}
+
+function encodeForwardCall(target: string, data: string): string {
+  return `${FORWARD}${encodeAddressWord(target)}${encodeUintWord(64n)}${encodeBytesData(data)}`;
+}
+
+function encodeMintCall(to: string, amount: bigint): string {
+  return `${MINT}${encodeAddressWord(to)}${encodeUintWord(amount)}`;
 }
 
 async function createDisclosure(
@@ -206,6 +217,7 @@ test('build the real demo acceptance scenario', async ({ request }) => {
 
   const counter = await deploy(request, accounts[0], 'Counter');
   const token = await deploy(request, accounts[0], 'DemoERC20');
+  const forwarder = await deploy(request, accounts[0], 'Forwarder');
   await orgAdmin.createContract(orgA.id, { address: counter.address, name: 'Demo Counter' });
   await orgAdmin.updateContractABI(orgA.id, counter.address, counter.abi);
   await orgAdmin.createContract(orgA.id, {
@@ -214,6 +226,8 @@ test('build the real demo acceptance scenario', async ({ request }) => {
     metadata: { token_type: 'ERC20', symbol: 'DEMO', decimals: 18 },
   });
   await orgAdmin.updateContractABI(orgA.id, token.address, token.abi);
+  await orgAdmin.createContract(orgA.id, { address: forwarder.address, name: 'Demo Forwarder' });
+  await orgAdmin.updateContractABI(orgA.id, forwarder.address, forwarder.abi);
 
   const counterEvents = await orgAdmin.listContractEvents(orgA.id, counter.address);
   const countIncremented = counterEvents.find(event => event.name === 'CountIncremented');
@@ -221,6 +235,9 @@ test('build the real demo acceptance scenario', async ({ request }) => {
   const tokenEvents = await orgAdmin.listContractEvents(orgA.id, token.address);
   const transferEvent = tokenEvents.find(event => event.name === 'Transfer');
   if (!transferEvent) throw new Error('Token ABI did not expose Transfer');
+  const forwarderEvents = await orgAdmin.listContractEvents(orgA.id, forwarder.address);
+  const forwardedCallEvent = forwarderEvents.find(event => event.name === 'ForwardedCall');
+  if (!forwardedCallEvent) throw new Error('Forwarder ABI did not expose ForwardedCall');
 
   await orgAdmin.createContractGrant(orgA.id, counter.address, {
     group_id: groups.reader.id, functions: fns(COUNT), event_rules: [],
@@ -236,6 +253,14 @@ test('build the real demo acceptance scenario', async ({ request }) => {
     group_id: groups.writer.id, functions: fns(TRANSFER, BALANCE_OF),
     event_rules: [{ topic0: transferEvent.topic0, name: transferEvent.name }],
   });
+  await orgAdmin.createContractGrant(orgA.id, token.address, {
+    group_id: adminGroups.a.id, functions: fns(MINT, BALANCE_OF),
+    event_rules: [{ topic0: transferEvent.topic0, name: transferEvent.name }],
+  });
+  await orgAdmin.createContractGrant(orgA.id, forwarder.address, {
+    group_id: groups.writer.id, functions: fns(FORWARD),
+    event_rules: [{ topic0: forwardedCallEvent.topic0, name: forwardedCallEvent.name }],
+  });
   await adminPut(
     request,
     adminToken,
@@ -250,6 +275,14 @@ test('build the real demo acceptance scenario', async ({ request }) => {
     gas: '0x30d40',
   }]);
   await waitForReceipt(request, seedHash);
+
+  const mintAmount = 250n * 10n ** 18n;
+  const mintHash = await anvilRpc<string>(request, 'eth_sendTransaction', [{
+    from: accounts[0], to: token.address,
+    data: encodeMintCall(personas.writer.address, mintAmount),
+    gas: '0x30d40',
+  }]);
+  const mintReceipt = await waitForReceipt(request, mintHash);
 
   const writerIncrement = await proxyRpc<string>(
     request,
@@ -275,6 +308,8 @@ test('build the real demo acceptance scenario', async ({ request }) => {
   const targetReceipt = await waitForReceipt(request, targetIncrement.result!);
   await waitForExplorerTransaction(request, personas.writer.token, writerIncrement.result!);
   await waitForExplorerTransaction(request, personas.target.token, targetIncrement.result!);
+  await waitForExplorerTransaction(request, personas.writer.token, forwardedIncrement.result!);
+  await waitForExplorerTransaction(request, personas.admin.token, mintHash);
 
   const disclosures: DemoDisclosureGrant[] = [];
   const targetUser = await sa.findUserByExternalId(personas.target.did);
@@ -302,6 +337,19 @@ test('build the real demo acceptance scenario', async ({ request }) => {
   expect(auditedCall.status, JSON.stringify(auditedCall.raw)).toBe(200);
   expect(BigInt(auditedCall.result!)).toBe(2n);
 
+  const forwardedIncrementData = encodeForwardCall(counter.address, INCREMENT);
+  const forwardedIncrement = await proxyRpc<string>(
+    request,
+    personas.writer.token,
+    orgA.id,
+    'eth_sendTransaction',
+    [{ from: personas.writer.address, to: forwarder.address, data: forwardedIncrementData, gas: '0x30d40' }],
+    [personas.observer.did],
+  );
+  expect(forwardedIncrement.status, JSON.stringify(forwardedIncrement.raw)).toBe(200);
+  expect(forwardedIncrement.result).toMatch(/^0x[0-9a-f]{64}$/i);
+  const forwardedIncrementReceipt = await waitForReceipt(request, forwardedIncrement.result!);
+
   await adminPut(request, adminToken, `/api/v1/admin/orgs/${orgA.id}/compliance/config`, {
     enabled: true,
     threshold_fiat: 1_000,
@@ -326,8 +374,17 @@ test('build the real demo acceptance scenario', async ({ request }) => {
     contracts: {
       counter: { address: counter.address, deploymentHash: counter.hash, abi: counter.abi },
       token: { address: token.address, deploymentHash: token.hash, abi: token.abi },
+      forwarder: { address: forwarder.address, deploymentHash: forwarder.hash, abi: forwarder.abi },
     },
     transactions: {
+      writerMint: {
+        hash: mintHash,
+        blockNumber: Number.parseInt(mintReceipt.blockNumber, 16),
+        from: personas.admin.address,
+        to: token.address,
+        value: '0x0',
+        input: encodeMintCall(personas.writer.address, mintAmount),
+      },
       writerIncrement: {
         hash: writerIncrement.result!, blockNumber: Number.parseInt(writerReceipt.blockNumber, 16),
         from: personas.writer.address, to: counter.address, value: '0x0', input: INCREMENT,
@@ -336,13 +393,21 @@ test('build the real demo acceptance scenario', async ({ request }) => {
         hash: targetIncrement.result!, blockNumber: Number.parseInt(targetReceipt.blockNumber, 16),
         from: personas.target.address, to: counter.address, value: '0x0', input: INCREMENT,
       },
+      writerForwardedIncrement: {
+        hash: forwardedIncrement.result!,
+        blockNumber: Number.parseInt(forwardedIncrementReceipt.blockNumber, 16),
+        from: personas.writer.address,
+        to: forwarder.address,
+        value: '0x0',
+        input: forwardedIncrementData,
+      },
     },
     disclosures,
     eventTopics: { countIncremented: countIncremented.topic0 },
     canaries: {
-      protectedAddresses: [personas.writer.address, personas.target.address],
-      transactionHashes: [writerIncrement.result!, targetIncrement.result!],
-      calldata: [INCREMENT],
+      protectedAddresses: [personas.writer.address, personas.target.address, forwarder.address],
+      transactionHashes: [writerIncrement.result!, targetIncrement.result!, forwardedIncrement.result!, mintHash],
+      calldata: [INCREMENT, forwardedIncrementData, encodeMintCall(personas.writer.address, mintAmount)],
     },
     cleanup: { orgIds: [orgA.id, orgB.id], sanctions: [] },
   };

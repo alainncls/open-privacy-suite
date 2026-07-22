@@ -19,6 +19,7 @@ real product paths.
 | RBAC-02 | As an org admin, I can restrict events independently from methods and grant one transaction with `visibleTo`. | A reader gets no receipt, the named observer gets exactly one expected log, and an outsider gets neither the hash nor participant address. |
 | EXP-01 | As a transaction participant, I see consistent transaction details, labels, logs, and counters. | BFF list/detail/stats agree; the UI shows `Mine`, `My Org`, and `Logs (1)` for the real indexed transaction. |
 | EXP-02 | As an ungranted or cross-org user, I cannot enumerate protected activity. | Detail returns the same opaque 404, the address page is restricted, search does not reveal the address/hash, and canary values are absent. |
+| EXP-03 | As a reviewer, internal calls, mint transfers, and address counters stay exact. | A forwarded call produces one internal trace row, the mint shows one ERC-20 transfer, and address tabs/counts match the explorer APIs. |
 | DISC-01 | As a full-disclosure auditor, I see the granted party's real identity and exact history. | Exactly one own and one disclosed address appear; grant history contains the expected transaction and no unrelated data. |
 | DISC-02 | As a pseudonymous auditor, I see stable aliases but no real address or transaction hash. | The same `Address-*` appears in list, detail, history, and UI; protected addresses and hashes are absent. |
 | DISC-03 | As a redacted auditor, I see timing-only history with uniform placeholders. | List, detail, transaction history, and UI use `[PRIVATE]`; real addresses, hashes, values, and unrelated rows do not leak. |
@@ -37,11 +38,12 @@ corresponding executable oracle whenever a demo starts relying on new behavior.
 ## Scenario model
 
 `00-setup.spec.ts` creates two organizations and ten personas, builds groups,
-assigns members, deploys `Counter` and `DemoERC20`, configures contract
-function/event grants, writes visible-to transactions, approves all three
-disclosure levels, and configures travel-rule prices. A versioned manifest
-shares those generated IDs between Playwright projects. It lives only in the
-runner's `/tmp` because it contains synthetic session tokens.
+assigns members, deploys `Counter`, `DemoERC20`, and `Forwarder`, configures
+contract function/event grants, writes visible-to and forwarded transactions,
+mines a mint transfer, approves all three disclosure levels, and configures
+travel-rule prices. A versioned manifest shares those generated IDs between
+Playwright projects. It lives only in the runner's `/tmp` because it contains
+synthetic session tokens.
 
 The feature specs run serially because later compliance stories intentionally
 change configuration created by earlier stories. The suite has no retries:

@@ -10,11 +10,18 @@ contract DemoERC20 {
     uint8 public constant decimals = 18;
     string public constant name = "DemoToken";
     string public constant symbol = "DEMO";
+    address public owner;
 
     event Transfer(address indexed from, address indexed to, uint256 value);
     event Approval(address indexed owner, address indexed spender, uint256 value);
 
+    modifier onlyOwner() {
+        require(msg.sender == owner, "DemoERC20: caller is not the owner");
+        _;
+    }
+
     constructor() {
+        owner = msg.sender;
         uint256 supply = 1_000_000 * 10 ** 18;
         balanceOf[msg.sender] = supply;
         totalSupply = supply;
@@ -44,6 +51,14 @@ contract DemoERC20 {
         balanceOf[from] -= amount;
         balanceOf[to] += amount;
         emit Transfer(from, to, amount);
+        return true;
+    }
+
+    function mint(address to, uint256 amount) public onlyOwner returns (bool) {
+        require(to != address(0), "mint to zero address");
+        totalSupply += amount;
+        balanceOf[to] += amount;
+        emit Transfer(address(0), to, amount);
         return true;
     }
 }

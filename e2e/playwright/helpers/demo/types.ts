@@ -62,10 +62,13 @@ export interface DemoScenarioManifest {
   contracts: {
     counter: DemoContract;
     token: DemoContract;
+    forwarder: DemoContract;
   };
   transactions: {
     writerIncrement: DemoTransaction;
     targetIncrement: DemoTransaction;
+    writerForwardedIncrement: DemoTransaction;
+    writerMint: DemoTransaction;
   };
   disclosures: DemoDisclosureGrant[];
   eventTopics: {

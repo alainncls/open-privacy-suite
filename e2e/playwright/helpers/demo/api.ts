@@ -157,3 +157,10 @@ export function encodeAddressWord(address: string): string {
 export function encodeUintWord(value: bigint): string {
   return value.toString(16).padStart(64, '0');
 }
+
+export function encodeBytesData(value: string): string {
+  const hex = value.replace(/^0x/, '');
+  const byteLength = hex.length / 2;
+  const paddedLength = Math.ceil(byteLength / 32) * 32;
+  return `${encodeUintWord(BigInt(byteLength))}${hex.padEnd(paddedLength * 2, '0')}`;
+}
