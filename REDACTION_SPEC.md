@@ -12,6 +12,8 @@ Any asymmetry is a bug. The historical failure mode (RD-849) was tier 3 admin-cl
 
 The rule also drives how admin and deploy claims are scoped: they grant bypass on **explicitly granted contracts only**, not org-wide access. Org-wide access is the exclusive privilege of `is_org_admin` groups (tier 2), materialized as explicit `ContractAccess` for every org contract.
 
+**Log redaction is symmetric by construction (RD-1214).** Event logs are the one surface where the two layers historically diverged twice over: the RPC dropped/admitted entries but returned admitted logs whole (leaking embedded third-party addresses), while the explorer both admitted entries *and* zeroed embedded addresses. RD-1214 makes the admit/drop decision a single shared function (`rbac.DecideLogEmitterAccess`) and the embedded-address field redaction a single shared primitive (`explorer.RedactLogAddressFields`), with both layers resolving per-address visibility from the same `db.GetBatchVisibilityDetailed`. So for any (viewer, log, embedded address) the two layers reach the identical decision; only the output *shape* differs (raw JSON-RPC vs REST) — and the sole shape difference, a `Pseudonymous` address rendering as a pseudonym in the explorer but zeroed on the RPC, still hides the same real address. Parity is enforced by `internal/server/rpc_explorer_log_parity_test.go` (entry + per-address) and `TestExplorerRedactorWiring_FullStack` — keep both green.
+
 ---
 
 ## 1. Overview
@@ -160,20 +162,22 @@ Log redaction depends on the visibility of the **emitting contract address**, no
 
 | Field | Emitter Hidden | Emitter Redacted | Emitter Full | Implemented | Tested | Notes |
 |-------|---------------|-----------------|--------------|-------------|--------|-------|
-| Entry | Dropped | Kept | Kept | Yes | Yes | When emitter is hidden, the entire log entry is removed |
-| `address` (emitter) | — (entry dropped) | `[PRIVATE]` | unchanged | Yes | Yes | |
-| `topics[0..3]` (when emitter hidden) | — (entry dropped) | all nil | — | Yes | Partial | |
-| `topics[0..3]` (when emitter redacted) | — | all nil | — | Yes | Partial | |
-| `topics[1..3]` (when emitter full) | — | — | Scanned for zero-padded embedded addresses; private ones zeroed | Yes | Yes | topics[0] is event signature hash for non-anonymous events; address pattern check skips it naturally |
-| `data` (when emitter hidden) | — (entry dropped) | — | — | Yes | Partial | |
-| `data` (when emitter redacted) | — | zeroed | — | Yes | Partial | |
-| `data` (when emitter full + ABI registered) | — | — | Non-indexed address params decoded, private ones zeroed | Yes | Partial | |
+| Entry | Dropped | Dropped | Kept | Yes | Yes | A no-grant emitter (Redacted/`ReasonNoAccess`) is now **dropped**, matching the RPC (`access == nil`) — RD-1208/RD-1214. Only a Full emitter (grant / admin / visibleTo-unlock) is kept. Pre-RD-1214 a Redacted emitter was kept with topics/data stripped; that "kept stub" is gone. |
+| `address` (emitter) | — (entry dropped) | — (entry dropped) | unchanged | Yes | Yes | Rendered only when the viewer holds a grant (Full); otherwise the whole entry is dropped |
+| `topics[1..3]` (emitter Full) | — | — | Scanned for zero-padded embedded addresses; ones not visible to the viewer are zeroed via the shared `RedactLogAddressFields` (RD-1214) | Yes | Yes | topics[0] is the event signature hash; the address-pattern check skips it naturally. Cross-layer parity: `TestRPCExplorerLogParity_RD1214` |
+| `data` (emitter Full + ABI registered) | — | — | Non-indexed address params decoded, ones not visible to the viewer zeroed (same shared primitive) | Yes | Yes | Parity + edge cases: `TestRPCExplorerLogParity_RD1214`, `TestRPCFieldRedaction_DataFieldNonIndexedAddress` |
+| `addressMetadata` (explorer only) | — (entry dropped) | — (entry dropped) | reason emitted ONLY for addresses that stay visible (Full) | Yes | Yes | RD-1214 leak fix: a zeroed / redacted embedded address is NEVER keyed into `addressMetadata` (pre-fix the real address leaked as a metadata key). Test: `TestRedactLogs_EmbeddedAddressMetadata_NoLeak_RD1214` |
 | `data` (when emitter full + NO ABI) | Entire log denied at both layers (RPC and Explorer) | — | — | Yes | Yes | **G5 closed (RD-875 RPC + RD-889 explorer).** Without an ABI we can't decode non-indexed `address` params; both layers fail closed (drop the log) when no ABI is resolvable for the emitting contract. Admin bypass on the RPC layer (RD-751) still applies. Operator must register a custom ABI or set `metadata.token_type` to a built-in registry value (ERC-20 / ERC-721) before any event becomes visible. Grant save handler also rejects up-front. |
 | `data` (when emitter visible + dynamic non-indexed params) | Entire log denied at both layers unless contract has `events_allow_dynamic_payload = true` | — | — | Yes | Yes | **M15 closed (security audit follow-up to RD-915).** Pre-M15 the static-slot scanner read only AddressTy + bytes32 slots; dynamic types (`bytes`, `string`, dynamic arrays, dynamic structs) passed through verbatim. Bridge / forwarder / smart-wallet contracts that embed foreign-org addresses inside a `bytes` payload leaked them to any reader. Both layers now drop the log when the matching event's ABI declares any dynamic non-indexed param, unless the operator has explicitly opted the contract out via `contracts.events_allow_dynamic_payload`. Admin viewers (RD-890) and visibleTo-unlock viewers (RD-874) bypass — they resolve before the gate. Opt-out is admin-only (super-admin via X-Admin-Token) via `PUT /orgs/:org_id/contracts/:address/events-allow-dynamic-payload`; default FALSE (close-by-default). |
 
 ### 3.4.1 RPC-Layer Log Filtering (Event Access Control)
 
-In addition to Explorer API redaction, logs returned by `eth_getLogs` and `eth_getTransactionReceipt` are filtered at the RPC layer by `FilterEventLogs` (`internal/rbac/event_filter.go`). This is a separate layer from Explorer API redaction — it controls which log entries are visible at all, before any field-level redaction occurs.
+Logs returned by `eth_getLogs` and `eth_getTransactionReceipt` are redacted at the RPC layer in **two steps**, mirroring the explorer:
+
+1. **Entry admission** — `FilterEventLogs` (`internal/rbac/event_filter.go`) decides which log entries are visible at all, via the shared `rbac.DecideLogEmitterAccess` (the SAME decision the explorer's `RedactLogs` uses — RD-1214).
+2. **Embedded-address field redaction** — for each admitted entry, `JSONRPCProcessor.redactEmbeddedLogAddresses` (`internal/server/rpc_log_field_redaction.go`) zeroes every embedded address (indexed topics + ABI-decoded non-indexed `data`) the viewer is not entitled to see. It resolves per-address visibility through the SAME `db.GetBatchVisibilityDetailed` and applies the SAME `explorer.RedactLogAddressFields` primitive as the explorer, so the two layers hide identical addresses for a given (viewer, log). Fail-closed: a resolver error zeroes every embedded address.
+
+Historically only step 1 existed on the RPC layer, so admitted logs were returned with their embedded addresses in the clear — the explorer zeroed them but the RPC over-shared. RD-1214 closed that asymmetry; cross-layer parity (entry **and** per-address) is enforced by `TestRPCExplorerLogParity_RD1214` (`internal/server/rpc_explorer_log_parity_test.go`). One rendering difference remains and is unavoidable: a `Pseudonymous` embedded address renders as a stable pseudonym in the explorer but is **zeroed** on the RPC (a 32-byte log topic cannot carry a pseudonym string); both hide the real address, so the security decision is identical.
 
 **Admin bypass (RD-751):** Users with the `admin` claim on a contract see ALL logs from that contract, regardless of event rules or address-in-topic checks. This applies to:
 - Per-contract admin (group has `admin` in `group_access.claims` + `contract_grant`)
@@ -317,7 +321,7 @@ At the RPC layer, the tx envelope (`eth_getTransactionByHash` / `eth_getTransact
 | `eth_getTransactionByHash` | Full transaction returned | `null` (tx-by-hash log-entitlement admission is a documented gap, below) | Yes | Yes |
 | `eth_getTransactionReceipt` | Receipt returned; logs event-rule filtered, **plus** the participant sees their own tx's logs on granted contracts even if address-less (RD-1162, §3.4.1) | Receipt returned (logs filtered to the entitled set, `logsBloom` zeroed) when the viewer is entitled to ≥1 of the tx's logs under their event rules (RD-1183); `null` otherwise. Contract-deployment receipts (`to == null`) stay participant/`visibleTo`/admin-only. | Yes | Yes |
 | `eth_getLogs` | Entries where a topic address matches a linked address, **or** (RD-1162) entries of a tx the caller participated in on a granted contract (bounded by grant + no-ABI/M15 gates) | Entry removed from array | Yes | Yes |
-| `eth_getLogs` topics[0..3] | All 4 slots scanned for private addresses | Non-matching entries removed | Yes | Yes |
+| `eth_getLogs` embedded addresses (admitted entry) | topics[1..3] + ABI-decoded non-indexed `data` scanned; addresses not visible to the viewer are **zeroed** (RD-1214), identical to the explorer | Entry already removed by admission | Yes | Yes |
 | `eth_getLogs` data field (no ABI) | Whole log denied at RPC layer regardless of event_rules; explorer layer also denies via the unified ABIResolver | — | Yes | Yes | G5 closed (RD-875 RPC + RD-889 explorer) — see §3.4 row for `data (when emitter full + NO ABI)` |
 | `eth_getBlockByNumber` (`fullTxObjects=true`) | Full block; all txs | Non-participant txs removed | Yes | Yes |
 | `eth_getBlockByNumber` (`fullTxObjects=false`) | Passes through | Passes through | Yes | Yes |

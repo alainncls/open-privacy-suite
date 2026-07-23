@@ -1694,6 +1694,65 @@ func redactTopicAddress(addr string, level VisibilityLevel) string {
 	}
 }
 
+// RedactLogAddressFields zeroes every embedded address in a log's topics and
+// ABI-decoded non-indexed data that is NOT VisibilityFull for the viewer, per
+// visMap. It is the single field-level redaction primitive shared by the
+// explorer redactor (RedactionEngine.RedactLogsWithOpts) and the RPC log filter
+// (server.FilterLogsWithEventRules), so both layers hide EXACTLY the same
+// embedded addresses for a given (viewer, log) — symmetry by construction
+// (RD-1214, completing RD-887).
+//
+// It performs NO admission decision (that is rbac.DecideLogEmitterAccess,
+// resolved upstream) and NO metadata emission (explorer-only, and only for the
+// addresses this primitive leaves visible). Both callers resolve visMap from the
+// SAME source — db.GetBatchVisibilityDetailed — so the per-address verdict is
+// identical on the two layers by construction.
+//
+// topics is topic0..topicN in slot order (nil entries preserved in place). data
+// is the raw hex data field; contractABI + topic0 drive the non-indexed data
+// scan (a no-op when either is absent — the caller's deny-when-no-ABI gate has
+// already run, so an admitted log always has a resolvable ABI in production).
+func RedactLogAddressFields(topics []*string, data string, contractABI json.RawMessage, topic0 *string, visMap VisibilityMap) ([]*string, string) {
+	redTopics := make([]*string, len(topics))
+	for i, t := range topics {
+		redTopics[i] = redactTopicField(t, visMap)
+	}
+	redData := redactLogData(data, contractABI, topic0, visMap)
+	return redTopics, redData
+}
+
+// ExtractLogAddresses returns every embedded address (indexed topics +
+// ABI-decoded non-indexed data), lowercased and de-duplicated, in a log. It is
+// the companion to RedactLogAddressFields: a caller collects these addresses,
+// resolves their visibility (db.GetBatchVisibilityDetailed), builds a visMap,
+// then calls RedactLogAddressFields. Sharing this extractor means the RPC log
+// filter and the explorer redactor consider the SAME address set (RD-1214).
+func ExtractLogAddresses(topics []*string, data string, contractABI json.RawMessage, topic0 *string) []string {
+	seen := make(map[string]struct{})
+	var out []string
+	add := func(a string) {
+		if _, ok := seen[a]; ok {
+			return
+		}
+		seen[a] = struct{}{}
+		out = append(out, a)
+	}
+	for _, t := range topics {
+		if t == nil {
+			continue
+		}
+		if a, ok := extractTopicAddress(*t); ok {
+			add(a)
+		}
+	}
+	if data != "" && topic0 != nil && len(contractABI) > 0 {
+		for _, a := range extractDataAddresses(data, contractABI, topic0) {
+			add(a)
+		}
+	}
+	return out
+}
+
 // redactTopicField redacts a single topic field if it embeds a private address.
 // If the topic does not embed a recognised address pattern it is returned unchanged.
 func redactTopicField(topic *string, visMap VisibilityMap) *string {
@@ -1858,7 +1917,7 @@ func extractDataAddresses(data string, contractABI json.RawMessage, topic0 *stri
 // and zeros any slot whose address is private (non-Full visibility).
 // Returns the original data unchanged if no ABI is registered, the event is not found,
 // no address fields exist, or the data cannot be decoded.
-func (r *RedactionEngine) redactLogData(data string, contractABI json.RawMessage, topic0 *string, visMap VisibilityMap) string {
+func redactLogData(data string, contractABI json.RawMessage, topic0 *string, visMap VisibilityMap) string {
 	if data == "" || len(contractABI) == 0 || topic0 == nil {
 		return data
 	}
@@ -2190,209 +2249,161 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 	for _, l := range logs {
 		contractAddrLower := strings.ToLower(l.Address)
 
-		// RD-874 visibleTo unlock: when the contract is unlockable AND the
-		// viewer is listed in the tx's visibleTo set, pass the log
-		// through with no redaction — bypassing visibility, the deny-
-		// when-no-ABI gate, event_rules, and param_rules. The unlock is
-		// per-tx-all-events and explicitly opted in by the contract
-		// owner via `allow_visibleto_unlock`. See decisions.md §12 for
-		// the full matrix and security rationale.
-		if unlockableContracts[contractAddrLower] && visibleTxHashes[strings.ToLower(l.TxHash)] {
-			redacted := l
-			redacted.AddressMetadata = make(map[string]VisibilityReason)
-			result = append(result, redacted)
-			continue
-		}
-
 		level := visMap[contractAddrLower]
+		contractAddr := contractAddrLower
 
-		// Participant admission is GRANT-BOUNDED (mirrors rbac.FilterEventLogs,
-		// whose participant bypass is bounded by `access != nil` — RD-1162).
-		// A viewer holding a grant on the emitting contract already resolves to
-		// VisibilityFull, so there is no participant level-up here: it would
-		// only ever fire for a NO-grant emitter (VisibilityRedacted/
-		// ReasonNoAccess — a registered contract with no grant; VisibilityHidden
-		// is an unregistered address / EOA), and a tx that internally touched a
-		// contract the viewer has no grant on must not leak that contract's
-		// event payload just because the viewer is a party to the outer tx.
-		// The counterparty EOA the viewer transacted with is still revealed by
-		// the transaction-level participant override in RedactTransactions
-		// (§3.7); this governs only the emitting contract's log payload.
-		// (RPC/explorer unification into one decision engine: RD-1214.)
-
-		// Ordinary (non-unlock) visibleTo does NOT alter the emitting
-		// contract's visibility level. Grant eligibility is load-bearing
-		// (REDACTION_SPEC §3.7.1 / RD-874): a viewer holding a contract grant
-		// already resolves to VisibilityFull, so a shared-tx level-up would
-		// only ever fire for a NO-grant emitter — a registered contract with
-		// no grant resolves to VisibilityRedacted/ReasonNoAccess (an
-		// unregistered address / EOA to VisibilityHidden). Upgrading that to
-		// Full is exactly the leak RD-1208 closes: a transaction sender must
-		// not expose a contract's event payloads to a DID the contract owner
-		// never granted. So there is no ordinary-visibleTo level-up here. A
-		// no-grant emitter stays Redacted (its addresses field-redacted) and
-		// is denied by the event-rule deny-all gate below; the legitimate
-		// additive widening (an allowlisted topic0 whose param rule failed)
-		// is applied there via the visibleTxHashes fallback, which is reached
-		// only for grant holders (non-empty event rules). The only
-		// standalone-grant path is the per-contract allow_visibleto_unlock
-		// semantic, handled at the top of this loop via unlockableContracts.
+		// Hard floor: a Hidden emitter (unregistered address / EOA, or a
+		// foreign-org contract) is dropped unconditionally — before any bypass,
+		// including admin. This is defence-in-depth: even if a resolver bug
+		// wrongly flags such an emitter as admin/unlockable, a truly
+		// inaccessible contract's logs must never surface. (The engine's shared
+		// policy handles the grant/rules/participant decision for in-scope
+		// emitters below; this floor is the explorer's visibility-level
+		// pre-filter, with no RPC equivalent needed — isAdminByContract there
+		// can never be set for an unregistered contract.)
 		if level == VisibilityHidden {
 			continue
 		}
 
-		contractAddr := contractAddrLower
-
-		// RD-889 deny-when-no-ABI gate: mirror rbac.FilterEventLogs (RD-875
-		// / decisions.md §2 G5). Without a resolvable ABI we cannot decode
-		// non-indexed address parameters in the log's `data` field, so
-		// private addresses embedded there would leak verbatim. Drop the
-		// log. Only fires when the unified ABIResolver is wired — without
-		// it the gate is disabled (legacy callers / tests). Production
-		// server startup wires the resolver.
-		//
-		// RD-890 admin bypass: tier-2 (org-admin) and tier-3 (per-contract
-		// admin claim) viewers see logs regardless of ABI status. Mirrors
-		// rbac.FilterEventLogs's isAdminByContract bypass at the RPC
-		// layer. Without an admin-contracts resolver wired, the bypass
-		// stays disabled and admins fall through to the gate (the
-		// pre-RD-890 explorer-stricter-than-RPC asymmetry).
-		if r.abiResolver != nil && !adminContracts[contractAddr] {
-			if r.abiResolver.Resolve(ctx, contractAddr) == "" {
-				continue
-			}
+		// Resolve the per-log facts and defer the admit/deny verdict to the
+		// shared decision engine (rbac.DecideLogEmitterAccess, RD-1214) — the
+		// SAME function the RPC filter (rbac.FilterEventLogs) uses, so the two
+		// layers reach identical verdicts and cannot drift. The engine owns the
+		// gate order; this block only resolves the facts from the explorer's
+		// data model, and the rendering below turns an admit into structured
+		// output.
+		facts := rbac.LogEmitterFacts{
+			// RD-890 admin bypass (per-contract, org-scoped).
+			IsAdmin: adminContracts[contractAddr],
+			// RD-874 visibleTo unlock — the only standalone-grant path.
+			Unlocked: unlockableContracts[contractAddr] && visibleTxHashes[strings.ToLower(l.TxHash)],
+			// Grant eligibility: a contract grant resolves the emitter to Full
+			// for this viewer (GetBatchVisibilityDetailed). No grant → Redacted
+			// (registered) or Hidden (unregistered/EOA). Load-bearing (RD-1208).
+			HasGrant: level == VisibilityFull,
+			// RD-1162 participant/sender (grant-bounded inside the engine).
+			IsParticipant: isParticipant,
+			// Ordinary visibleTo — additive param-rule fallback only.
+			InVisibleTo: visibleTxHashes[strings.ToLower(l.TxHash)],
+			HasTopic0:   l.Topic0 != nil,
 		}
 
-		// M15 dynamic-payload drop (security audit follow-up to RD-915):
-		// mirrors rbac.FilterEventLogs. When the emitting contract's
-		// matching event declares ANY dynamic non-indexed param
-		// (`bytes`, `string`, dynamic arrays, dynamic structs) and the
-		// operator has NOT opted out via `events_allow_dynamic_payload`,
-		// drop the log. Pre-M15 the static-slot scanner could not reach
-		// addresses embedded in dynamic payloads, so bridge / forwarder
-		// / smart-wallet contracts leaked foreign-org address material
-		// verbatim in their event data.
-		//
-		// Bypass precedence (only paths that fully skip the gate):
-		//   - Admins (Phase 3c) — admin already has full access in the
-		//     contract's owning org.
-		//   - visibleTo unlock (Phase 4 head, line ~1330) — early
-		//     return with no redaction, gate never reached.
-		// Participants and additive visibleTo viewers do NOT bypass:
-		// they get a level upgrade only, then hit this gate — drop
-		// fires for them too. Rationale: a dynamic payload can carry
-		// foreign-org addresses unrelated to the tx parties (e.g.,
-		// a relayer-pattern destination), and the static-slot scanner
-		// cannot reach them.
-		//
-		// Per-contract opt-out: admin-set flag, default FALSE
-		// (close-by-default). Operators flip it on standard ERC-20 /
-		// ERC-721 contracts where `string symbol` / `bytes metadata`
-		// cannot contain foreign-org address material.
-		//
-		// Anonymous events (no topic0) fall through this gate — the
-		// helper returns false. Anonymous events with dynamic payloads
-		// are blocked by event_rules deny-all below for non-admin
-		// viewers in any case.
-		if !adminContracts[contractAddr] && l.Topic0 != nil {
+		// Fast drop for emitters with no possible admit path (no admin, no
+		// unlock, no grant → Hidden or Redacted/ReasonNoAccess). The engine
+		// returns false for all of these; short-circuiting here enforces the
+		// grant boundary up front and avoids the (uncached) ABI-resolver DB
+		// call for foreign-org logs — the pre-engine early Hidden drop
+		// generalised to the full no-grant case (RD-1208/RD-1214).
+		if !facts.IsAdmin && !facts.Unlocked && !facts.HasGrant {
+			continue
+		}
+
+		// RD-889 deny-when-no-ABI + M15 dynamic-payload — the embedded-address
+		// protections. Skipped for admin/unlock (the engine admits them before
+		// these gates). Without a resolvable ABI, non-indexed address params in
+		// `data` can't be decoded/redacted.
+		facts.ABIResolvable = true
+		if r.abiResolver != nil && !facts.IsAdmin && !facts.Unlocked {
+			facts.ABIResolvable = r.abiResolver.Resolve(ctx, contractAddr) != ""
+		}
+		if !facts.IsAdmin && !facts.Unlocked && l.Topic0 != nil {
 			var abiForCheck json.RawMessage
 			if raw, ok := contractABIs[contractAddr]; ok && len(raw) > 0 {
 				abiForCheck = raw
 			} else if r.abiResolver != nil {
-				// Resolve on-demand for emitters that didn't go through
-				// the Phase 3 cache (e.g., level==Redacted contracts
-				// upgraded to Full by the participant override above).
 				if s := r.abiResolver.Resolve(ctx, contractAddr); s != "" {
 					abiForCheck = json.RawMessage(s)
 				}
 			}
 			if len(abiForCheck) > 0 && !allowDynamicPayload[contractAddr] &&
 				eventHasDynamicNonIndexedParam(abiForCheck, *l.Topic0) {
-				continue
+				facts.DynamicPayloadDropped = true
 			}
 		}
 
-		// Event rule check (RD-888): mirrors the RPC layer's tri-state
-		// semantics in rbac.FilterEventLogs.
-		//   * Wildcard ⇒ pass.
-		//   * Allowlist ⇒ topic0 must match a listed entry (anonymous
-		//     events with no topic0 are always blocked here). When the
-		//     matched rule carries ParamRules, the log must additionally
-		//     satisfy at least one of them (OR semantics) — same call
-		//     as the RPC layer via rbac.MatchesEventParamRules so both
-		//     layers reach identical decisions. visibleTo (the
-		//     visibleTxHashes opt) extends param-rule checks as a
-		//     fallback, mirroring rbac.FilterEventLogs.
-		//   * Empty Rules + !Wildcard ⇒ **deny-all** (operator intent
-		//     of `event_rules: null`). Pre-RD-888 this branch leaked logs
-		//     because the explorer treated it as "no rules ⇒ allow."
+		// event_rules resolution (RD-888). When no checker is wired (legacy
+		// callers / tests) the gate is disabled — treat as wildcard; the grant
+		// gate above still applies. visibleTo extends the param-rule fallback.
 		if eventRulesResolved[contractAddr] {
 			res := eventRulesMap[contractAddr]
-			if !res.Wildcard {
-				if len(res.Rules) == 0 {
-					// Deny-all.
-					continue
-				}
-				// Allowlist mode: anonymous events have no topic0, drop.
-				if l.Topic0 == nil {
-					continue
-				}
-				topic0Lower := strings.ToLower(*l.Topic0)
-				allowed := false
-				topic0Matched := false
-				for _, rule := range res.Rules {
-					if rule.Topic0 != topic0Lower {
-						continue
+			switch {
+			case res.Wildcard:
+				facts.Rules = rbac.LogEventRulesWildcard
+			case len(res.Rules) == 0:
+				facts.Rules = rbac.LogEventRulesDeny
+			default:
+				facts.Rules = rbac.LogEventRulesAllowlist
+				if l.Topic0 != nil {
+					topic0Lower := strings.ToLower(*l.Topic0)
+					for _, rule := range res.Rules {
+						if rule.Topic0 != topic0Lower {
+							continue
+						}
+						facts.Topic0Allowlisted = true
+						if len(rule.ParamRules) == 0 {
+							facts.EventAllowed = true
+							break
+						}
+						var abiJSON string
+						if raw, ok := contractABIs[contractAddr]; ok {
+							abiJSON = string(raw)
+						}
+						if rbac.MatchesEventParamRules(
+							rbac.EventLogInputs{
+								ContractAddress: contractAddr,
+								Topics:          collectLogTopics(l),
+								Data:            l.Data,
+							},
+							rule.ParamRules,
+							viewerAddrs,
+							abiJSON,
+						) {
+							facts.EventAllowed = true
+							break
+						}
 					}
-					topic0Matched = true
-					if len(rule.ParamRules) == 0 {
-						allowed = true
-						break
-					}
-					// Param rules attached to this rule: log must
-					// satisfy at least one constraint. ABI is required
-					// to decode non-indexed params; with no ABI the
-					// helper falls back to topic-position matching for
-					// indexed params and refuses to guess otherwise.
-					var abiJSON string
-					if raw, ok := contractABIs[contractAddr]; ok {
-						abiJSON = string(raw)
-					}
-					if rbac.MatchesEventParamRules(
-						rbac.EventLogInputs{
-							ContractAddress: contractAddr,
-							Topics:          collectLogTopics(l),
-							Data:            l.Data,
-						},
-						rule.ParamRules,
-						viewerAddrs,
-						abiJSON,
-					) {
-						allowed = true
-						break
-					}
-				}
-				if !allowed && topic0Matched && visibleTxHashes[strings.ToLower(l.TxHash)] {
-					// visibleTo fallback: topic0 was in the allowlist
-					// but param rules failed; the parent tx was
-					// explicitly shared with this viewer, so honour it.
-					// Mirrors rbac.FilterEventLogs:171.
-					allowed = true
-				}
-				if !allowed {
-					continue
 				}
 			}
+		} else {
+			facts.Rules = rbac.LogEventRulesWildcard
+		}
+
+		if !rbac.DecideLogEmitterAccess(facts) {
+			continue
+		}
+
+		// RD-874 visibleTo unlock: full reveal, no field redaction — the
+		// contract owner opted in via allow_visibleto_unlock.
+		if facts.Unlocked {
+			redacted := l
+			redacted.AddressMetadata = make(map[string]VisibilityReason)
+			result = append(result, redacted)
+			continue
 		}
 
 		redacted := l
 		redacted.AddressMetadata = make(map[string]VisibilityReason)
 
 		setMeta := func(addr string, baseLvl VisibilityLevel) {
+			// Emit a metadata reason ONLY for an address that remains
+			// IDENTIFIABLE in the rendered log — i.e. VisibilityFull. That is
+			// the sole level whose real address survives redaction: topics/data
+			// carrying a Redacted, Hidden or Pseudonymous embedded address are
+			// zeroed (redactTopicAddress / redactLogData). Writing a reason for
+			// such an address keys AddressMetadata by the very address the
+			// zeroing hid, handing it back to the viewer in the clear —
+			// the RD-1214 metadata-key leak. A zeroed address gets no entry.
+			//
+			// Note: a participant's counterparty is not revealed here — logs
+			// zero all non-Full embedded addresses regardless of participation,
+			// so there is no identifiable address to annotate. Per-address
+			// counterparty reveal (unified with the RPC field-redaction) is the
+			// remaining RD-1214 work; until then the fail-closed posture holds.
+			if baseLvl != VisibilityFull {
+				return
+			}
 			aLower := strings.ToLower(addr)
-			if isParticipant && isNonIdentifiable(baseLvl) {
-				redacted.AddressMetadata[aLower] = ReasonParticipantOverride
-			} else if reason, ok := masterMeta[aLower]; ok {
+			if reason, ok := masterMeta[aLower]; ok {
 				redacted.AddressMetadata[aLower] = reason
 			}
 		}
@@ -2407,39 +2418,36 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 			redacted.Topic3 = nil
 			redacted.Data = ""
 		} else {
-			// Contract is visible — scan topics for embedded private addresses.
-			redacted.Topic0 = redactTopicField(l.Topic0, visMap)
-			if l.Topic0 != nil {
-				if a, ok := extractTopicAddress(*l.Topic0); ok {
+			// Contract is visible — zero every embedded private address in the
+			// topics and ABI-decoded data via the SHARED field-redaction
+			// primitive (RD-1214). The RPC log filter calls the same
+			// RedactLogAddressFields with a visMap resolved from the same
+			// GetBatchVisibilityDetailed, so the two layers zero identical
+			// addresses by construction.
+			topicABI := contractABIs[strings.ToLower(l.Address)]
+			redTopics, redData := RedactLogAddressFields(
+				[]*string{l.Topic0, l.Topic1, l.Topic2, l.Topic3},
+				l.Data, topicABI, l.Topic0, visMap,
+			)
+			redacted.Topic0, redacted.Topic1, redacted.Topic2, redacted.Topic3 =
+				redTopics[0], redTopics[1], redTopics[2], redTopics[3]
+			redacted.Data = redData
+
+			// Annotate the embedded addresses that remain visible (setMeta emits
+			// a reason only for VisibilityFull addresses — the ones the primitive
+			// left intact — so a zeroed address is never keyed into metadata;
+			// see the RD-1214 leak fix on setMeta above).
+			for _, t := range []*string{l.Topic0, l.Topic1, l.Topic2, l.Topic3} {
+				if t == nil {
+					continue
+				}
+				if a, ok := extractTopicAddress(*t); ok {
 					setMeta(a, visMap[a])
 				}
 			}
-			redacted.Topic1 = redactTopicField(l.Topic1, visMap)
-			if l.Topic1 != nil {
-				if a, ok := extractTopicAddress(*l.Topic1); ok {
+			if l.Data != "" && l.Topic0 != nil && len(topicABI) > 0 {
+				for _, a := range extractDataAddresses(l.Data, topicABI, l.Topic0) {
 					setMeta(a, visMap[a])
-				}
-			}
-			redacted.Topic2 = redactTopicField(l.Topic2, visMap)
-			if l.Topic2 != nil {
-				if a, ok := extractTopicAddress(*l.Topic2); ok {
-					setMeta(a, visMap[a])
-				}
-			}
-			redacted.Topic3 = redactTopicField(l.Topic3, visMap)
-			if l.Topic3 != nil {
-				if a, ok := extractTopicAddress(*l.Topic3); ok {
-					setMeta(a, visMap[a])
-				}
-			}
-			// Scan non-indexed Data field for private addresses when ABI is registered.
-			if l.Data != "" && l.Topic0 != nil {
-				addrKey := strings.ToLower(l.Address)
-				if contractABI, ok := contractABIs[addrKey]; ok && len(contractABI) > 0 {
-					for _, a := range extractDataAddresses(l.Data, contractABI, l.Topic0) {
-						setMeta(a, visMap[a])
-					}
-					redacted.Data = r.redactLogData(l.Data, contractABI, l.Topic0, visMap)
 				}
 			}
 		}

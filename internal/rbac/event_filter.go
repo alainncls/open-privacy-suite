@@ -167,149 +167,73 @@ func FilterEventLogs(
 
 		contractAddr := strings.ToLower(entry.Address)
 
-		// Admin bypass (org-scoped, pre-computed): users with the admin
-		// claim in the log's emitting-contract's owning org see ALL logs
-		// on that contract regardless of event rules. Covers tier-2 org
-		// admins (is_org_admin=true) and tier-3 per-contract admins. The
-		// caller is responsible for scoping this to the contract's own
-		// org — see function docs for why.
-		if isAdminByContract[contractAddr] {
-			filtered = append(filtered, rawLog)
-			continue
+		// Resolve the per-log facts, then defer the admit/deny verdict to the
+		// shared decision engine (rbac.DecideLogEmitterAccess, RD-1214) so the
+		// RPC filter and the explorer redactor apply the SAME policy and cannot
+		// drift. Each fact below mirrors a gate that used to live inline here;
+		// the engine encodes the (unchanged) gate order and semantics.
+		access := perms.GetContractAccess(contractAddr)
+
+		facts := LogEmitterFacts{
+			// Admin bypass (org-scoped, pre-computed): admin in the emitter's
+			// owning org sees all its logs. Caller scopes this per-contract.
+			IsAdmin: isAdminByContract[contractAddr],
+			// RD-874 visibleTo unlock: allow_visibleto_unlock + eligible +
+			// listed in the tx's visibleTo (the only standalone-grant path).
+			Unlocked: visCtx != nil && visCtx.UnlockableContracts[contractAddr] && isViewerInVisibleTo(visCtx, rawLog),
+			// Grant eligibility (RD-874/RD-1208): a ContractAccess entry exists.
+			HasGrant: access != nil,
+			// RD-1162 participant/sender (grant-bounded inside the engine).
+			IsParticipant: logTxIsParticipant(visCtx, rawLog),
+			// Ordinary visibleTo — additive param-rule fallback only.
+			InVisibleTo: isViewerInVisibleTo(visCtx, rawLog),
+			HasTopic0:   len(entry.Topics) > 0,
 		}
 
-		// RD-874 visibleTo unlock: when the contract has the per-contract
-		// `allow_visibleto_unlock` flag set AND the viewer was found
-		// eligible (caller pre-resolves both into UnlockableContracts) AND
-		// the viewer is listed in the tx's visibleTo set, the log passes
-		// unconditionally — bypassing the deny-when-no-ABI gate,
-		// event_rules, and param_rules. The unlock is per-tx-all-events
-		// per the CTO call notes; without the flag (default), additive
-		// semantics below apply unchanged.
-		if visCtx != nil && visCtx.UnlockableContracts[contractAddr] && isViewerInVisibleTo(visCtx, rawLog) {
-			filtered = append(filtered, rawLog)
-			continue
-		}
-
-		// RD-875 deny-without-ABI gate: closes decisions.md §2 G5. Without
-		// a registered ABI we cannot decode non-indexed `address`-typed
-		// params in the log's `data` field — private addresses embedded
-		// there would leak verbatim. Drop the log for this viewer (admin
-		// bypass above is the only exception). nil abiProvider disables
-		// the gate (test ergonomics — production paths always inject a
-		// real provider via newStoreABIProvider).
+		// RD-875 deny-when-no-ABI: without a resolvable ABI, non-indexed
+		// address params in `data` can't be decoded/redacted. A nil abiProvider
+		// disables the gate (test ergonomics; production always injects one).
 		var contractABI string
 		if abiProvider != nil {
 			contractABI = abiProvider.GetContractABI(contractAddr)
-			if contractABI == "" {
-				continue
-			}
+			facts.ABIResolvable = contractABI != ""
+		} else {
+			facts.ABIResolvable = true
 		}
 
-		// M15 dynamic-payload drop (security audit follow-up to RD-915):
-		// drop logs whose matching event declares any dynamic non-indexed
-		// param (`bytes`, `string`, dynamic arrays, dynamic structs) for
-		// non-Full viewers. Pre-M15 the static-slot scanner could not
-		// reach addresses embedded in dynamic payloads, so bridge /
-		// forwarder / smart-wallet contracts leaked foreign-org address
-		// material verbatim in their event data.
-		//
-		// Slot precedence: admin bypass and visibleTo unlock above ALREADY
-		// passed the log through; this gate only fires for viewers who
-		// fell through to the regular access path. Participants on the
-		// parent tx are handled at the RPC layer one level up (see
-		// FilterReceiptLogsWithEventRules — only participants reach this
-		// function for receipts; for eth_getLogs participation is not the
-		// gate, RBAC is).
-		//
-		// Per-contract opt-out: when the ABIProvider implements the
-		// DynamicPayloadAllower interface AND
-		// IsEventsAllowDynamicPayload(addr) returns true, the operator
-		// has explicitly attested that the contract's dynamic payloads
-		// are safe (ERC-20 string symbol, etc.) and the gate is bypassed
-		// for THAT contract. Default is close-by-default (drop).
-		//
-		// Anonymous events (no topic0) are treated as "no matching event"
-		// — the helper returns false and we fall through. Anonymous-event
-		// dynamic-payload leakage is a separate concern (covered by the
-		// deny-all default in event_rules below).
-		if contractABI != "" && len(entry.Topics) > 0 {
+		// M15 dynamic-payload drop: the matched event declares a dynamic
+		// non-indexed param and the contract is not opted out. Only meaningful
+		// with a resolvable ABI and a topic0.
+		if contractABI != "" && facts.HasTopic0 {
 			allowDynamic := false
 			if dpa, ok := abiProvider.(DynamicPayloadAllower); ok {
 				allowDynamic = dpa.IsEventsAllowDynamicPayload(contractAddr)
 			}
-			if !allowDynamic && eventHasDynamicNonIndexedParam(contractABI, entry.Topics[0]) {
-				continue
+			facts.DynamicPayloadDropped = !allowDynamic && eventHasDynamicNonIndexedParam(contractABI, entry.Topics[0])
+		}
+
+		// event_rules resolution — only needed when a grant exists (the engine
+		// drops no-grant emitters before consulting rules).
+		if access != nil {
+			switch {
+			case access.EventRules != nil && access.EventRules.IsWildcard():
+				facts.Rules = LogEventRulesWildcard
+			default:
+				rules := eventRulesGetRules(access.EventRules)
+				if len(rules) == 0 {
+					facts.Rules = LogEventRulesDeny
+				} else {
+					facts.Rules = LogEventRulesAllowlist
+					if facts.HasTopic0 {
+						topic0 := strings.ToLower(entry.Topics[0])
+						facts.EventAllowed = eventAllowed(topic0, entry, rules, addrSet, contractAddr, abiProvider)
+						facts.Topic0Allowlisted = eventTopic0Matches(topic0, rules)
+					}
+				}
 			}
 		}
 
-		access := perms.GetContractAccess(contractAddr)
-
-		// RD-1162: participant/sender bypass of the event-rule allowlist.
-		// If the caller is a participant (from/to) of this log's transaction
-		// AND holds a grant on the emitting contract, the log is visible even
-		// when the event is not in their event_rules allowlist or carries no
-		// address of theirs (e.g. PaymentCompleted, keyed by a business id).
-		// They authored/participated in the tx and already know its contents.
-		//
-		// Bounded by contract access (access != nil): logs emitted by contracts
-		// the viewer has no grant on stay dropped, so a tx that internally
-		// touched a foreign-org contract never leaks that contract's logs —
-		// mirroring the explorer participant override (REDACTION_SPEC §3.7),
-		// which upgrades Redacted→Full but keeps Hidden dropped.
-		//
-		// Slots AFTER the deny-no-ABI (RD-875) and M15 dynamic-payload gates
-		// above (consistent with the explorer, where participants do not bypass
-		// those): participation relaxes only the allowlist/param/self checks,
-		// never the embedded-address protections. So an address-less event on a
-		// granted contract becomes visible to its tx's participants, while an
-		// event with a dynamic non-indexed payload still requires the operator's
-		// events_allow_dynamic_payload attestation.
-		if access != nil && logTxIsParticipant(visCtx, rawLog) {
-			filtered = append(filtered, rawLog)
-			continue
-		}
-
-		if access == nil {
-			// No RBAC grant on the emitting contract → deny. Ordinary
-			// (non-unlock) visibleTo does NOT admit here: per
-			// REDACTION_SPEC §3.7.1 / RD-874 grant eligibility is
-			// load-bearing — bare visibleTo widens an already-permitted
-			// viewer's response (the param-rule fallback below, which
-			// requires a grant + an allowlisted topic0) but never grants
-			// NEW contract-level event access. A transaction sender must
-			// not be able to expose a contract's logs to a DID the
-			// contract owner never granted. The only standalone-grant path
-			// is the per-contract allow_visibleto_unlock semantic, handled
-			// above via UnlockableContracts (RD-1208).
-			continue
-		}
-
-		// Wildcard: all events visible for this contract.
-		if access.EventRules != nil && access.EventRules.IsWildcard() {
-			filtered = append(filtered, rawLog)
-			continue
-		}
-
-		// Deny all: no event rules configured or empty rules.
-		// nil pointer and nil/empty Rules both mean deny.
-		rules := eventRulesGetRules(access.EventRules)
-		if len(rules) == 0 {
-			continue
-		}
-
-		// Allowlist mode: the log's topic0 must match one of the allowed event rules.
-		if len(entry.Topics) == 0 {
-			// Anonymous event (no topic0) — blocked in allowlist mode.
-			continue
-		}
-
-		topic0 := strings.ToLower(entry.Topics[0])
-		if eventAllowed(topic0, entry, rules, addrSet, contractAddr, abiProvider) {
-			filtered = append(filtered, rawLog)
-		} else if eventTopic0Matches(topic0, rules) && isViewerInVisibleTo(visCtx, rawLog) {
-			// Topic0 is in the allowlist but param rules failed.
-			// visibleTo extends param rule checks as a fallback.
+		if DecideLogEmitterAccess(facts) {
 			filtered = append(filtered, rawLog)
 		}
 	}

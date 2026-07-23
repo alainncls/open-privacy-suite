@@ -335,11 +335,26 @@ func (s *Server) handleDryRun(c *gin.Context) {
 		if s.db != nil {
 			abiProv = newStoreABIProvider(ctx, s.db)
 		}
+		// Field-redact embedded addresses too (RD-1214), using the impersonated
+		// user's DID, so the dry-run reflects the user's REAL view — entry
+		// filtering alone would still return embedded third-party addresses in
+		// the clear, over-showing vs production. No-op if the processor/resolver
+		// isn't wired or the user has no DID.
+		viewerDID := ""
+		if user != nil {
+			viewerDID = user.ExternalID
+		}
 		switch req.RPC.Method {
 		case "eth_getLogs":
 			rawResp = FilterLogsWithEventRules([]byte(rawResp), addrs, userPerms, abiProv, nil, nil)
+			if s.jsonrpcProcessor != nil && viewerDID != "" {
+				rawResp = s.jsonrpcProcessor.redactLogsArrayResponseFields(ctx, viewerDID, []byte(rawResp))
+			}
 		case "eth_getTransactionReceipt":
 			rawResp = FilterReceiptLogsWithEventRules([]byte(rawResp), addrs, userPerms, abiProv, nil, nil)
+			if s.jsonrpcProcessor != nil && viewerDID != "" {
+				rawResp = s.jsonrpcProcessor.redactReceiptResponseFields(ctx, viewerDID, []byte(rawResp))
+			}
 		}
 	}
 
