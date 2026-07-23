@@ -138,6 +138,55 @@ func TestJWTAuthMiddleware_RevokedToken(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
+// TestJWTAuthMiddleware_BearerSchemeCaseInsensitive pins RD-1217: the
+// Authorization auth-scheme is case-insensitive per RFC 7235 §2.1 (RFC 6750
+// inherits it), so every spelling of "bearer" with a valid token must be
+// accepted — not just the exact "Bearer".
+func TestJWTAuthMiddleware_BearerSchemeCaseInsensitive(t *testing.T) {
+	service, err := NewJWTService("test-secret", "test-refresh-secret", 30*time.Minute, 7*24*time.Hour)
+	require.NoError(t, err)
+	token, err := service.IssueAccessToken("did:privado:case", true)
+	require.NoError(t, err)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/test", JWTAuthMiddleware(service, nil), func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"message": "ok"})
+	})
+
+	for _, scheme := range []string{"Bearer", "bearer", "BEARER", "BeArEr"} {
+		t.Run("scheme="+scheme, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/test", nil)
+			req.Header.Set("Authorization", scheme+" "+token)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			assert.Equalf(t, http.StatusOK, w.Code, "scheme %q with a valid token must be accepted (RFC 7235 §2.1)", scheme)
+		})
+	}
+}
+
+// TestJWTAuthMiddleware_CaseInsensitiveSchemeStillValidatesToken is the
+// fail-closed guard for RD-1217: accepting the scheme case-insensitively must
+// NOT relax token validation — an invalid token under a lowercase scheme is
+// still rejected.
+func TestJWTAuthMiddleware_CaseInsensitiveSchemeStillValidatesToken(t *testing.T) {
+	service, err := NewJWTService("test-secret", "test-refresh-secret", 30*time.Minute, 7*24*time.Hour)
+	require.NoError(t, err)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/test", JWTAuthMiddleware(service, nil), func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"message": "ok"})
+	})
+
+	req := httptest.NewRequest("POST", "/test", nil)
+	req.Header.Set("Authorization", "bearer not.a.valid.token")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusUnauthorized, w.Code,
+		"a lowercase scheme must still reject an invalid token (fail-closed)")
+}
+
 // RD-1008: middleware reads JWT from the access cookie when the Authorization
 // header is absent. The Bearer header takes precedence when both are
 // present (preserves API-client behaviour); cookie alone is what unblocks

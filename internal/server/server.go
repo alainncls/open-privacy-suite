@@ -1584,7 +1584,9 @@ func (s *Server) adminAuthMiddleware() gin.HandlerFunc {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader != "" {
 			parts := strings.SplitN(authHeader, " ", 2)
-			if len(parts) == 2 && parts[0] == "Bearer" {
+			// Case-insensitive auth-scheme (RFC 7235 §2.1); the JWT in parts[1]
+			// is still validated below regardless of scheme case.
+			if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
 				tokenString := parts[1]
 
 				// Validate the JWT (reuses the same logic as JWTAuthMiddleware).

@@ -226,6 +226,28 @@ func TestAdminAuth_JWT_OrgAdminGrantsAccess(t *testing.T) {
 	assert.Equal(t, "jwt_admin", body["auth_method"])
 }
 
+// TestAdminAuth_JWT_BearerSchemeCaseInsensitive pins RD-1217 on the admin
+// middleware's Path-2 (JWT Bearer) branch: the auth-scheme is case-insensitive
+// (RFC 7235 §2.1), so a lowercase "bearer" with an org-admin JWT must be
+// accepted just like "Bearer".
+func TestAdminAuth_JWT_BearerSchemeCaseInsensitive(t *testing.T) {
+	srv, router := setupAdminAuthTestServer(t, "my-secret-token")
+
+	userDID, _ := createTestOrgAdmin(t, srv)
+	token, err := srv.jwtService.IssueAccessToken(userDID, true)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/status", nil)
+	req.Header.Set("Authorization", "bearer "+token) // lowercase scheme
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code, "lowercase bearer scheme must be accepted (RFC 7235 §2.1)")
+	var body map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, "jwt_admin", body["auth_method"])
+}
+
 func TestAdminAuth_JWT_ContractAdminGets403(t *testing.T) {
 	// Tier 3: admin claim in group_access.claims but NOT is_org_admin.
 	// Should be rejected by adminAuthMiddleware — no dashboard access.
