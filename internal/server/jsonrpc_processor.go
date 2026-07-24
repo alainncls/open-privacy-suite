@@ -962,17 +962,19 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	// eth_sendRawTransaction where the sender is recovered from the signature.
 
 	// M7 (security audit follow-up): write the visibleTo rule into the
-	// outbox (pending_tx_visibility). A background reconciler (5s
-	// ticker) promotes it to tx_visible_to. This survives DB hiccups —
-	// the row stays in the outbox until the next reconciler tick. If
-	// the outbox INSERT itself fails (which means the DB is completely
-	// unreachable, a much rarer condition than the original
-	// SaveTxVisibility race) we still log with the full recipient
-	// count + sender + org for manual replay.
+	// outbox (pending_tx_visibility); the reconciler promotes it to
+	// tx_visible_to. This survives DB hiccups — the row stays in the
+	// outbox until it drains. If the outbox INSERT itself fails (which
+	// means the DB is completely unreachable, a much rarer condition
+	// than the original SaveTxVisibility race) we still log with the
+	// full recipient count + sender + org for manual replay.
 	//
-	// The reconciler-driven model adds a small (≤ 5s) latency between
-	// "tx on-chain" and "recipients can see it in explorer", which is
-	// dominated by block-confirmation latency anyway.
+	// The drain is event-driven: on a successful enqueue the send path
+	// kicks the reconciler (below), so in steady state recipients can see
+	// the tx within milliseconds — dominated by block-confirmation latency
+	// anyway. The reconciler's periodic backstop tick only retries rows a
+	// kick missed (e.g. a kick dropped during a DB outage); a missed kick
+	// degrades latency to at most one tick, it never loses visibility.
 	if len(visibleTo) > 0 && statusCode == http.StatusOK {
 		if txHash := extractTxHashFromResult(responseBody); txHash != "" {
 			if saver, ok := p.txVisibilityStore.(TxVisibilitySaver); ok {
