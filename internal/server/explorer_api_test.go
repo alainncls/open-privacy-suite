@@ -319,6 +319,8 @@ func TestExplorerAPI_GetViewableAddresses_ReturnsOwnAddresses(t *testing.T) {
 	assert.Equal(t, testViewerWallet, resp.ViewerWallet)
 	assert.Equal(t, testViewerDID, resp.ViewerDID)
 	assert.Len(t, resp.OwnAddresses, 2)
+	assert.Contains(t, w.Body.String(), `"disclosed_addresses":[]`,
+		"an authenticated viewer without grants must receive [] rather than null")
 
 	// Check that both addresses are returned
 	addresses := make(map[string]bool)

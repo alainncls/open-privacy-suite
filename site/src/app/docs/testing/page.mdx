@@ -7,10 +7,11 @@ export const metadata = {
 
 # Testing
 
-The Open Privacy Suite testbed supports two testing modes:
+The Open Privacy Suite testbed supports three testing modes:
 
 1. **Unit / Integration Tests (Go)** -- Use mock servers and testcontainers for fast, deterministic testing.
 2. **E2E Tests (Go-based and Playwright)** -- Use real Anvil node for comprehensive API testing.
+3. **Demo acceptance E2E** -- Runs the proxy, indexer, admin UI, and privacy-mode block explorer together and verifies the demo-critical security behavior end to end.
 
 **Key design decisions:**
 
@@ -29,6 +30,9 @@ The Open Privacy Suite testbed supports two testing modes:
 | `anvil` | foundry | 8545 | Local Ethereum node |
 | `proxy-backend` | Go binary | 8080 | Open Privacy Suite server |
 | `proxy-frontend` | Node.js | 5173 | Admin UI (Vite dev server) |
+| `chain-indexer` | Published image | internal only | Indexes real Anvil blocks for privacy APIs |
+| `block-explorer-api` | Sibling repository | internal only | Privacy-mode explorer BFF |
+| `block-explorer-frontend` | Sibling repository | 3001 | Explorer UI |
 
 Service dependency chain:
 
@@ -105,12 +109,22 @@ e2e/playwright/
 ├── global-setup.ts
 ├── helpers/            # auth.ts, policy.ts, address.ts, rbac-api.ts, rbac-fixtures.ts, test-context.ts
 └── tests/
-    └── ui/             # numbered specs: 01-auth, 02-navigation, 03-organizations,
+    ├── ui/             # numbered specs: 01-auth, 02-navigation, 03-organizations,
                         # 05-test-request, 06-admin-auth, 07-batch-operations,
                         # 08-event-rules, 09-visibleto-caption, 10-disclosure-scope,
                         # 11-compliance-unsaved-changes, 12-access-logs-denial-reasons,
                         # 13-compliance-monitor-mode (+ compliance/03-currency-selector-ui)
+    └── demo/           # cross-product acceptance: 00-setup, 00-cleanup, 10-rbac-explorer,
+                        # 20-disclosure, 30-travel-rule, 40-view-as, 50-explorer-conformance,
+                        # 60-transaction-matrix
+
 ```
+
+### Demo acceptance coverage
+
+The demo project is a cross-product privacy contract, not a presence-only smoke test. It creates two organizations and ten user personas, deploys real `Counter` and ERC-20 contracts, configures method/function/event grants, writes indexed transactions, approves full/pseudonymous/redacted disclosures, and configures travel-rule prices.
+
+Each story compares the proxy RPC result, explorer BFF JSON, and rendered browser view where applicable. It asserts exact rows, counters, labels, log counts, addresses, amounts, and disclosure representations. Protected addresses, transaction hashes, and calldata are also used as canaries: tests fail if any forbidden value appears in a raw response, search result, or page. See the [executable story catalog](https://github.com/gateway-fm/privacy-proxy/blob/main/e2e/playwright/tests/demo/README.md) for the complete acceptance matrix and maintenance rules.
 
 ### Test Isolation
 
@@ -167,6 +181,25 @@ make e2e-debug
 # Stop E2E services
 make e2e-down
 ```
+
+### Demo acceptance E2E
+
+The demo suite requires Docker, Docker Compose, Foundry, and a sibling explorer checkout. By default the explorer is resolved at `../block-explorer`; use `BLOCK_EXPLORER_PATH` for a different checkout or worktree.
+
+```bash
+# Build contracts, start the full isolated stack, run all acceptance stories,
+# and always remove containers and volumes.
+make demo-e2e
+
+# Run against an explicit explorer checkout.
+make demo-e2e BLOCK_EXPLORER_PATH=/absolute/path/to/block-explorer
+
+# Keep the stack for Playwright Inspector, then tear it down explicitly.
+make demo-e2e-debug BLOCK_EXPLORER_PATH=/absolute/path/to/block-explorer
+make demo-e2e-down BLOCK_EXPLORER_PATH=/absolute/path/to/block-explorer
+```
+
+The acceptance project is serial and has no retries. A missing service, fixture, or expected redaction is a hard failure. Its temporary scenario manifest is not retained because it contains synthetic session tokens.
 
 Test reports are generated at:
 - HTML report: `e2e/playwright/playwright-report/index.html`

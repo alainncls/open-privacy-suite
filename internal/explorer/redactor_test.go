@@ -774,6 +774,28 @@ func TestRedactTransfers_HiddenFrom_KeepsWithPrivate(t *testing.T) {
 	}
 }
 
+func TestRedactTransfers_MintFromZeroAddressSurvivesForVisibleRecipient(t *testing.T) {
+	// The zero address is a protocol constant, not a private counterparty. A
+	// mint must remain visible when its recipient is visible; otherwise the
+	// transaction can expose its Transfer log/category while the derived
+	// ERC-20 transfer row disappears.
+	const zeroAddress = "0x0000000000000000000000000000000000000000"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{to: VisibilityFull})
+
+	transfers := []TokenTransfer{{ID: 1, From: zeroAddress, To: to, Value: "250000000000000000000"}}
+	result, err := engine.RedactTransfers(context.Background(), transfers, "did:admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("mint from the zero address to a visible recipient must survive, got %d rows", len(result))
+	}
+	if result[0].From != zeroAddress || result[0].To != to || result[0].Value != transfers[0].Value {
+		t.Fatalf("mint transfer changed unexpectedly: %+v", result[0])
+	}
+}
+
 func TestRedactTransfers_BothHidden_Drops(t *testing.T) {
 	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"

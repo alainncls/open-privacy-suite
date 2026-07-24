@@ -1,7 +1,41 @@
-import { defineConfig, devices } from '@playwright/test';
+import { defineConfig, devices, type PlaywrightTestConfig } from '@playwright/test';
 
 const PROXY_URL = process.env.PROXY_URL || 'http://localhost:8080';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
+const DEMO_E2E = process.env.DEMO_E2E === '1';
+
+const demoProjects: PlaywrightTestConfig['projects'] = DEMO_E2E ? [
+  {
+    name: 'demo-setup',
+    testDir: './tests/demo',
+    testMatch: /00-setup\.spec\.ts$/,
+    teardown: 'demo-cleanup',
+    use: { baseURL: PROXY_URL },
+  },
+  {
+    name: 'demo',
+    testDir: './tests/demo',
+    testIgnore: /00-(?:setup|cleanup)\.spec\.ts$/,
+    dependencies: ['demo-setup'],
+    workers: 1,
+    retries: 0,
+    use: {
+      ...devices['Desktop Chrome'],
+      baseURL: process.env.EXPLORER_URL || 'http://localhost:3001',
+      viewport: { width: 1440, height: 900 },
+      actionTimeout: 15000,
+      navigationTimeout: 30000,
+      screenshot: 'only-on-failure',
+      video: 'retain-on-failure',
+    },
+  },
+  {
+    name: 'demo-cleanup',
+    testDir: './tests/demo',
+    testMatch: /00-cleanup\.spec\.ts$/,
+    use: { baseURL: PROXY_URL },
+  },
+] : [];
 
 export default defineConfig({
   testDir: './tests',
@@ -26,7 +60,7 @@ export default defineConfig({
     // API tests (existing)
     {
       name: 'api',
-      testMatch: /^(?!.*\/ui\/).*\.spec\.ts$/,
+      testMatch: /^(?!.*\/(?:ui|demo)\/).*\.spec\.ts$/,
       use: {
         baseURL: PROXY_URL,
         extraHTTPHeaders: {
@@ -49,5 +83,6 @@ export default defineConfig({
         video: 'retain-on-failure',
       },
     },
+    ...demoProjects,
   ],
 });
