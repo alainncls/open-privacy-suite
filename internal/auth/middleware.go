@@ -64,7 +64,10 @@ func ClearAccessCookie(c *gin.Context) {
 func extractAccessToken(c *gin.Context) (token string, malformedHeader bool) {
 	if authHeader := c.GetHeader("Authorization"); authHeader != "" {
 		parts := strings.Split(authHeader, " ")
-		if len(parts) != 2 || parts[0] != "Bearer" {
+		// The auth-scheme token is case-insensitive (RFC 7235 §2.1; RFC 6750
+		// inherits it) — accept "Bearer" / "bearer" / "BEARER" alike. The
+		// credential in parts[1] is still validated by the caller regardless.
+		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
 			return "", true
 		}
 		return parts[1], false
