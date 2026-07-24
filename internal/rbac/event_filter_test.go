@@ -267,6 +267,51 @@ func TestFilterEventLogs_DeniesWhenNoABI_VisibleToFallback(t *testing.T) {
 	}
 }
 
+// TestFilterEventLogs_OrdinaryVisibleTo_NoGrant_Denied_RD1208 pins the
+// RD-1208 fix: ordinary (non-unlock) visibleTo must NOT admit a viewer who
+// holds NO grant on the emitting contract. Per REDACTION_SPEC §3.7.1 and
+// RD-874 grant eligibility is load-bearing — bare visibleTo widens an
+// already-permitted viewer's response (the param-rule fallback) but never
+// grants NEW contract-level event access. A transaction sender must not be
+// able to unilaterally expose a contract's event logs to a DID the contract
+// owner never granted; the only standalone-grant path is the per-contract
+// allow_visibleto_unlock semantic (UnlockableContracts), exercised
+// separately. Here the ABI IS present (deny-when-no-ABI gate does not fire)
+// and the event is static (no M15 drop), so the visibleTo admission is the
+// only decision under test.
+func TestFilterEventLogs_OrdinaryVisibleTo_NoGrant_Denied_RD1208(t *testing.T) {
+	const contract = "0xc0107ac7000000000000000000000000000000ab"
+	const txHash = "0x7a11111111111111111111111111111111111111111111111111111111111111"
+	// Arbitrary topic0 that does not match any event in the ABI below, so
+	// the M15 dynamic-payload probe (findEventByTopic0) is a no-op.
+	topic0 := "0xabc0000000000000000000000000000000000000000000000000000000000000"
+
+	// Viewer has NO grant on the emitting contract (empty ContractAccess) →
+	// GetContractAccess returns nil.
+	perms := &EffectivePermissions{ContractAccess: map[string]ContractAccess{}}
+
+	// A resolvable ABI (single static non-indexed param) so the
+	// deny-when-no-ABI gate passes and does not mask the decision.
+	staticABI := `[{"anonymous":false,"inputs":[{"indexed":false,"name":"v","type":"uint256"}],"name":"E","type":"event"}]`
+	abiProv := &testABIProvider{abis: map[string]string{contract: staticABI}}
+
+	// Ordinary visibleTo: viewer is listed in the tx's visibleTo, but the
+	// contract is NOT unlockable (UnlockableContracts nil).
+	visCtx := &TxVisibilityContext{
+		ViewerDID:    "did:test:viewer",
+		TxVisibility: map[string][]string{txHash: {"did:test:viewer"}},
+	}
+
+	logs := []json.RawMessage{
+		json.RawMessage(`{"address":"` + contract + `","topics":["` + topic0 + `"],"data":"0x","transactionHash":"` + txHash + `"}`),
+	}
+
+	result := FilterEventLogs(logs, perms, []string{"0xuser1"}, abiProv, visCtx, nil)
+	if len(result) != 0 {
+		t.Errorf("ordinary visibleTo with no contract grant must be denied (RD-1208), got %d logs", len(result))
+	}
+}
+
 func TestFilterEventLogs_NilABIProviderDisablesGate(t *testing.T) {
 	// Backward compatibility: callers that pass abiProvider=nil (notably
 	// older test code) get the pre-RD-875 behaviour. Production paths

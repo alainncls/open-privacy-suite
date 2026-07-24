@@ -1635,6 +1635,60 @@ func TestRedactLogs_EventRules_ParamRules_VisibleToOnlyHelpsIfTopic0Matches(t *t
 	}
 }
 
+// TestRedactLogs_OrdinaryVisibleTo_NoGrantEmitter_RD1208 pins the explorer
+// half of RD-1208: ordinary (non-unlock) visibleTo must not grant a no-grant
+// viewer access to a contract's event logs. Grant eligibility is load-bearing
+// (REDACTION_SPEC §3.7.1 / RD-874).
+//
+// State modelled: a REGISTERED org contract with no grant resolves to
+// VisibilityRedacted/ReasonNoAccess (GetBatchVisibilityDetailed) — grant
+// holders resolve to VisibilityFull, and VisibilityHidden is an unregistered
+// address / EOA. So the no-grant emitter is VisibilityRedacted, NOT Hidden.
+func TestRedactLogs_OrdinaryVisibleTo_NoGrantEmitter_RD1208(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	topic := eventTopic0("PrivateTransfer(address,address,uint256)")
+
+	// Isolating the visibility/visibleTo layer (no event-rule checker wired):
+	// ordinary visibleTo must NOT upgrade the no-grant emitter to Full. The
+	// emitting contract renders [PRIVATE]; its real address must never leak.
+	// Before the fix the visibleTo level-up promoted Redacted->Full and the
+	// emitter (and its payload) rendered in the clear.
+	t.Run("no-grant emitter not revealed via visibleTo", func(t *testing.T) {
+		engine := newEngine(VisibilityMap{addr: VisibilityRedacted})
+		logs := []Log{{ID: 1, Address: addr, TxHash: "0xshared", Topic0: &topic, Data: "0x"}}
+		result, err := engine.RedactLogsWithOpts(context.Background(), logs, "did:test", &RedactOpts{
+			VisibleTxHashes: map[string]bool{"0xshared": true},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected the log kept (field-redacted), got %d", len(result))
+		}
+		if strings.EqualFold(result[0].Address, addr) {
+			t.Errorf("ordinary visibleTo must not reveal a no-grant emitter at Full (RD-1208); emitter leaked as %s", result[0].Address)
+		}
+	})
+
+	// Production config (wireExplorerRedactor wires the event-rule checker):
+	// a no-grant emitter resolves to deny-all, so the log is dropped entirely.
+	// Ordinary visibleTo must not rescue it.
+	t.Run("no-grant emitter dropped in production", func(t *testing.T) {
+		engine := newEngine(VisibilityMap{addr: VisibilityRedacted})
+		engine.SetEventRuleChecker(&stubEventRuleChecker{}) // no entry => deny-all
+		logs := []Log{{ID: 1, Address: addr, TxHash: "0xshared", Topic0: &topic, Data: "0x"}}
+		result, err := engine.RedactLogsWithOpts(context.Background(), logs, "did:test", &RedactOpts{
+			VisibleTxHashes: map[string]bool{"0xshared": true},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result) != 0 {
+			t.Errorf("ordinary visibleTo must not rescue a no-grant emitter's log in production (RD-1208), got %d logs", len(result))
+		}
+	})
+}
+
 // TestRedactLogs_GetLinkedAddressesError_Propagates pins the audit
 // fix for finding #5 — pre-fix the redactor swallowed
 // GetLinkedAddresses errors via `if err == nil` and silently treated
@@ -2022,16 +2076,23 @@ func TestRedactLogs_UnknownTopic0_DataUnchanged(t *testing.T) {
 // RedactLogs — participant override
 // ---------------------------------------------------------------------------
 
-func TestRedactLogs_ParticipantOverride_SeeOwnLogs(t *testing.T) {
-	// Eve's EOA calls a private contract. The contract emits a log.
-	// Without participant override: log dropped (contract is Redacted).
-	// With participant override: log visible (Eve is the tx sender).
+// TestRedactLogs_Participant_NoGrantContract_StaysRedacted_RD1208 replaces the
+// former ParticipantOverride_SeeOwnLogs test, which asserted the pre-RD-1162
+// UNBOUNDED behavior (a participant sees a no-grant contract's log in the
+// clear). Participant admission is now GRANT-BOUNDED, mirroring
+// rbac.FilterEventLogs (RD-1162, `access != nil`): a registered contract with
+// NO grant (VisibilityRedacted/ReasonNoAccess) stays redacted for a mere tx
+// participant — a tx that internally touched a contract the viewer has no grant
+// on must not leak its event payload. (The RPC drops the log outright; the
+// explorer currently keeps the row field-redacted — the full drop / one-engine
+// unification is RD-1214.)
+func TestRedactLogs_Participant_NoGrantContract_StaysRedacted_RD1208(t *testing.T) {
 	contractAddr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	eveAddr := "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 	topic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 
 	engine := newEngineWithLinkedAddrs(VisibilityMap{
-		contractAddr: VisibilityRedacted,
+		contractAddr: VisibilityRedacted, // registered, no grant → ReasonNoAccess
 	}, []string{eveAddr})
 
 	logs := []Log{{
@@ -2039,34 +2100,31 @@ func TestRedactLogs_ParticipantOverride_SeeOwnLogs(t *testing.T) {
 		Topic0: &topic0, Data: "0x0000000000000000000000000000000000000000000000000000000002faf080",
 	}}
 
-	// Without participant context — log should be stripped (topics/data nil)
-	result, err := engine.RedactLogs(context.Background(), logs, "did:test:eve")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(result) != 1 {
-		t.Fatalf("expected 1 log (redacted), got %d", len(result))
-	}
-	if result[0].Topic0 != nil {
-		t.Error("without participant context, topic0 should be nil")
-	}
-	if result[0].Data != "" {
-		t.Error("without participant context, data should be stripped")
-	}
-
-	// With participant context (Eve is the tx sender) — log should be fully visible
-	result, err = engine.RedactLogs(context.Background(), logs, "did:test:eve", eveAddr, contractAddr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(result) != 1 {
-		t.Fatalf("expected 1 log, got %d", len(result))
-	}
-	if result[0].Topic0 == nil || *result[0].Topic0 != topic0 {
-		t.Errorf("with participant override, topic0 should be preserved, got %v", result[0].Topic0)
-	}
-	if result[0].Data == "" {
-		t.Error("with participant override, data should be preserved")
+	// Whether or not Eve is a participant, the no-grant contract's log stays
+	// redacted: topics/data stripped, address [PRIVATE]. Being the tx sender
+	// does NOT grant access to a contract she holds no grant on.
+	for _, tc := range []struct {
+		name             string
+		participantAddrs []string
+	}{
+		{"non-participant", nil},
+		{"participant (was revealed pre-fix)", []string{eveAddr, contractAddr}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := engine.RedactLogs(context.Background(), logs, "did:test:eve", tc.participantAddrs...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(result) != 1 {
+				t.Fatalf("expected 1 log (redacted), got %d", len(result))
+			}
+			if result[0].Topic0 != nil {
+				t.Error("no-grant contract: topic0 must be stripped")
+			}
+			if result[0].Data != "" {
+				t.Error("no-grant contract: data must be stripped")
+			}
+		})
 	}
 }
 
@@ -2120,6 +2178,50 @@ func TestRedactLogs_ParticipantOverride_HiddenStillDropped(t *testing.T) {
 	}
 	if len(result) != 0 {
 		t.Errorf("Hidden logs should still be dropped even with participant override, got %d", len(result))
+	}
+}
+
+// TestRedactLogs_Participant_NoGrantEmitter_GrantBounded_RD1208 pins the
+// participant half of the RPC↔explorer symmetry fix: participant admission is
+// GRANT-BOUNDED. A registered contract with NO grant resolves to
+// VisibilityRedacted/ReasonNoAccess; being a tx participant must NOT upgrade it
+// to Full — a tx that internally touched a contract the viewer has no grant on
+// must not leak that contract's event payload. This mirrors rbac.FilterEventLogs,
+// whose participant bypass is bounded by `access != nil`
+// (TestFilterEventLogs_ParticipantBounds_RD1162). A GRANTED emitter (Full) is
+// unaffected — the participant still sees it. (Full RPC/explorer unification is
+// tracked by RD-1214.)
+func TestRedactLogs_Participant_NoGrantEmitter_GrantBounded_RD1208(t *testing.T) {
+	granted := "0x1111111111111111111111111111111111111111" // viewer holds a grant → Full
+	noGrant := "0x2222222222222222222222222222222222222222" // registered, no grant → Redacted/ReasonNoAccess
+	eve := "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+	topic := eventTopic0("PrivateTransfer(address,address,uint256)")
+
+	engine := newEngineWithLinkedAddrs(VisibilityMap{
+		granted: VisibilityFull,
+		noGrant: VisibilityRedacted,
+	}, []string{eve})
+
+	logs := []Log{
+		{ID: 1, Address: granted, TxHash: "0xtx", Topic0: &topic, Data: "0x"},
+		{ID: 2, Address: noGrant, TxHash: "0xtx", Topic0: &topic, Data: "0x"},
+	}
+	// Eve is a participant of the tx (from/to = eve/granted).
+	result, err := engine.RedactLogsWithOpts(context.Background(), logs, "did:test:eve", nil, eve, granted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[int64]Log{}
+	for _, l := range result {
+		got[l.ID] = l
+	}
+	// Granted emitter: participant still sees it (Full — topic preserved).
+	if l, ok := got[1]; !ok || l.Topic0 == nil {
+		t.Error("granted emitter: participant must still see the log")
+	}
+	// No-grant emitter: must NOT be revealed at Full for a participant.
+	if l, ok := got[2]; ok && strings.EqualFold(l.Address, noGrant) {
+		t.Errorf("participant must not reveal a no-grant emitter at Full (RD-1208/RD-1162); leaked %s", l.Address)
 	}
 }
 
@@ -2201,18 +2303,21 @@ func TestRedactLogs_VisibilityMatrix(t *testing.T) {
 			viewerDID:        "did:test:alice",
 			linkedAddrs:      []string{aliceAddr},
 			participantAddrs: []string{parentFrom, parentTo},
-			expect:           expect{count: 2, publicTopic: true, redactedTopic: true, redactedAddr: redactedContract},
-			// alice's linked addr matches parentFrom → participant override fires
-			// redacted contract upgraded to Full: topics/data preserved, address shown
-			// hidden still dropped
+			expect:           expect{count: 2, publicTopic: true, redactedTopic: false, redactedAddr: "[PRIVATE]"},
+			// alice is a tx participant, but the "redacted" contract is one she
+			// has NO grant on (VisibilityRedacted = ReasonNoAccess). Participant
+			// admission is grant-bounded (mirrors rbac.FilterEventLogs / RD-1162),
+			// so it is NOT upgraded to Full: topics/data stay stripped, address
+			// [PRIVATE]. public: visible. hidden: dropped. (RD-1208/RD-1214)
 		},
 		{
 			name:             "bob (receiver), with participant context",
 			viewerDID:        "did:test:bob",
 			linkedAddrs:      []string{bobAddr},
 			participantAddrs: []string{parentFrom, parentTo},
-			expect:           expect{count: 2, publicTopic: true, redactedTopic: true, redactedAddr: redactedContract},
-			// bob's linked addr matches parentTo → participant override fires
+			expect:           expect{count: 2, publicTopic: true, redactedTopic: false, redactedAddr: "[PRIVATE]"},
+			// same as alice: participant status does not reveal a no-grant
+			// contract's log (grant-bounded).
 		},
 		{
 			name:             "mallory (non-participant), with participant context",
@@ -2319,8 +2424,11 @@ func TestRedactLogs_VisibilityMatrix(t *testing.T) {
 }
 
 func TestRedactLogs_MultipleContractsMixedVisibility(t *testing.T) {
-	// A tx triggers logs from 4 different contracts.
-	// Viewer is a participant. Tests that override applies per-tx, not per-contract.
+	// A tx triggers logs from 4 contracts; the viewer is a tx participant.
+	// Participant admission is GRANT-BOUNDED (RD-1208/RD-1162): only the
+	// contract the viewer has a grant on (Full) is shown in the clear; the
+	// no-grant contracts (Redacted) stay stripped even for a participant; the
+	// unregistered/foreign one (Hidden) is dropped.
 	userAddr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	fullContract := "0x1111111111111111111111111111111111111111"
 	redactedA := "0x2222222222222222222222222222222222222222"
@@ -2348,27 +2456,45 @@ func TestRedactLogs_MultipleContractsMixedVisibility(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Expected: full(1) + redactedA(2, upgraded) + redactedB(3, upgraded) + hidden(4, dropped) = 3
+	// Expected: full(1) shown + redactedA(2)/redactedB(3) kept-but-stripped +
+	// hidden(4) dropped = 3.
 	if len(result) != 3 {
 		t.Fatalf("expected 3 logs (hidden dropped), got %d", len(result))
 	}
 
+	byID := map[int64]Log{}
 	for _, l := range result {
-		if l.Topic0 == nil {
-			t.Errorf("log %d: topic0 should be preserved (all non-hidden get participant override)", l.ID)
-		}
-		if l.Data == "" {
-			t.Errorf("log %d: data should be preserved", l.ID)
-		}
+		byID[l.ID] = l
 		if l.Address == hiddenContract {
 			t.Error("hidden contract log should not appear")
+		}
+	}
+
+	// Full contract (viewer has a grant): shown in the clear.
+	if l, ok := byID[1]; !ok || l.Topic0 == nil || *l.Topic0 != topic0 || l.Data != "0xfull" {
+		t.Errorf("full contract log should be preserved, got %+v", byID[1])
+	}
+
+	// No-grant (Redacted) contracts: kept but stripped even though the viewer
+	// is a participant — participant admission is grant-bounded, so it does not
+	// reveal a contract the viewer has no grant on (RD-1208/RD-1162).
+	for _, id := range []int64{2, 3} {
+		l, ok := byID[id]
+		if !ok {
+			t.Fatalf("log %d (no-grant) should be kept (stripped), missing", id)
+		}
+		if l.Topic0 != nil || l.Data != "" {
+			t.Errorf("log %d: no-grant contract must be stripped for a participant, got topic0=%v data=%q", id, l.Topic0, l.Data)
 		}
 	}
 }
 
 func TestRedactLogs_ParticipantIsReceiver(t *testing.T) {
-	// The viewer is the TO of the parent tx (receiving a transfer).
-	// Contract emits a Transfer log. Viewer should see it.
+	// The viewer is the TO of the parent tx (receiving a transfer) but has NO
+	// grant on the emitting contract (VisibilityRedacted = ReasonNoAccess).
+	// Participant admission is grant-bounded (RD-1208/RD-1162): the log is kept
+	// but STRIPPED, not revealed. (Pre-fix it was revealed via the participant
+	// override.)
 	contractAddr := "0x2222222222222222222222222222222222222222"
 	senderAddr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	receiverAddr := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -2387,11 +2513,11 @@ func TestRedactLogs_ParticipantIsReceiver(t *testing.T) {
 	if len(result) != 1 {
 		t.Fatalf("expected 1, got %d", len(result))
 	}
-	if result[0].Topic0 == nil || *result[0].Topic0 != topic0 {
-		t.Error("receiver participant should see topic0")
+	if result[0].Topic0 != nil {
+		t.Error("no-grant contract: receiver participant must not see topic0 (grant-bounded)")
 	}
-	if result[0].Data != "0xdata" {
-		t.Error("receiver participant should see data")
+	if result[0].Data != "" {
+		t.Error("no-grant contract: receiver participant must not see data (grant-bounded)")
 	}
 }
 

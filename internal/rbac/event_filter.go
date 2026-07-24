@@ -271,11 +271,17 @@ func FilterEventLogs(
 		}
 
 		if access == nil {
-			// No RBAC access to this contract — check visibleTo as fallback.
-			// The sender explicitly shared this tx with the viewer.
-			if isViewerInVisibleTo(visCtx, rawLog) {
-				filtered = append(filtered, rawLog)
-			}
+			// No RBAC grant on the emitting contract → deny. Ordinary
+			// (non-unlock) visibleTo does NOT admit here: per
+			// REDACTION_SPEC §3.7.1 / RD-874 grant eligibility is
+			// load-bearing — bare visibleTo widens an already-permitted
+			// viewer's response (the param-rule fallback below, which
+			// requires a grant + an allowlisted topic0) but never grants
+			// NEW contract-level event access. A transaction sender must
+			// not be able to expose a contract's logs to a DID the
+			// contract owner never granted. The only standalone-grant path
+			// is the per-contract allow_visibleto_unlock semantic, handled
+			// above via UnlockableContracts (RD-1208).
 			continue
 		}
 

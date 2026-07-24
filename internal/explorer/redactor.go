@@ -2206,18 +2206,37 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 
 		level := visMap[contractAddrLower]
 
-		// Participant override: if the viewer is from/to of the parent tx,
-		// upgrade Redacted emitting contracts so they can see their own logs.
-		if level == VisibilityRedacted && isParticipant {
-			level = VisibilityFull
-		}
+		// Participant admission is GRANT-BOUNDED (mirrors rbac.FilterEventLogs,
+		// whose participant bypass is bounded by `access != nil` — RD-1162).
+		// A viewer holding a grant on the emitting contract already resolves to
+		// VisibilityFull, so there is no participant level-up here: it would
+		// only ever fire for a NO-grant emitter (VisibilityRedacted/
+		// ReasonNoAccess — a registered contract with no grant; VisibilityHidden
+		// is an unregistered address / EOA), and a tx that internally touched a
+		// contract the viewer has no grant on must not leak that contract's
+		// event payload just because the viewer is a party to the outer tx.
+		// The counterparty EOA the viewer transacted with is still revealed by
+		// the transaction-level participant override in RedactTransactions
+		// (§3.7); this governs only the emitting contract's log payload.
+		// (RPC/explorer unification into one decision engine: RD-1214.)
 
-		// visibleTo override: if the tx that produced this log was shared
-		// with the viewer, upgrade Hidden/Redacted to Full.
-		if (level == VisibilityHidden || level == VisibilityRedacted) && visibleTxHashes[strings.ToLower(l.TxHash)] {
-			level = VisibilityFull
-		}
-
+		// Ordinary (non-unlock) visibleTo does NOT alter the emitting
+		// contract's visibility level. Grant eligibility is load-bearing
+		// (REDACTION_SPEC §3.7.1 / RD-874): a viewer holding a contract grant
+		// already resolves to VisibilityFull, so a shared-tx level-up would
+		// only ever fire for a NO-grant emitter — a registered contract with
+		// no grant resolves to VisibilityRedacted/ReasonNoAccess (an
+		// unregistered address / EOA to VisibilityHidden). Upgrading that to
+		// Full is exactly the leak RD-1208 closes: a transaction sender must
+		// not expose a contract's event payloads to a DID the contract owner
+		// never granted. So there is no ordinary-visibleTo level-up here. A
+		// no-grant emitter stays Redacted (its addresses field-redacted) and
+		// is denied by the event-rule deny-all gate below; the legitimate
+		// additive widening (an allowlisted topic0 whose param rule failed)
+		// is applied there via the visibleTxHashes fallback, which is reached
+		// only for grant holders (non-empty event rules). The only
+		// standalone-grant path is the per-contract allow_visibleto_unlock
+		// semantic, handled at the top of this loop via unlockableContracts.
 		if level == VisibilityHidden {
 			continue
 		}
