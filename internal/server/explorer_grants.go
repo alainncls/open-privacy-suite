@@ -429,7 +429,7 @@ func (s *Server) collectGrantScopeTxs(ctx context.Context, address string, scope
 // @Produce      json
 // @Param        grant_id path string true "Disclosure grant ID"
 // @Param        address_id path string true "Opaque address identifier from viewable-addresses"
-// @Param        limit query int false "Max rows to return (1-100). At the scan bounds a page may come back short — even empty — with has_more=true and a next_cursor to continue from" default(25)
+// @Param        limit query int false "Max rows to return (1-100). At the scan bounds a page may come back short — even empty — with a next_cursor to continue from (present ⇒ more pages)" default(25)
 // @Param        cursor query string false "Opaque continuation cursor from the previous response's next_cursor (RD-1149); takes precedence over before"
 // @Param        before query int false "Legacy: return rows strictly older than this block number (may skip rows of the boundary block — prefer cursor)"
 // @Success      200 {object} GrantTransactionsResponse
@@ -542,8 +542,8 @@ func (s *Server) getGrantTransactions(c *gin.Context) {
 	// continuation cursor, applying the grant's scope filter (RD-1164 #9) per
 	// fetch, until `limit` in-scope txs are found, the feed is exhausted, or
 	// a scan bound is hit. The old single limit+1 fetch made in-scope txs
-	// deeper than the first page unreachable and computed has_more from the
-	// pre-filter page size.
+	// deeper than the first page unreachable and derived the continuation from
+	// the pre-filter page size.
 	txs, resumeCursor, err := s.collectGrantScopeTxs(c.Request.Context(), realAddress, grant.Scope, limit, page)
 	if err != nil {
 		if isBadCursorErr(err) {
@@ -553,8 +553,6 @@ func (s *Server) getGrantTransactions(c *gin.Context) {
 		respondInternalError(c, "failed to get transactions")
 		return
 	}
-
-	hasMore := resumeCursor != ""
 
 	realAddrLower := strings.ToLower(realAddress)
 	labels := make(map[string]string)
@@ -664,7 +662,6 @@ func (s *Server) getGrantTransactions(c *gin.Context) {
 		Transactions:    grantTxs,
 		DisclosureLevel: disclosureLevel,
 		AddressLabels:   labels,
-		HasMore:         hasMore,
 		NextCursor:      resumeCursor,
 	})
 }

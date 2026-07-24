@@ -507,7 +507,7 @@ func TestGrantVisibilityMatrix(t *testing.T) {
 			var resp GrantTransactionsResponse
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 			assert.Empty(t, resp.Transactions)
-			assert.False(t, resp.HasMore)
+			assert.Empty(t, resp.NextCursor, "exhausted feed omits next_cursor (RD-1149, token-only)")
 		})
 	})
 

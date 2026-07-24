@@ -291,9 +291,9 @@ func TestAddressTransactions_FullDisclosureGrantVisibility(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code,
 			"full disclosure grant should allow address transactions access")
 
-		var txs []explorer.Transaction
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &txs))
-		assert.GreaterOrEqual(t, len(txs), 1)
+		var resp AddressTransactionsResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.GreaterOrEqual(t, len(resp.Transactions), 1)
 	})
 }
 

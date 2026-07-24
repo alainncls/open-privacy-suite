@@ -372,7 +372,7 @@ func TestGrantTransactions_Pagination(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
 	assert.Len(t, resp.Transactions, 2, "should return exactly limit transactions")
-	assert.True(t, resp.HasMore, "should indicate more transactions available")
+	assert.NotEmpty(t, resp.NextCursor, "a non-empty next_cursor is the 'more pages' signal (RD-1149, token-only)")
 }
 
 // TestResolveAddressID_PseudonymousDoesNotLeakRealAddress verifies the privacy fix

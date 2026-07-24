@@ -91,10 +91,27 @@ type GrantTransactionsResponse struct {
 	Transactions    []GrantTransaction `json:"transactions"`
 	DisclosureLevel string             `json:"disclosure_level"`
 	AddressLabels   map[string]string  `json:"address_labels"`
-	HasMore         bool               `json:"has_more"`
-	// NextCursor is the opaque continuation to pass back as ?cursor= when
-	// has_more is true (RD-1149). Omitted when the feed is exhausted.
+	// NextCursor is the opaque continuation to pass back as ?cursor= (RD-1149).
+	// Its presence is the sole "more pages" signal: a client keeps paging while
+	// next_cursor is present and stops when it is omitted (feed exhausted). It is
+	// deliberately the only pagination field — there is no has_more, which would
+	// only ever be `next_cursor != ""` and could drift from it.
 	NextCursor string `json:"next_cursor,omitempty"`
+}
+
+// AddressTransactionsResponse wraps a page of an address's transactions with the
+// opaque pagination cursor (RD-1149). NextCursor follows the same token-only
+// contract as GrantTransactionsResponse: present ⇒ more pages, omitted ⇒ done.
+type AddressTransactionsResponse struct {
+	Transactions []explorer.Transaction `json:"transactions"`
+	NextCursor   string                 `json:"next_cursor,omitempty"`
+}
+
+// AddressTransfersResponse wraps a page of an address's token transfers with the
+// opaque pagination cursor (RD-1149). Same token-only contract as above.
+type AddressTransfersResponse struct {
+	Transfers  []explorer.TokenTransfer `json:"transfers"`
+	NextCursor string                   `json:"next_cursor,omitempty"`
 }
 
 // GrantTransaction represents a transaction in the context of a disclosure grant.
@@ -1353,10 +1370,9 @@ func (s *Server) getExplorerAddressStats(c *gin.Context) {
 // @Produce      json
 // @Param        address path string true "Account address (0x-prefixed hex)"
 // @Param        limit query int false "Max rows to return" default(25)
-// @Param        cursor query string false "Opaque continuation cursor from the previous page's X-Next-Cursor header (RD-1149); takes precedence over before"
+// @Param        cursor query string false "Opaque continuation cursor from the previous response's next_cursor (RD-1149); takes precedence over before"
 // @Param        before query int false "Legacy: return rows strictly older than this block number (may skip rows of the boundary block — prefer cursor)"
-// @Success      200 {array} explorer.Transaction
-// @Header       200 {string} X-Next-Cursor "Opaque continuation cursor; present only when more rows exist — pass back verbatim as ?cursor="
+// @Success      200 {object} AddressTransactionsResponse
 // @Failure      400 {object} APIError "malformed pagination cursor"
 // @Failure      404 {object} APIError "address not found (also returned when the address is hidden from the viewer)"
 // @Failure      500 {object} APIError "lookup or redaction failed"
@@ -1406,12 +1422,16 @@ func (s *Server) getExplorerAddressTransactions(c *gin.Context) {
 	}
 	s.auditAdminUserTxView(c, viewerDID, "address_transactions", address, opts.Stats)
 
-	// RD-1149: the opaque continuation rides a header so the array body stays
-	// backward-compatible. Absent header = feed exhausted.
-	if nextCursor != "" {
-		c.Header("X-Next-Cursor", nextCursor)
+	if redactedTxs == nil {
+		redactedTxs = []explorer.Transaction{}
 	}
-	c.JSON(http.StatusOK, redactedTxs)
+	// RD-1149: the opaque continuation is returned in the response body
+	// (next_cursor), omitted when the feed is exhausted. Its presence is the
+	// only "more pages" signal — no X-Next-Cursor header, no has_more.
+	c.JSON(http.StatusOK, AddressTransactionsResponse{
+		Transactions: redactedTxs,
+		NextCursor:   nextCursor,
+	})
 }
 
 // getExplorerSyncStatus returns the indexer sync status.
@@ -2006,10 +2026,9 @@ func (s *Server) getExplorerAddressTokenBalances(c *gin.Context) {
 // @Produce      json
 // @Param        address path string true "Account address (0x-prefixed hex)"
 // @Param        limit query int false "Max rows to return" default(25)
-// @Param        cursor query string false "Opaque continuation cursor from the previous page's X-Next-Cursor header (RD-1149); takes precedence over before"
+// @Param        cursor query string false "Opaque continuation cursor from the previous response's next_cursor (RD-1149); takes precedence over before"
 // @Param        before query int false "Legacy: return rows strictly older than this block number (may skip rows of the boundary block — prefer cursor)"
-// @Success      200 {array} explorer.TokenTransfer
-// @Header       200 {string} X-Next-Cursor "Opaque continuation cursor; present only when more rows exist — pass back verbatim as ?cursor="
+// @Success      200 {object} AddressTransfersResponse
 // @Failure      400 {object} APIError "malformed pagination cursor"
 // @Failure      404 {object} APIError "address not found (also returned when the address is hidden from the viewer)"
 // @Failure      500 {object} APIError "lookup or redaction failed"
@@ -2064,11 +2083,13 @@ func (s *Server) getExplorerAddressTransfers(c *gin.Context) {
 	if redacted == nil {
 		redacted = []explorer.TokenTransfer{}
 	}
-	// RD-1149: continuation rides a header (array body stays compatible).
-	if nextCursor != "" {
-		c.Header("X-Next-Cursor", nextCursor)
-	}
-	c.JSON(http.StatusOK, redacted)
+	// RD-1149: continuation returned in the body (next_cursor), omitted when the
+	// feed is exhausted. Its presence is the only "more pages" signal — no
+	// X-Next-Cursor header, no has_more.
+	c.JSON(http.StatusOK, AddressTransfersResponse{
+		Transfers:  redacted,
+		NextCursor: nextCursor,
+	})
 }
 
 // getExplorerAddressInternal returns a page of an address's internal txs.
