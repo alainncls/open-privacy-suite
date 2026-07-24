@@ -20,6 +20,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # A release event defaults checkout to the release's tag. Editing an
+          # older release (tag predates this workflow/script) would check out a
+          # tree without scripts/lint-release-notes.sh and fail before linting.
+          # Pin to the default branch so edits always run the current linter.
+          ref: ${{ github.event.repository.default_branch }}
       - name: Lint release notes
         env:
           RELEASE_BODY: ${{ github.event.release.body }}
