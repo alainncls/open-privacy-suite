@@ -62,6 +62,15 @@ type JSONRPCProcessor struct {
 	// within milliseconds instead of at the next backstop tick. Nil-safe.
 	visibilityKick func()
 
+	// RD-1214: per-address visibility resolver for the RPC log field-redaction
+	// step (eth_getLogs / eth_getTransactionReceipt). Wired to
+	// *db.DB.GetBatchVisibilityDetailed — the SAME resolver the explorer
+	// redactor uses — so an admitted log's embedded addresses are zeroed
+	// identically on both layers (symmetry by construction). nil in unit tests
+	// that don't exercise field-redaction ⇒ the step is a no-op; production
+	// always wires it via SetAddressVisibilityResolver.
+	addrVisResolver addressVisibilityResolver
+
 	// Circuit breaker + concurrency limiter (replaces rate limiter for authenticated users)
 	circuitBreaker         *CircuitBreaker
 	concurrencyLimiter     *ConcurrencyLimiter
@@ -1088,7 +1097,10 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		// Pass the internal user UUID (result.UserID), not the JWT DID.
 		// viewerUUID() guards against nil result (visibleTo-only path).
 		adminMap := p.viewerAdminContracts(ctx, viewerUUID(result), extractContractAddressesFromResponse(responseBody))
-		return FilterReceiptLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx), visCtx, adminMap)
+		filtered := FilterReceiptLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx), visCtx, adminMap)
+		// RD-1214: field-redact embedded addresses in the admitted receipt logs
+		// (same resolver + primitive as the explorer, so both hide the same set).
+		return p.redactReceiptResponseFields(ctx, req.UserID, filtered)
 
 	case strings.EqualFold(m, rbac.MethodGetLogs):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
@@ -1118,7 +1130,10 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		// the JWT DID — viewerAdminContracts queries user_memberships
 		// by UUID FK. viewerUUID() guards against nil result.
 		adminMap := p.viewerAdminContracts(ctx, viewerUUID(result), extractContractAddressesFromResponse(responseBody))
-		return FilterLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx), visCtx, adminMap)
+		filtered := FilterLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx), visCtx, adminMap)
+		// RD-1214: field-redact embedded addresses in the admitted logs (same
+		// resolver + primitive as the explorer, so both hide the same set).
+		return p.redactLogsArrayResponseFields(ctx, req.UserID, filtered)
 
 	case strings.EqualFold(m, rbac.MethodGetTransactionByBlockHashAndIndex),
 		strings.EqualFold(m, rbac.MethodGetTransactionByBlockNumberAndIndex):

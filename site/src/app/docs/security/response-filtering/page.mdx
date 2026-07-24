@@ -148,6 +148,16 @@ For this event:
 
 A user with linked address `0xAlice` would see Transfer logs where `0xAlice` is either the sender or recipient. Transfers between two other parties are filtered out.
 
+### Embedded address redaction within a kept log
+
+Keeping a log entry does not mean returning it verbatim. A single event can carry several addresses — a sender, a recipient, and other parties — and a user entitled to see the event because *one* of those addresses is theirs is not necessarily entitled to see the others. Once a log is kept, every embedded address the user is not entitled to see — in the indexed topics **and** in the ABI-decoded event data — is zeroed out (`0x000…0`). Only the addresses the user can see are returned in the clear: their own linked addresses, addresses in contracts they hold a grant on, public addresses, and addresses shared with them by a disclosure grant.
+
+This makes `eth_getLogs`, transaction receipts, and the block explorer reveal the **same** set of addresses to a given user — a log fetched over JSON-RPC exposes nothing the explorer would have hidden, and vice versa.
+
+<Callout variant="warning" title="A zeroed address looks like the zero address">
+  A redacted address slot is zeroed, which is indistinguishable from a genuine zero address (for example, a token mint or burn whose `from`/`to` is `0x000…0`). Clients must not treat a zero address inside a returned log as authoritative — it may be a real zero address or a redacted one.
+</Callout>
+
 ### Known Limitations
 
 <Callout variant="warning" title="Events without indexed address parameters">

@@ -341,24 +341,34 @@ func TestExplorerCoherence_RD1009_AllSurfacesAgree(t *testing.T) {
 			"internal-tx row points at the wrong parent tx hash: got %q want %q", rows[0].TxHash, transferTxHash)
 	}
 
-	// 5. /transactions/:hash/logs — must surface the Transfer event log.
-	// RedactLogs already inherits VisibleTxHashes (Hidden contract is
-	// upgraded to Full via the visibleTo override) but we pin it here for
-	// completeness so the coherence invariant has the full surface set.
+	// 5. /transactions/:hash/logs — the raw event log is emitted by a
+	// FOREIGN-org contract (privateTokenContract), Hidden to this admin and on
+	// which they hold no grant. Both layers gate the raw event payload on an
+	// emitter grant: the RPC drops it (rbac.DecideLogEmitterAccess: no grant),
+	// so the explorer MUST drop it too — symmetry (RD-1208/RD-1214). Ordinary
+	// visibleTo / tx-participation does NOT rescue a no-grant emitter's log.
+	//
+	// This does not contradict steps 1–4: those expose the tx *summary*
+	// surfaces (the transfer's from/to/value touch the admin's own vault), which
+	// stay coherent. The foreign contract's raw event payload is a distinct,
+	// more-sensitive surface, gated identically on both layers. Pre-RD-1208 the
+	// explorer upgraded Hidden→Full via a visibleTo override and surfaced this
+	// log — an asymmetry the RPC never had; this assertion now guards against
+	// its return. Cross-layer parity for this exact case is proven directly by
+	// TestRPCExplorerLogParity_RD1214.
 	{
 		req, _ := http.NewRequest(http.MethodGet,
 			fmt.Sprintf("/api/v1/explorer/transactions/%s/logs", transferTxHash), nil)
 		authHeader(req)
 		rr := httptest.NewRecorder()
 		router.ServeHTTP(rr, req)
-		require.Equal(t, http.StatusOK, rr.Code, "/logs must return 200")
+		require.Equal(t, http.StatusOK, rr.Code, "/logs must return 200 (empty array, not 404)")
 		var rows []explorer.Log
 		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &rows))
-		require.NotEmptyf(t, rows,
-			"COHERENCE VIOLATION (/transfers vs /transactions/:hash/logs): /transfers exposed tx %q (which is derived from the Transfer log) "+
-				"but /logs returned no rows. RedactLogs' visibleTo override on the emitting contract should keep the log alive when the parent tx is in VisibleTxHashes.",
+		require.Emptyf(t, rows,
+			"SYMMETRY (RD-1208/RD-1214): /logs must DROP tx %q's raw log — its emitter is a foreign-org "+
+				"contract the admin has no grant on, and the RPC drops it identically. The tx summary stays "+
+				"visible via /transfers, but the raw event payload is emitter-grant-gated on both layers.",
 			transferTxHash)
-		require.Equal(t, transferTxHash, rows[0].TxHash,
-			"log row points at the wrong parent tx hash: got %q want %q", rows[0].TxHash, transferTxHash)
 	}
 }
