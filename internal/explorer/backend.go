@@ -17,6 +17,17 @@ import (
 // Method set is the public surface of *Store. Keep this interface in sync
 // when *Store gains new methods; the Go compiler will enforce both
 // implementations still satisfy it.
+
+// AddressPage positions a page of a by-address feed (RD-1149). Cursor is the
+// opaque continuation returned by the previous page of the SAME backend —
+// round-trip it verbatim; a malformed cursor fails the request (fail-closed),
+// never silently restarts the feed. BeforeBlock is the legacy block-exclusive
+// bound (?before= REST param) consulted only when Cursor is empty.
+type AddressPage struct {
+	Cursor      string
+	BeforeBlock *uint64
+}
+
 type ExplorerBackend interface {
 	Close() error
 
@@ -38,7 +49,11 @@ type ExplorerBackend interface {
 	GetTransaction(ctx context.Context, hash string) (*Transaction, error)
 	GetTransactionWithCategories(ctx context.Context, hash string) (*Transaction, error)
 	GetTransactions(ctx context.Context, limit int, beforeBlock *uint64) ([]Transaction, error)
-	GetTransactionsByAddress(ctx context.Context, address string, limit int, beforeBlock *uint64) ([]Transaction, error)
+	// GetTransactionsByAddress returns up to limit txs of the address feed
+	// (block DESC, tx_index DESC) positioned by page (RD-1149), plus the
+	// opaque continuation cursor: non-empty means more rows exist — pass it
+	// back verbatim; empty means the feed is exhausted.
+	GetTransactionsByAddress(ctx context.Context, address string, limit int, page AddressPage) ([]Transaction, string, error)
 	GetTransactionsByBlock(ctx context.Context, blockNumber uint64) ([]Transaction, error)
 	GetTransactionsPaginated(ctx context.Context, page, pageSize int) ([]Transaction, int64, error)
 	GetTransactionsWithCategories(ctx context.Context, limit int, beforeBlock *uint64) ([]Transaction, error)
@@ -55,7 +70,9 @@ type ExplorerBackend interface {
 
 	// Transfers
 	GetTransfersByTransaction(ctx context.Context, txHash string) ([]TokenTransfer, error)
-	GetTransfersByAddress(ctx context.Context, address string, limit int, beforeBlock *uint64) ([]TokenTransfer, error)
+	// GetTransfersByAddress mirrors GetTransactionsByAddress for the token
+	// transfer feed (block DESC, log_index DESC).
+	GetTransfersByAddress(ctx context.Context, address string, limit int, page AddressPage) ([]TokenTransfer, string, error)
 	GetTransfersByToken(ctx context.Context, tokenAddress string, limit int, offset int) ([]TokenTransfer, int64, error)
 	GetAllTransfers(ctx context.Context, limit int, offset int) ([]TokenTransfer, int64, error)
 	// FindTransferParticipantTxs closes the RD-1009 cross-redactor row-survival

@@ -143,35 +143,41 @@ func TestExplorerAddressStats_AllCountsVisibilityFiltered_RD1154(t *testing.T) {
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &stats))
 		return stats
 	}
-	// listLen returns the visible row count for a surface. bareArray=true for
-	// endpoints that return a raw JSON array; false for {"data":[...]} envelopes.
-	listLen := func(t *testing.T, did, suffix string, bareArray bool) int {
+	// listLen returns the visible row count for a surface. Every list surface
+	// returns an envelope; the array lives under a surface-specific key —
+	// transactions/transfers on the address feeds (RD-1149 token-only
+	// pagination), data on the internal feed.
+	listLen := func(t *testing.T, did, suffix string) int {
 		t.Helper()
 		req := httptest.NewRequest("GET", "/api/v1/explorer/addresses/"+subject+suffix, nil)
 		addBearerToken(t, req, srv, did)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 		require.Equal(t, http.StatusOK, w.Code, "list %s should be 200", suffix)
-		if bareArray {
-			var rows []json.RawMessage
-			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &rows))
-			return len(rows)
-		}
 		var env struct {
-			Data []json.RawMessage `json:"data"`
+			Transactions []json.RawMessage `json:"transactions"`
+			Transfers    []json.RawMessage `json:"transfers"`
+			Data         []json.RawMessage `json:"data"`
 		}
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &env))
-		return len(env.Data)
+		switch suffix {
+		case "/transactions":
+			return len(env.Transactions)
+		case "/transfers":
+			return len(env.Transfers)
+		default:
+			return len(env.Data)
+		}
 	}
 
 	assertParity := func(t *testing.T, did string) explorer.AddressStats {
 		t.Helper()
 		stats := getStats(t, did)
-		assert.Equal(t, listLen(t, did, "/transactions", true), stats.TxCount,
+		assert.Equal(t, listLen(t, did, "/transactions"), stats.TxCount,
 			"Transactions badge must equal the visible tx-list length")
-		assert.Equal(t, listLen(t, did, "/transfers", true), stats.TokenTransferCount,
+		assert.Equal(t, listLen(t, did, "/transfers"), stats.TokenTransferCount,
 			"Token transfers badge must equal the visible transfer-list length")
-		assert.Equal(t, listLen(t, did, "/internal", false), stats.InternalTxCount,
+		assert.Equal(t, listLen(t, did, "/internal"), stats.InternalTxCount,
 			"Internal txns badge must equal the visible internal-list length")
 		// None of the badges may be the raw aggregate.
 		assert.NotEqual(t, rawAggregate, stats.TxCount, "TxCount must not be the raw aggregate")

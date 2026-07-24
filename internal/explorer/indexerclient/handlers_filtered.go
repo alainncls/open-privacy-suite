@@ -152,21 +152,38 @@ func (b *Backend) GetTransactionsPaginatedWithCategoriesFiltered(ctx context.Con
 // active addresses (thousands of txs) this is imprecise — the indexer
 // caps page size, so we only sample the top page.
 //
-// Legacy SQL produced an exact count via COUNT(*) WHERE. Porting that
-// needs a new indexer RPC (`GetFilteredAddressTransactionCount`) or a
-// loop-fetch; leaving the approximate shape for now with a documented
-// cap. See docs/rd-855-behavioral-shifts.md.
+// RD-1149: walks the feed on the indexer's continuation cursor and counts
+// matching rows across pages, bounded by overfetchCap rows fetched in total
+// (each fetch is server-clamped to the indexer max, ~100). Beyond the cap the
+// count under-reports, which is the safe direction. An exact server-side
+// count would need a new indexer RPC; see docs/rd-855-behavioral-shifts.md.
 func (b *Backend) GetAddressTransactionCountFiltered(ctx context.Context, address string, filter *explorer.VisibilityFilter) (int, error) {
-	// Fetch up to the cap and count.
-	txs, err := b.GetTransactionsByAddress(ctx, address, overfetchCap, nil)
-	if err != nil {
-		return 0, err
-	}
-	count := 0
-	for i := range txs {
-		if matchesFilter(&txs[i], filter) {
-			count++
+	count, fetched := 0, 0
+	var cursor string
+	for fetched < overfetchCap {
+		txs, next, err := b.GetTransactionsByAddress(ctx, address, overfetchCap-fetched, explorer.AddressPage{Cursor: cursor})
+		if err != nil {
+			return 0, err
 		}
+		if len(txs) == 0 {
+			break
+		}
+		// A non-advancing cursor means the backend re-served the previous
+		// page: discard this fetch uncounted and stop — fail-safe undercount,
+		// never a double-count (mirrors countAcrossPages).
+		if next != "" && next == cursor {
+			break
+		}
+		fetched += len(txs)
+		for i := range txs {
+			if matchesFilter(&txs[i], filter) {
+				count++
+			}
+		}
+		if next == "" {
+			break
+		}
+		cursor = next
 	}
 	return count, nil
 }

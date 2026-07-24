@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -15,6 +16,8 @@ import (
 	"privacy-proxy/internal/rbac"
 
 	"github.com/gin-gonic/gin"
+	grpccodes "google.golang.org/grpc/codes"
+	grpcstatus "google.golang.org/grpc/status"
 )
 
 // Explorer API Response Types
@@ -88,7 +91,27 @@ type GrantTransactionsResponse struct {
 	Transactions    []GrantTransaction `json:"transactions"`
 	DisclosureLevel string             `json:"disclosure_level"`
 	AddressLabels   map[string]string  `json:"address_labels"`
-	HasMore         bool               `json:"has_more"`
+	// NextCursor is the opaque continuation to pass back as ?cursor= (RD-1149).
+	// Its presence is the sole "more pages" signal: a client keeps paging while
+	// next_cursor is present and stops when it is omitted (feed exhausted). It is
+	// deliberately the only pagination field — there is no has_more, which would
+	// only ever be `next_cursor != ""` and could drift from it.
+	NextCursor string `json:"next_cursor,omitempty"`
+}
+
+// AddressTransactionsResponse wraps a page of an address's transactions with the
+// opaque pagination cursor (RD-1149). NextCursor follows the same token-only
+// contract as GrantTransactionsResponse: present ⇒ more pages, omitted ⇒ done.
+type AddressTransactionsResponse struct {
+	Transactions []explorer.Transaction `json:"transactions"`
+	NextCursor   string                 `json:"next_cursor,omitempty"`
+}
+
+// AddressTransfersResponse wraps a page of an address's token transfers with the
+// opaque pagination cursor (RD-1149). Same token-only contract as above.
+type AddressTransfersResponse struct {
+	Transfers  []explorer.TokenTransfer `json:"transfers"`
+	NextCursor string                   `json:"next_cursor,omitempty"`
 }
 
 // GrantTransaction represents a transaction in the context of a disclosure grant.
@@ -1010,32 +1033,44 @@ func (s *Server) getExplorerTransaction(c *gin.Context) {
 	c.JSON(http.StatusOK, redactedTxs[0])
 }
 
+// isBadCursorErr reports whether err is a malformed pagination cursor from
+// either backend: the SQL store's explorer.ErrBadCursor, or the gRPC
+// indexer's InvalidArgument ("cursor malformed"). Handlers map it to an
+// opaque 400 — a bad cursor fails the request, never restarts the feed.
+func isBadCursorErr(err error) bool {
+	if errors.Is(err, explorer.ErrBadCursor) {
+		return true
+	}
+	if st, ok := grpcstatus.FromError(err); ok && st.Code() == grpccodes.InvalidArgument {
+		return true
+	}
+	return false
+}
+
 // countAcrossPages pages through an item feed and sums a per-page count over
 // the DISTINCT items, bounded by maxScan rows fetched. It exists because privacy/gRPC mode
 // clamps each indexer fetch to a small max page size (~100), so a single fetch
 // cannot count an active address's transactions.
 //
-// fetch(before) returns the page older than the given block cursor (nil = newest
-// first); cursorOf extracts an item's block; keyOf returns a stable per-item
-// identity; perPageCount counts the countable items in a page (e.g. redaction
-// survivors). Dedup by identity keeps the count correct even when the backend
-// ignores `before` and re-serves or reorders rows (the gRPC indexer maps
-// `before` to an inclusive block-range bound and does not guarantee order):
-// already-seen rows are dropped, and the cursor advances by the page minimum, so
-// a non-paginating backend under-reports rather than double-counts. It stops at
-// an empty page, when a page yields no new items, at genesis, or at maxScan.
+// RD-1149: the walk advances on the backend's opaque continuation cursor
+// (fetch("") = newest first; next == "" = feed exhausted), which resumes on
+// the exact (block, idx) keyset position — the previous bare-block advance
+// skipped a boundary block's remaining rows, so the survivor walk undercounted.
+// keyOf dedupe is kept as defense in depth against a re-serving backend
+// (under-count, never double-count), and a non-advancing cursor terminates
+// the walk. perPageCount counts the countable items in a page (e.g. redaction
+// survivors).
 func countAcrossPages[T any](
-	fetch func(before *uint64) ([]T, error),
-	cursorOf func(T) uint64,
+	fetch func(cursor string) ([]T, string, error),
 	keyOf func(T) string,
 	perPageCount func([]T) (int, error),
 	maxScan int,
 ) (int, error) {
 	count, scanned := 0, 0
 	seen := make(map[string]struct{})
-	var before *uint64
+	var cursor string
 	for scanned < maxScan {
-		page, err := fetch(before)
+		page, next, err := fetch(cursor)
 		if err != nil {
 			return 0, err
 		}
@@ -1043,11 +1078,7 @@ func countAcrossPages[T any](
 			break
 		}
 		fresh := make([]T, 0, len(page))
-		var minCursor uint64
-		for i, item := range page {
-			if c := cursorOf(item); i == 0 || c < minCursor {
-				minCursor = c
-			}
+		for _, item := range page {
 			k := keyOf(item)
 			if _, dup := seen[k]; dup {
 				continue
@@ -1055,24 +1086,22 @@ func countAcrossPages[T any](
 			seen[k] = struct{}{}
 			fresh = append(fresh, item)
 		}
-		if len(fresh) == 0 {
-			break
-		}
 		// Bound by rows FETCHED, not distinct rows kept: a backend that heavily
 		// re-serves or overlaps pages must not be able to drive far more than
 		// maxScan/pageSize fetches (mirrors countAcrossOffsetPages' offset
 		// bound). count still sums perPageCount over the distinct items only.
 		scanned += len(page)
-		n, err := perPageCount(fresh)
-		if err != nil {
-			return 0, err
+		if len(fresh) > 0 {
+			n, err := perPageCount(fresh)
+			if err != nil {
+				return 0, err
+			}
+			count += n
 		}
-		count += n
-		if minCursor == 0 {
+		if next == "" || next == cursor {
 			break
 		}
-		bb := minCursor
-		before = &bb
+		cursor = next
 	}
 	return count, nil
 }
@@ -1089,10 +1118,9 @@ func (s *Server) countVisibleAddressTxs(ctx context.Context, address, viewerDID 
 		maxScan = 10000 // safety bound (matches the prior single-fetch cap)
 	)
 	return countAcrossPages(
-		func(before *uint64) ([]explorer.Transaction, error) {
-			return s.explorerStore.GetTransactionsByAddress(ctx, address, perPage, before)
+		func(cursor string) ([]explorer.Transaction, string, error) {
+			return s.explorerStore.GetTransactionsByAddress(ctx, address, perPage, explorer.AddressPage{Cursor: cursor})
 		},
-		func(t explorer.Transaction) uint64 { return t.BlockNumber },
 		func(t explorer.Transaction) string { return t.Hash },
 		func(page []explorer.Transaction) (int, error) {
 			redacted, err := s.explorerRedactor.RedactTransactions(ctx, page, viewerDID, opts)
@@ -1164,10 +1192,9 @@ func (s *Server) countVisibleAddressTransfers(ctx context.Context, address, view
 		maxScan = 10000
 	)
 	return countAcrossPages(
-		func(before *uint64) ([]explorer.TokenTransfer, error) {
-			return s.explorerStore.GetTransfersByAddress(ctx, address, perPage, before)
+		func(cursor string) ([]explorer.TokenTransfer, string, error) {
+			return s.explorerStore.GetTransfersByAddress(ctx, address, perPage, explorer.AddressPage{Cursor: cursor})
 		},
-		func(t explorer.TokenTransfer) uint64 { return t.BlockNumber },
 		func(t explorer.TokenTransfer) string { return t.TxHash + ":" + strconv.Itoa(t.LogIndex) },
 		func(page []explorer.TokenTransfer) (int, error) {
 			redacted, err := s.explorerRedactor.RedactTransfers(ctx, page, viewerDID, opts)
@@ -1343,8 +1370,10 @@ func (s *Server) getExplorerAddressStats(c *gin.Context) {
 // @Produce      json
 // @Param        address path string true "Account address (0x-prefixed hex)"
 // @Param        limit query int false "Max rows to return" default(25)
-// @Param        before query int false "Return rows strictly older than this block number (pagination cursor)"
-// @Success      200 {array} explorer.Transaction
+// @Param        cursor query string false "Opaque continuation cursor from the previous response's next_cursor (RD-1149); takes precedence over before"
+// @Param        before query int false "Legacy: return rows strictly older than this block number (may skip rows of the boundary block — prefer cursor)"
+// @Success      200 {object} AddressTransactionsResponse
+// @Failure      400 {object} APIError "malformed pagination cursor"
 // @Failure      404 {object} APIError "address not found (also returned when the address is hidden from the viewer)"
 // @Failure      500 {object} APIError "lookup or redaction failed"
 // @Failure      503 {object} APIError "explorer store not configured"
@@ -1357,10 +1386,10 @@ func (s *Server) getExplorerAddressTransactions(c *gin.Context) {
 	address := c.Param("address")
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "25"))
 	limit = clampExplorerLimit(limit, 25)
-	var beforeBlock *uint64
+	page := explorer.AddressPage{Cursor: c.Query("cursor")}
 	if b := c.Query("before"); b != "" {
 		if val, err := strconv.ParseUint(b, 10, 64); err == nil {
-			beforeBlock = &val
+			page.BeforeBlock = &val
 		}
 	}
 
@@ -1371,8 +1400,12 @@ func (s *Server) getExplorerAddressTransactions(c *gin.Context) {
 		return
 	}
 
-	txs, err := s.explorerStore.GetTransactionsByAddress(c.Request.Context(), address, limit, beforeBlock)
+	txs, nextCursor, err := s.explorerStore.GetTransactionsByAddress(c.Request.Context(), address, limit, page)
 	if err != nil {
+		if isBadCursorErr(err) {
+			respondBadRequest(c, "invalid pagination cursor")
+			return
+		}
 		respondInternalErrorAndLog(c, "failed to get transactions by address",
 			"explorer: GetTransactionsByAddress failed",
 			"address", address, "limit", limit, "err", err)
@@ -1389,7 +1422,16 @@ func (s *Server) getExplorerAddressTransactions(c *gin.Context) {
 	}
 	s.auditAdminUserTxView(c, viewerDID, "address_transactions", address, opts.Stats)
 
-	c.JSON(http.StatusOK, redactedTxs)
+	if redactedTxs == nil {
+		redactedTxs = []explorer.Transaction{}
+	}
+	// RD-1149: the opaque continuation is returned in the response body
+	// (next_cursor), omitted when the feed is exhausted. Its presence is the
+	// only "more pages" signal — no X-Next-Cursor header, no has_more.
+	c.JSON(http.StatusOK, AddressTransactionsResponse{
+		Transactions: redactedTxs,
+		NextCursor:   nextCursor,
+	})
 }
 
 // getExplorerSyncStatus returns the indexer sync status.
@@ -1984,8 +2026,10 @@ func (s *Server) getExplorerAddressTokenBalances(c *gin.Context) {
 // @Produce      json
 // @Param        address path string true "Account address (0x-prefixed hex)"
 // @Param        limit query int false "Max rows to return" default(25)
-// @Param        before query int false "Return rows strictly older than this block number (pagination cursor)"
-// @Success      200 {array} explorer.TokenTransfer
+// @Param        cursor query string false "Opaque continuation cursor from the previous response's next_cursor (RD-1149); takes precedence over before"
+// @Param        before query int false "Legacy: return rows strictly older than this block number (may skip rows of the boundary block — prefer cursor)"
+// @Success      200 {object} AddressTransfersResponse
+// @Failure      400 {object} APIError "malformed pagination cursor"
 // @Failure      404 {object} APIError "address not found (also returned when the address is hidden from the viewer)"
 // @Failure      500 {object} APIError "lookup or redaction failed"
 // @Failure      503 {object} APIError "explorer store not configured"
@@ -2005,15 +2049,19 @@ func (s *Server) getExplorerAddressTransfers(c *gin.Context) {
 
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "25"))
 	limit = clampExplorerLimit(limit, 25)
-	var beforeBlock *uint64
+	page := explorer.AddressPage{Cursor: c.Query("cursor")}
 	if b := c.Query("before"); b != "" {
 		if val, err := strconv.ParseUint(b, 10, 64); err == nil {
-			beforeBlock = &val
+			page.BeforeBlock = &val
 		}
 	}
 
-	transfers, err := s.explorerStore.GetTransfersByAddress(c.Request.Context(), address, limit, beforeBlock)
+	transfers, nextCursor, err := s.explorerStore.GetTransfersByAddress(c.Request.Context(), address, limit, page)
 	if err != nil {
+		if isBadCursorErr(err) {
+			respondBadRequest(c, "invalid pagination cursor")
+			return
+		}
 		respondInternalErrorAndLog(c, "failed to get address transfers",
 			"explorer: GetTransfersByAddress failed",
 			"address", address, "limit", limit, "err", err)
@@ -2035,7 +2083,13 @@ func (s *Server) getExplorerAddressTransfers(c *gin.Context) {
 	if redacted == nil {
 		redacted = []explorer.TokenTransfer{}
 	}
-	c.JSON(http.StatusOK, redacted)
+	// RD-1149: continuation returned in the body (next_cursor), omitted when the
+	// feed is exhausted. Its presence is the only "more pages" signal — no
+	// X-Next-Cursor header, no has_more.
+	c.JSON(http.StatusOK, AddressTransfersResponse{
+		Transfers:  redacted,
+		NextCursor: nextCursor,
+	})
 }
 
 // getExplorerAddressInternal returns a page of an address's internal txs.

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -372,7 +373,119 @@ func TestGrantTransactions_Pagination(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
 	assert.Len(t, resp.Transactions, 2, "should return exactly limit transactions")
-	assert.True(t, resp.HasMore, "should indicate more transactions available")
+	assert.NotEmpty(t, resp.NextCursor, "a non-empty next_cursor is the 'more pages' signal (RD-1149, token-only)")
+}
+
+// TestGrantTransactions_CursorWalk exercises the RD-1167 grant pagination walker
+// end-to-end — the existing TestGrantTransactions_Pagination only checked that
+// page 1 carried a cursor. It walks the full feed across multiple pages and,
+// critically, the security-relevant scope-narrowed case: out-of-scope rows fill
+// the first backend page(s) and in-scope rows occur later, so the walker must
+// fetch deeper, return each in-scope row exactly once, never surface an
+// out-of-scope row, and terminate.
+func TestGrantTransactions_CursorWalk(t *testing.T) {
+	externalAddr := "0xcccccccccccccccccccccccccccccccccccccccc"
+
+	// walk pages the grant feed on next_cursor until exhausted, returning every
+	// tx_hash seen, in walk order.
+	walk := func(t *testing.T, srv *Server, router *gin.Engine, grantID, addressID string, limit int) []string {
+		t.Helper()
+		var got []string
+		cursor := ""
+		for range [20]int{} {
+			u := fmt.Sprintf("/api/v1/explorer/grant/%s/%s/transactions?limit=%d", grantID, addressID, limit)
+			if cursor != "" {
+				u += "&cursor=" + url.QueryEscape(cursor)
+			}
+			req := httptest.NewRequest("GET", u, nil)
+			addBearerToken(t, req, srv, testViewerDID)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			require.Equal(t, http.StatusOK, w.Code)
+			var resp GrantTransactionsResponse
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			for _, tx := range resp.Transactions {
+				require.NotNil(t, tx.TxHash, "full disclosure must expose tx_hash")
+				got = append(got, *tx.TxHash)
+			}
+			if resp.NextCursor == "" {
+				return got // feed exhausted
+			}
+			cursor = resp.NextCursor
+		}
+		t.Fatal("walk did not terminate within 20 pages")
+		return got
+	}
+
+	t.Run("full grant walks every page exactly once", func(t *testing.T) {
+		srv, database, conn := setupTestServerForExplorerTransactions(t)
+		router := setupGrantTransactionsRouter(srv)
+		targetUserID := createTestUserForExplorer(t, database, testTargetDID)
+		linkEthAddressToUser(t, database, testTargetDID, testTargetAddress)
+		grantID := createDisclosureGrantWithLevel(t, database, testViewerDID, targetUserID,
+			disclosure.DisclosureFull, time.Now().Add(24*time.Hour))
+		addressID := explorer.GenerateAddressID(testTargetAddress, grantID)
+
+		var want []string
+		for i := 0; i < 5; i++ {
+			block := seedExplorerBlock(t, conn)
+			hash := fmt.Sprintf("0xtx_walk_%d", i)
+			seedExplorerTransaction(t, conn, block, hash, testTargetAddress, externalAddr)
+			want = append(want, hash)
+		}
+
+		assertSameSet(t, walk(t, srv, router, grantID, addressID, 2), want)
+	})
+
+	t.Run("scope-narrowed: out-of-scope rows fill page 1, walker reaches in-scope later", func(t *testing.T) {
+		srv, database, conn := setupTestServerForExplorerTransactions(t)
+		router := setupGrantTransactionsRouter(srv)
+		targetUserID := createTestUserForExplorer(t, database, testTargetDID)
+		linkEthAddressToUser(t, database, testTargetDID, testTargetAddress)
+
+		scopedAddr := "0xdddddddddddddddddddddddddddddddddddddddd"
+		unscopedAddr := "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+		scopeJSON := fmt.Sprintf(`{"disclosure_level":"full","addresses":["%s"]}`, scopedAddr)
+		grantID := createDisclosureGrantWithScopeJSON(t, database, testViewerDID, targetUserID,
+			scopeJSON, time.Now().Add(24*time.Hour))
+		addressID := explorer.GenerateAddressID(testTargetAddress, grantID)
+
+		// Block numbers increase per seed and the feed is newest-first, so seed
+		// the in-scope rows (to=scopedAddr) FIRST (older) and the out-of-scope
+		// rows (to=unscopedAddr) LAST (newest) — the out-of-scope rows then fill
+		// the first backend page under a small limit.
+		var inScope []string
+		for _, name := range []string{"A", "B", "C"} {
+			block := seedExplorerBlock(t, conn)
+			hash := "0xtx_in_" + name
+			seedExplorerTransaction(t, conn, block, hash, testTargetAddress, scopedAddr)
+			inScope = append(inScope, hash)
+		}
+		for _, name := range []string{"D", "E"} {
+			block := seedExplorerBlock(t, conn)
+			seedExplorerTransaction(t, conn, block, "0xtx_out_"+name, testTargetAddress, unscopedAddr)
+		}
+
+		got := walk(t, srv, router, grantID, addressID, 2)
+		assertSameSet(t, got, inScope) // only the 3 in-scope txs, each exactly once
+		for _, h := range got {
+			assert.NotContains(t, h, "_out_", "out-of-scope tx %s must never surface", h)
+		}
+	})
+}
+
+// assertSameSet asserts got and want hold the same elements with NO duplicates
+// (order-independent) — the pagination-walk invariant: every row exactly once.
+func assertSameSet(t *testing.T, got, want []string) {
+	t.Helper()
+	counts := map[string]int{}
+	for _, g := range got {
+		counts[g]++
+	}
+	for k, n := range counts {
+		assert.Equalf(t, 1, n, "row %s returned %d times (walk must not duplicate)", k, n)
+	}
+	assert.ElementsMatch(t, want, got, "walk must return exactly the expected rows")
 }
 
 // TestResolveAddressID_PseudonymousDoesNotLeakRealAddress verifies the privacy fix

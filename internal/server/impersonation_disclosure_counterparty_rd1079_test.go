@@ -144,9 +144,9 @@ func TestImpersonation_DisclosureCounterparty_NoAdminBleed_RD1079(t *testing.T) 
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 		require.Equal(t, http.StatusOK, w.Code, "transfers endpoint should return 200")
-		var out []explorer.TokenTransfer
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
-		return out
+		var resp AddressTransfersResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		return resp.Transfers
 	}
 
 	// Control — Admin views DIRECTLY (subject=admin, no override). The admin's

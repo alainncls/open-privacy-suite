@@ -836,6 +836,34 @@ func createDisclosureGrantWithLevel(t *testing.T, database *db.DB, requesterDID,
 	return grantID
 }
 
+// createDisclosureGrantWithScopeJSON creates an approved grant whose scope is
+// the given raw JSON (e.g. `{"disclosure_level":"full","addresses":["0x.."]}`),
+// so tests can exercise scope-narrowed pagination — where out-of-scope rows
+// fill the first backend page(s) and the RD-1167 walker must fetch deeper to
+// reach in-scope rows.
+func createDisclosureGrantWithScopeJSON(t *testing.T, database *db.DB, requesterDID, targetUserID, scopeJSON string, expiresAt time.Time) string {
+	ctx := context.Background()
+	defaultOrgID, _ := ensureDefaultOrgMembership(t, database, requesterDID)
+
+	requestID := uuid.New().String()
+	_, err := database.Conn().ExecContext(ctx,
+		`INSERT INTO disclosure_requests
+		(id, requester_did, target_user_id, org_id, scope, reason, status, requested_at)
+		VALUES ($1, $2, $3, $4, $5, 'Test grant', 'approved', NOW())`,
+		requestID, requesterDID, targetUserID, defaultOrgID, scopeJSON)
+	require.NoError(t, err)
+
+	grantID := uuid.New().String()
+	_, err = database.Conn().ExecContext(ctx,
+		`INSERT INTO disclosure_grants
+		(id, request_id, grant_token_hash, scope, granted_at, expires_at)
+		VALUES ($1, $2, $3, $4, NOW(), $5)`,
+		grantID, requestID, "test-hash-"+grantID, scopeJSON, expiresAt)
+	require.NoError(t, err)
+
+	return grantID
+}
+
 func TestGetDisclosedAddressesForViewer_FullDisclosure(t *testing.T) {
 	srv, database := setupTestServerForExplorer(t)
 	router := setupExplorerRouter(srv)

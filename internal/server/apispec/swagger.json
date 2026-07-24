@@ -59,6 +59,36 @@
                 },
                 "type": "object"
             },
+            "internal_server.AddressTransactionsResponse": {
+                "properties": {
+                    "next_cursor": {
+                        "type": "string"
+                    },
+                    "transactions": {
+                        "items": {
+                            "$ref": "#/components/schemas/privacy-proxy_internal_explorer.Transaction"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    }
+                },
+                "type": "object"
+            },
+            "internal_server.AddressTransfersResponse": {
+                "properties": {
+                    "next_cursor": {
+                        "type": "string"
+                    },
+                    "transfers": {
+                        "items": {
+                            "$ref": "#/components/schemas/privacy-proxy_internal_explorer.TokenTransfer"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    }
+                },
+                "type": "object"
+            },
             "internal_server.AdminLogsResponse": {
                 "properties": {
                     "data": {
@@ -994,8 +1024,9 @@
                     "disclosure_level": {
                         "type": "string"
                     },
-                    "has_more": {
-                        "type": "boolean"
+                    "next_cursor": {
+                        "description": "NextCursor is the opaque continuation to pass back as ?cursor= (RD-1149).\nIts presence is the sole \"more pages\" signal: a client keeps paging while\nnext_cursor is present and stops when it is omitted (feed exhausted). It is\ndeliberately the only pagination field — there is no has_more, which would\nonly ever be `next_cursor != \"\"` and could drift from it.",
+                        "type": "string"
                     },
                     "transactions": {
                         "items": {
@@ -15485,7 +15516,15 @@
                         }
                     },
                     {
-                        "description": "Return rows strictly older than this block number (pagination cursor)",
+                        "description": "Opaque continuation cursor from the previous response's next_cursor (RD-1149); takes precedence over before",
+                        "in": "query",
+                        "name": "cursor",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Legacy: return rows strictly older than this block number (may skip rows of the boundary block — prefer cursor)",
                         "in": "query",
                         "name": "before",
                         "schema": {
@@ -15498,14 +15537,21 @@
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "items": {
-                                        "$ref": "#/components/schemas/privacy-proxy_internal_explorer.Transaction"
-                                    },
-                                    "type": "array"
+                                    "$ref": "#/components/schemas/internal_server.AddressTransactionsResponse"
                                 }
                             }
                         },
                         "description": "OK"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/internal_server.APIError"
+                                }
+                            }
+                        },
+                        "description": "malformed pagination cursor"
                     },
                     "404": {
                         "content": {
@@ -15567,7 +15613,15 @@
                         }
                     },
                     {
-                        "description": "Return rows strictly older than this block number (pagination cursor)",
+                        "description": "Opaque continuation cursor from the previous response's next_cursor (RD-1149); takes precedence over before",
+                        "in": "query",
+                        "name": "cursor",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Legacy: return rows strictly older than this block number (may skip rows of the boundary block — prefer cursor)",
                         "in": "query",
                         "name": "before",
                         "schema": {
@@ -15580,14 +15634,21 @@
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "items": {
-                                        "$ref": "#/components/schemas/privacy-proxy_internal_explorer.TokenTransfer"
-                                    },
-                                    "type": "array"
+                                    "$ref": "#/components/schemas/internal_server.AddressTransfersResponse"
                                 }
                             }
                         },
                         "description": "OK"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/internal_server.APIError"
+                                }
+                            }
+                        },
+                        "description": "malformed pagination cursor"
                     },
                     "404": {
                         "content": {
@@ -16229,7 +16290,7 @@
                         }
                     },
                     {
-                        "description": "Max rows to return (1-100)",
+                        "description": "Max rows to return (1-100). At the scan bounds a page may come back short — even empty — with a next_cursor to continue from (present ⇒ more pages)",
                         "in": "query",
                         "name": "limit",
                         "schema": {
@@ -16238,7 +16299,15 @@
                         }
                     },
                     {
-                        "description": "Return rows strictly older than this block number (pagination cursor)",
+                        "description": "Opaque continuation cursor from the previous response's next_cursor (RD-1149); takes precedence over before",
+                        "in": "query",
+                        "name": "cursor",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Legacy: return rows strictly older than this block number (may skip rows of the boundary block — prefer cursor)",
                         "in": "query",
                         "name": "before",
                         "schema": {
@@ -16265,7 +16334,7 @@
                                 }
                             }
                         },
-                        "description": "grant_id and address_id are required"
+                        "description": "grant_id and address_id are required, or the pagination cursor is malformed"
                     },
                     "401": {
                         "content": {
