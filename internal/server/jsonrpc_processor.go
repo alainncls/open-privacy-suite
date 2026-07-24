@@ -57,6 +57,10 @@ type JSONRPCProcessor struct {
 
 	// Per-tx visibility store (visibleTo feature)
 	txVisibilityStore rbac.TxVisibilityProvider
+	// visibilityKick, when set, signals the visibility reconciler to drain
+	// immediately after a visibleTo row is enqueued, so recipients see the tx
+	// within milliseconds instead of at the next backstop tick. Nil-safe.
+	visibilityKick func()
 
 	// Circuit breaker + concurrency limiter (replaces rate limiter for authenticated users)
 	circuitBreaker         *CircuitBreaker
@@ -434,6 +438,13 @@ func (p *JSONRPCProcessor) resolveAPIKeyHeader() string {
 // from the DB during response filtering and stores them during send.
 func (p *JSONRPCProcessor) SetTxVisibilityStore(store rbac.TxVisibilityProvider) {
 	p.txVisibilityStore = store
+}
+
+// SetVisibilityKick wires the visibility reconciler's Kick so the send path can
+// trigger an immediate outbox drain after enqueuing a visibleTo row. Optional;
+// without it, visibility still materializes on the reconciler's backstop tick.
+func (p *JSONRPCProcessor) SetVisibilityKick(kick func()) {
+	p.visibilityKick = kick
 }
 
 // logAccess logs an access entry using enhanced logging (with hash chain + SIEM) if available,
@@ -961,23 +972,27 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	// eth_sendRawTransaction where the sender is recovered from the signature.
 
 	// M7 (security audit follow-up): write the visibleTo rule into the
-	// outbox (pending_tx_visibility). A background reconciler (5s
-	// ticker) promotes it to tx_visible_to. This survives DB hiccups —
-	// the row stays in the outbox until the next reconciler tick. If
-	// the outbox INSERT itself fails (which means the DB is completely
-	// unreachable, a much rarer condition than the original
-	// SaveTxVisibility race) we still log with the full recipient
-	// count + sender + org for manual replay.
+	// outbox (pending_tx_visibility); the reconciler promotes it to
+	// tx_visible_to. This survives DB hiccups — the row stays in the
+	// outbox until it drains. If the outbox INSERT itself fails (which
+	// means the DB is completely unreachable, a much rarer condition
+	// than the original SaveTxVisibility race) we still log with the
+	// full recipient count + sender + org for manual replay.
 	//
-	// The reconciler-driven model adds a small (≤ 5s) latency between
-	// "tx on-chain" and "recipients can see it in explorer", which is
-	// dominated by block-confirmation latency anyway.
+	// The drain is event-driven: on a successful enqueue the send path
+	// kicks the reconciler (below), so in steady state recipients can see
+	// the tx within milliseconds — dominated by block-confirmation latency
+	// anyway. The reconciler's periodic backstop tick only retries rows a
+	// kick missed (e.g. a kick dropped during a DB outage); a missed kick
+	// degrades latency to at most one tick, it never loses visibility.
 	if len(visibleTo) > 0 && statusCode == http.StatusOK {
 		if txHash := extractTxHashFromResult(responseBody); txHash != "" {
 			if saver, ok := p.txVisibilityStore.(TxVisibilitySaver); ok {
 				if err := saver.EnqueuePendingTxVisibility(ctx, txHash, visibleTo, req.UserID, result.OrgID); err != nil {
 					slog.Error("visibleTo outbox enqueue failed; tx is on-chain but recipients won't see it",
 						"tx", txHash, "recipients", len(visibleTo), "sender", req.UserID, "org", result.OrgID, "error", err)
+				} else if p.visibilityKick != nil {
+					p.visibilityKick() // drain now so recipients see it within ms, not at the next backstop tick
 				}
 			}
 		}
@@ -1740,6 +1755,8 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 				if err := saver.EnqueuePendingTxVisibility(ctx, txHash, rawTxVisibleTo, req.UserID, result.OrgID); err != nil {
 					slog.Error("visibleTo outbox enqueue failed for raw tx; tx is on-chain but recipients won't see it",
 						"tx", txHash, "recipients", len(rawTxVisibleTo), "sender", req.UserID, "org", result.OrgID, "error", err)
+				} else if p.visibilityKick != nil {
+					p.visibilityKick() // drain now so recipients see it within ms, not at the next backstop tick
 				}
 			}
 		}

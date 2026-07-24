@@ -906,9 +906,19 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	// pending_tx_visibility rows into tx_visible_to. Survives DB hiccups
 	// in the hot JSON-RPC write path; rows are retried until promoted or
 	// dead-lettered (attempt_count >= 10).
-	s.visibilityReconciler = NewVisibilityReconciler(database, DefaultVisibilityReconcilerConfig())
+	reconcilerCfg := DefaultVisibilityReconcilerConfig()
+	s.visibilityReconciler = NewVisibilityReconciler(database, reconcilerCfg)
 	s.visibilityReconciler.Start(context.Background())
-	slog.Info("visibility reconciler started", "interval", "5s", "batch", 100)
+	// Event-driven drain: the send path kicks the reconciler right after it
+	// enqueues a visibleTo row, so recipients see the tx within ms; the
+	// periodic ticker is only the retry/outage backstop.
+	if s.jsonrpcProcessor != nil {
+		s.jsonrpcProcessor.SetVisibilityKick(s.visibilityReconciler.Kick)
+	}
+	slog.Info("visibility reconciler started",
+		"backstop_interval", reconcilerCfg.Interval,
+		"batch", reconcilerCfg.BatchSize,
+		"drain", "event-driven")
 
 	// RD-858: scheduled audit hash-chain integrity verifier. Default
 	// interval 15m (config: AUDIT_INTEGRITY_VERIFY_INTERVAL). On
