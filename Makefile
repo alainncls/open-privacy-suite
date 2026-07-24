@@ -1,4 +1,6 @@
-.PHONY: build build-prod test test-unit test-e2e test-privacy-bypass run dev-stack full-stack-dev run-binary clean clean-build e2e e2e-debug e2e-down e2e-clean demo-e2e demo-e2e-debug demo-e2e-down \
+.PHONY: build build-prod test test-unit test-e2e test-privacy-bypass run dev-stack full-stack-dev run-binary clean clean-build \
+	e2e e2e-all e2e-go e2e-playwright e2e-privacy e2e-chaos e2e-soak e2e-doctor e2e-debug e2e-down e2e-clean \
+	demo-e2e demo-e2e-debug demo-e2e-down \
 	db-migrate db-status db-new-migration install-tern seed \
 	contracts-install contracts-build contracts-deploy authproxy \
 	stop restart logs status \
@@ -183,25 +185,26 @@ test-db-ready:
 	@docker-compose ps postgres | grep -q "Up" || (echo "PostgreSQL is not running. Starting it..." && docker-compose up -d postgres && sleep 2)
 	@echo "PostgreSQL is ready"
 
-# Run Go E2E tests
-test-e2e:
-	go test ./e2e/... -v -p 1 -timeout 30m
+# Run both Go E2E lanes (production tags and mockauth security coverage) through
+# the isolated server harness.
+test-e2e: ensure-hooks
+	./scripts/e2e-harness.sh go
 
 # Negative-network test for the privacy-mode deployment (RD-855 Phase 4b).
 # Brings up docker-compose.privacy.yml (nine services) and verifies the
 # trust boundary is closed: trust-zone services unreachable from the
-# host, frontend routes correctly, /ws returns 404. Takes 1-2 minutes;
-# build-tag gated so it doesn't run in default test runs or the
-# pre-push hook. Expects chain-indexer + block-explorer cloned as
-# siblings of this repo.
-test-privacy-bypass:
-	go test -tags privacy_bypass -timeout 15m -v -run TestPrivacyModeBypassClosure ./e2e/...
+# host, frontend routes correctly, /ws returns 404. The harness builds the
+# current proxy plus pinned public ops-explorer and ops-indexer sources into
+# project-local images while preserving the production Compose topology. It is
+# build-tag gated so it doesn't run in default test runs or the pre-push hook.
+test-privacy-bypass: ensure-hooks
+	./scripts/e2e-harness.sh privacy
 
-# E2E compose command - isolated from local dev.
-# Prefer Compose v1 (docker-compose) when present so local dev is unchanged;
-# fall back to the v2 plugin (docker compose) on CI runners that ship only v2.
+# Compose detection shared by the demo acceptance suite below. Prefer Compose
+# v1 (docker-compose) when present so local dev is unchanged; fall back to the
+# v2 plugin (docker compose) on CI runners that ship only v2. The isolated E2E
+# harness (scripts/e2e-harness.sh) does its own compose handling.
 COMPOSE := $(shell command -v docker-compose >/dev/null 2>&1 && echo docker-compose || echo docker compose)
-E2E_COMPOSE = $(COMPOSE) -p privacy-proxy-e2e -f docker-compose.e2e.yml
 BLOCK_EXPLORER_PATH ?= ../block-explorer
 BLOCK_EXPLORER_GIT_COMMIT ?= $(shell git -C "$(BLOCK_EXPLORER_PATH)" rev-parse --short HEAD 2>/dev/null || echo unknown)
 BLOCK_EXPLORER_VERSION ?= $(shell git -C "$(BLOCK_EXPLORER_PATH)" describe --tags --always --dirty 2>/dev/null || echo dev)
@@ -210,28 +213,45 @@ export BLOCK_EXPLORER_PATH BLOCK_EXPLORER_GIT_COMMIT BLOCK_EXPLORER_VERSION BLOC
 DEMO_E2E_COMPOSE = $(COMPOSE) --env-file e2e/demo.env -p privacy-proxy-demo-e2e -f docker-compose.privacy.dev.yml -f docker-compose.demo-e2e.yml
 DEMO_E2E_SERVICES = privacy-postgres redis anvil indexer-postgres chain-indexer proxy-backend proxy-frontend block-explorer-postgres block-explorer-api block-explorer-frontend
 
-# Run Playwright E2E tests with Docker Compose (isolated environment)
-e2e: ensure-hooks
-	$(E2E_COMPOSE) up -d --build postgres anvil proxy-backend proxy-frontend
-	$(E2E_COMPOSE) run --rm playwright npm test; \
-	status=$$?; \
-	$(E2E_COMPOSE) down -v; \
-	exit $$status
+# Server-safe E2E entry points. The harness assigns a unique Compose project,
+# writes artifacts to a per-run directory, and only tears down resources owned
+# by that run. See docs/e2e-server-harness.md for operator commands and knobs.
+e2e: e2e-all
 
-# Run Playwright E2E tests and keep services running (for debugging)
-e2e-debug:
-	$(E2E_COMPOSE) up -d --build postgres anvil proxy-backend proxy-frontend
-	$(E2E_COMPOSE) run --rm playwright npm run test:debug
-	@echo "Services still running. Run 'make e2e-down' to stop them."
+e2e-all: ensure-hooks
+	./scripts/e2e-harness.sh all
 
-# Stop E2E services and clean up volumes
+e2e-go: ensure-hooks
+	./scripts/e2e-harness.sh go
+
+e2e-playwright: ensure-hooks
+	./scripts/e2e-harness.sh playwright
+
+e2e-privacy: ensure-hooks
+	./scripts/e2e-harness.sh privacy
+
+e2e-chaos: ensure-hooks
+	./scripts/e2e-harness.sh chaos
+
+e2e-soak: ensure-hooks
+	./scripts/e2e-harness.sh soak
+
+e2e-doctor: ensure-hooks
+	./scripts/e2e-harness.sh doctor
+
+# Compatibility target: run Playwright and retain this run's stack for
+# inspection. Reuse E2E_RUN_ID and any explicit project/artifact overrides with
+# e2e-down afterwards.
+e2e-debug: ensure-hooks
+	E2E_KEEP_STACK=1 ./scripts/e2e-harness.sh playwright
+
+# Stop only projects marked as acquired by the selected run. Reuse its explicit
+# E2E_RUN_ID plus any E2E_PROJECT, E2E_PRIVACY_PROJECT, and artifact override.
 e2e-down:
-	$(E2E_COMPOSE) down -v
+	./scripts/e2e-harness.sh down
 
-# Force clean E2E environment (removes containers, volumes, networks)
-e2e-clean:
-	$(E2E_COMPOSE) down -v --remove-orphans
-	@docker volume rm privacy-proxy-e2e_e2e-postgres-data 2>/dev/null || true
+# Backwards-compatible alias; cleanup remains scoped to one harness run.
+e2e-clean: e2e-down
 
 # Cross-product demo acceptance suite: proxy + indexer + real block explorer.
 # BLOCK_EXPLORER_PATH may point at a sibling worktree; CI checks out the pinned
@@ -279,10 +299,10 @@ frontend-test-coverage:
 # Alias for 'test'
 test-all: test
 
-# Clean Docker environment (stop services, remove volumes)
+# Clean only this checkout's default Compose project and its attached volumes.
+# Never prune the shared Docker daemon from a repository target.
 clean:
-	docker-compose down -v
-	docker system prune -f
+	docker-compose down -v --remove-orphans
 
 # Clean build artifacts
 clean-build:

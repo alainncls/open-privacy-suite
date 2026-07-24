@@ -23,6 +23,7 @@ NC='\033[0m' # No Color
 
 # Track failures
 FAILED=0
+SKIPPED_E2E=0
 
 # Function to run a test and report
 run_test() {
@@ -40,22 +41,49 @@ run_test() {
     fi
 }
 
+# The server E2E harness deliberately relies on Linux host primitives for
+# project locking and process-tree cleanup. A stock macOS checkout does not
+# provide all of them. Since this hook is installed automatically, missing
+# host capabilities skip only the harness-backed lanes; CI and explicit
+# `make e2e-*` commands remain fail-closed.
+e2e_host_ready() {
+    local lane="$1"
+    local output
+
+    if output="$(./scripts/e2e-harness.sh preflight "$lane" 2>&1)"; then
+        return 0
+    fi
+
+    echo -e "${YELLOW}⚠ Skipping ${lane} E2E in the local pre-push hook.${NC}"
+    printf '%s\n' "$output"
+    echo "  Run 'make e2e-doctor' on a supported host for the full diagnostic."
+    echo "  CI/server E2E gates remain enforced."
+    echo ""
+    SKIPPED_E2E=1
+    return 1
+}
+
 # Run unit tests (Go backend)
 run_test "Go Unit Tests" "make test-unit 2>&1 | tail -20"
 
-# Run Go E2E tests
-run_test "Go E2E Tests" "make test-e2e 2>&1 | tail -20"
+# Run Go E2E tests when this workstation can safely run the isolated harness.
+if e2e_host_ready go; then
+    run_test "Go E2E Tests" "make test-e2e 2>&1 | tail -20"
+fi
 
 # Run frontend tests
 run_test "Frontend Tests" "make frontend-test 2>&1 | tail -20"
 
-# Run E2E tests (this takes longer, runs in Docker)
-echo -e "${YELLOW}▶ Running: E2E Tests (this may take a while...)${NC}"
-if make e2e 2>&1 | tail -50; then
-    echo -e "${GREEN}✓ E2E Tests passed${NC}"
-else
-    echo -e "${RED}✗ E2E Tests FAILED${NC}"
-    FAILED=1
+# Run the Dockerized browser lane. The Go lanes already ran above; the full
+# server/nightly gate (make e2e) also includes privacy and would duplicate them.
+if e2e_host_ready playwright; then
+    echo -e "${YELLOW}▶ Running: Playwright E2E Tests (this may take a while...)${NC}"
+    if make e2e-playwright 2>&1 | tail -50; then
+        echo -e "${GREEN}✓ Playwright E2E Tests passed${NC}"
+    else
+        echo -e "${RED}✗ Playwright E2E Tests FAILED${NC}"
+        FAILED=1
+    fi
 fi
 
 echo ""
@@ -67,6 +95,11 @@ if [ $FAILED -eq 1 ]; then
     echo "  To skip (emergency): git push --no-verify"
     echo "========================================"
     exit 1
+elif [ $SKIPPED_E2E -eq 1 ]; then
+    echo -e "${YELLOW}  Local checks passed; unsupported E2E lanes were skipped.${NC}"
+    echo "  CI/server E2E gates remain enforced. Pushing..."
+    echo "========================================"
+    exit 0
 else
     echo -e "${GREEN}  All tests passed! Pushing...${NC}"
     echo "========================================"

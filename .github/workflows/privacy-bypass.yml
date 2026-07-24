@@ -1,32 +1,12 @@
 name: Privacy-Mode Bypass Closure (RD-855 Phase 4b)
 
-# Runs the negative-network integration test that verifies the privacy-
-# mode compose manifest closes the RD-855 bypass path. Because it brings
-# up nine services (privacy-postgres, redis, anvil, chain-indexer,
-# indexer-postgres, proxy-backend + frontend, block-explorer frontend)
-# and takes 2-4 minutes, it's gated behind:
-#   - Manual dispatch (workflow_dispatch)
-#   - Weekly schedule (Mondays 07:00 UTC)
-# Instead of running on every PR.
-#
-# When architectural changes touch the compose file, the Dockerfile,
-# nginx config, or the indexer's gRPC surface, dispatch this workflow
-# manually before merging to confirm the bypass is still closed.
-#
-# Public-fork behavior: the test needs the gateway-fm/chain-indexer and
-# gateway-fm/block-explorer repos. A preflight job probes whether they
-# are readable with the available token (CROSS_REPO_READ_TOKEN, falling
-# back to GITHUB_TOKEN — sufficient once the sibling repos are public).
-# On forks without access the test is skipped with a notice instead of
-# failing. In the canonical gateway-fm/open-privacy-suite repo a missing
-# token FAILS the run on purpose: this is a scheduled security
-# regression check and must not be silently disabled.
-#
-# Running the full test as a maintainer: either dispatch this workflow
-# in the canonical repo, or locally clone chain-indexer and
-# block-explorer as siblings of this repo and run
-# `make test-privacy-bypass`.
-
+# Runs the negative-network integration test against the production privacy
+# topology. The harness builds the current proxy plus pinned public
+# ops-explorer v0.9.0-rc.1 and ops-indexer v0.4.0-rc.1 sources from shallow,
+# artifact-owned checkouts. It needs neither sibling checkouts nor registry
+# credentials. The suite is scheduled/manual because a cold run builds and
+# starts the complete stack. Cleanup is project-scoped and never prunes the
+# shared Docker daemon.
 on:
   workflow_dispatch:
   schedule:
@@ -40,76 +20,19 @@ env:
   GO_VERSION: '1.25'
 
 jobs:
-  preflight:
-    name: Sibling-repo access check
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      run-test: ${{ steps.check.outputs.run-test }}
-    steps:
-      - name: Check sibling repo readability
-        id: check
-        env:
-          GH_TOKEN: ${{ secrets.CROSS_REPO_READ_TOKEN || secrets.GITHUB_TOKEN }}
-          IS_CANONICAL: ${{ github.repository == 'gateway-fm/open-privacy-suite' }}
-        run: |
-          # Retry before declaring a repo unreadable: this signal gates a
-          # loud failure in the canonical repo (below), so a transient GitHub
-          # API blip (5xx / secondary rate-limit) must not be mistaken for a
-          # genuine, persistent permission failure. Only a repo that fails all
-          # attempts is treated as unreadable.
-          unreadable=""
-          for repo in gateway-fm/chain-indexer gateway-fm/block-explorer; do
-            ok=""
-            for attempt in 1 2 3; do
-              if gh api "repos/$repo" --silent; then
-                ok="yes"
-                break
-              fi
-              [ "$attempt" -lt 3 ] && sleep "$((attempt * 5))"
-            done
-            if [ -z "$ok" ]; then
-              unreadable="$unreadable $repo"
-            fi
-          done
-          if [ -z "$unreadable" ]; then
-            echo "run-test=true" >> "$GITHUB_OUTPUT"
-          elif [ "$IS_CANONICAL" = "true" ]; then
-            echo "::error::Sibling repos not readable:$unreadable. This scheduled security regression check must not be silently skipped in the canonical repo — restore the CROSS_REPO_READ_TOKEN secret (read-only access to the sibling repos)."
-            exit 1
-          else
-            echo "::notice::Sibling repos not readable with the available token:$unreadable. Skipping the privacy-mode bypass test on this fork. It runs in the canonical gateway-fm/open-privacy-suite repo (weekly schedule + manual dispatch); see the workflow header for how to run it locally."
-            echo "run-test=false" >> "$GITHUB_OUTPUT"
-          fi
-
   negative-network:
     name: Privacy-mode trust boundary
-    needs: preflight
-    if: needs.preflight.outputs.run-test == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
+    env:
+      E2E_RUN_ID: gha-privacy-${{ github.run_id }}-${{ github.run_attempt }}
+      E2E_PROJECT: privacy-proxy-e2e-gha-${{ github.run_id }}-${{ github.run_attempt }}
+      E2E_PRIVACY_PROJECT: privacy-proxy-privacy-gha-${{ github.run_id }}-${{ github.run_attempt }}
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/.tmp/e2e-runs/gha-privacy-${{ github.run_id }}-${{ github.run_attempt }}
 
     steps:
-      - name: Checkout privacy-proxy
+      - name: Checkout code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          path: privacy-proxy
-
-      - name: Checkout chain-indexer
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          repository: gateway-fm/chain-indexer
-          ref: main
-          path: chain-indexer
-          token: ${{ secrets.CROSS_REPO_READ_TOKEN || secrets.GITHUB_TOKEN }}
-
-      - name: Checkout block-explorer
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          repository: gateway-fm/block-explorer
-          ref: main
-          path: block-explorer
-          token: ${{ secrets.CROSS_REPO_READ_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -119,16 +42,18 @@ jobs:
       - name: Show Docker version
         run: docker version && docker compose version
 
-      - name: Run negative-network test
-        working-directory: privacy-proxy
-        run: make test-privacy-bypass
+      - name: Run privacy-boundary E2E
+        run: make e2e-privacy
 
-      - name: Dump compose logs on failure
-        if: failure()
-        working-directory: privacy-proxy
-        run: docker compose -f docker-compose.privacy.yml -p privacy-bypass-test logs --tail=200 || true
-
-      - name: Compose down
+      - name: Upload privacy E2E artifacts
         if: always()
-        working-directory: privacy-proxy
-        run: docker compose -f docker-compose.privacy.yml -p privacy-bypass-test down -v || true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: privacy-e2e-artifacts
+          path: ${{ env.E2E_ARTIFACT_DIR }}/
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Ensure this E2E stack is down
+        if: always()
+        run: make e2e-down

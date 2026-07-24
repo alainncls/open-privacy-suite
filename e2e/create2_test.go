@@ -456,23 +456,36 @@ func registerContract(t *testing.T, database *db.DB, orgID, address, name string
 	// Also ensure a grant exists for the org's first group so that users can
 	// access it. The proxy auto-grants a freshly-deployed contract to the
 	// deployer's group (NotifyDeploymentMined / GrantContractToDeployerGroup),
-	// so a grant for this (contract, group) pair may already exist. Creating it
-	// again would violate the (contract_id, group_id) unique constraint, so this
-	// is idempotent — mirroring the helper's reuse of an auto-registered contract.
+	// so a grant for this (contract, group) pair may already exist.
 	groups, err := database.ListGroups(ctx, orgID)
 	require.NoError(t, err)
 	require.NotEmpty(t, groups)
 
-	existingGrant, err := database.GetContractGrantByContractAndGroup(ctx, contract.ID, groups[0].ID)
+	ensureContractGrant(ctx, t, database, contract.ID, groups[0].ID)
+}
+
+// ensureContractGrant creates the (contract, group) grant unless it already
+// exists. A pre-check alone is not enough: the proxy's deployment-mined
+// auto-grant runs on the async outbox drain (RD-1202) and can insert the same
+// pair between our check and insert, so a duplicate-key error is tolerated as
+// the desired end state rather than a failure.
+func ensureContractGrant(ctx context.Context, t *testing.T, database *db.DB, contractID, groupID string) {
+	t.Helper()
+
+	existing, err := database.GetContractGrantByContractAndGroup(ctx, contractID, groupID)
 	require.NoError(t, err)
-	if existingGrant == nil {
-		grant := &rbac.ContractGrant{
-			ID:         uuid.New().String(),
-			ContractID: contract.ID,
-			GroupID:    groups[0].ID,
-			Functions:  nil, // all functions
-		}
-		require.NoError(t, database.CreateContractGrant(ctx, grant))
+	if existing != nil {
+		return
+	}
+	grant := &rbac.ContractGrant{
+		ID:         uuid.New().String(),
+		ContractID: contractID,
+		GroupID:    groupID,
+		Functions:  nil, // all functions
+	}
+	if err := database.CreateContractGrant(ctx, grant); err != nil {
+		require.Contains(t, err.Error(), "contract_grants_contract_id_group_id_key",
+			"creating contract grant failed for a reason other than the auto-grant race")
 	}
 }
 
@@ -782,13 +795,7 @@ func TestCreate2RuntimeDeployment_DeniedWithoutDeployClaim(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, factoryContract)
 
-	writerGrant := &rbac.ContractGrant{
-		ID:         uuid.New().String(),
-		ContractID: factoryContract.ID,
-		GroupID:    writerGroupID,
-		Functions:  nil, // all functions
-	}
-	require.NoError(t, env.srv.DB().CreateContractGrant(ctx, writerGrant))
+	ensureContractGrant(ctx, t, env.srv.DB(), factoryContract.ID, writerGroupID)
 
 	// Writer user tries to call factory.deployChild() — this involves a CREATE2
 	// internally, which the proxy's runtime tracing should detect. The runtime

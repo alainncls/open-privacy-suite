@@ -87,6 +87,9 @@ docker-compose.override.yml
 test-results/
 playwright-report/
 
+# Isolated E2E harness runs (logs, metadata, and per-run browser artifacts)
+.tmp/e2e-runs/
+
 # Local dev notes (machine-specific)
 *.local.md
 *.local.sh

@@ -5,6 +5,23 @@ echo "=========================================="
 echo "Running pre-commit checks (thorough mode)"
 echo "=========================================="
 
+SKIPPED_E2E=0
+
+e2e_host_ready() {
+    local output
+
+    if output="$(./scripts/e2e-harness.sh preflight playwright 2>&1)"; then
+        return 0
+    fi
+
+    echo "WARNING: Skipping Playwright E2E in this local helper."
+    printf '%s\n' "$output"
+    echo "Run 'make e2e-doctor' on a supported host for the full diagnostic."
+    echo "CI/server E2E gates remain enforced."
+    SKIPPED_E2E=1
+    return 1
+}
+
 # Format Go code
 echo ""
 echo ">>> Formatting Go code..."
@@ -25,12 +42,20 @@ echo ""
 echo ">>> Running frontend tests..."
 make frontend-test
 
-# Run E2E tests
+# Run the Dockerized browser lane. The complete server gate is deliberately
+# available as `make e2e` without making every local commit start privacy and
+# both Go E2E lanes after the unit suite.
 echo ""
-echo ">>> Running E2E tests..."
-make e2e
+echo ">>> Running Playwright E2E tests..."
+if e2e_host_ready; then
+    make e2e-playwright
+fi
 
 echo ""
 echo "=========================================="
-echo "All checks passed!"
+if [ "$SKIPPED_E2E" -eq 1 ]; then
+    echo "Local checks passed; Playwright E2E was skipped on this host."
+else
+    echo "All checks passed!"
+fi
 echo "=========================================="

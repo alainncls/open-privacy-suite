@@ -3,6 +3,12 @@ import { defineConfig, devices, type PlaywrightTestConfig } from '@playwright/te
 const PROXY_URL = process.env.PROXY_URL || 'http://localhost:8080';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 const DEMO_E2E = process.env.DEMO_E2E === '1';
+const IS_CI = /^(1|true|yes|on)$/i.test(process.env.CI || '');
+const workerValue = process.env.E2E_PLAYWRIGHT_WORKERS || '1';
+const WORKERS = Number.parseInt(workerValue, 10);
+if (!Number.isInteger(WORKERS) || WORKERS < 1 || String(WORKERS) !== workerValue) {
+  throw new Error('E2E_PLAYWRIGHT_WORKERS must be a positive integer');
+}
 
 const demoProjects: PlaywrightTestConfig['projects'] = DEMO_E2E ? [
   {
@@ -40,9 +46,9 @@ const demoProjects: PlaywrightTestConfig['projects'] = DEMO_E2E ? [
 export default defineConfig({
   testDir: './tests',
   fullyParallel: true,
-  forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 8 : undefined,
+  forbidOnly: IS_CI,
+  retries: IS_CI ? 2 : 0,
+  workers: WORKERS,
   reporter: [
     ['html', { outputFolder: 'playwright-report' }],
     ['junit', { outputFile: 'test-results/junit.xml' }],
