@@ -41,4 +41,8 @@ test('the real View as button opens explorer with only the target user visibilit
   await expect(page.getByTestId('impersonation-banner')).not.toBeVisible();
   await page.goto(`/address/${m.contracts.counter.address}`);
   await expect(page.getByRole('heading', { name: /Address Restricted/i })).not.toBeVisible();
+  // Absence of the restriction heading is not enough: a blank page, 404, or a
+  // failed admin-session restore would also satisfy it. Assert the admin
+  // positively sees the counter contract's address page again.
+  await expect(page.getByTestId('tab-transactions')).toBeVisible();
 });

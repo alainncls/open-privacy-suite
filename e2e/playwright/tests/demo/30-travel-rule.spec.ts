@@ -98,6 +98,19 @@ test.describe.serial('travel-rule enforcement and currency valuation', () => {
     const used = (records.body as { data: Array<{ id: string; used_at?: string }> }).data
       .find(item => item.id === (record.body as { id: string }).id);
     expect(used?.used_at).toBeTruthy();
+
+    // "Exactly one": a second identical transfer, still in enforce mode with the
+    // record now consumed, must be denied. Without this a reused-record
+    // implementation would satisfy the story on the marked-used check alone.
+    const reused = await proxyRpc<string>(request, m.personas.writer.token, m.orgs.a.id, 'eth_sendTransaction', [{
+      from: m.personas.writer.address,
+      to: m.contracts.token.address,
+      data: transferData(m.personas.target.address),
+      gas: '0x30d40',
+    }]);
+    expect(reused.result).toBeUndefined();
+    expect([400, 403]).toContain(reused.status);
+    expect(JSON.stringify(reused.raw)).toMatch(/travel rule|compliance|threshold/i);
   });
 
   test('monitor mode allows the same missing-record transfer and writes a would-block log', async ({ request }) => {
@@ -124,6 +137,11 @@ test.describe.serial('travel-rule enforcement and currency valuation', () => {
       `/api/v1/admin/orgs/${m.orgs.a.id}/compliance/logs?limit=20`,
     );
     expect(logs.status, logs.text).toBe(200);
-    expect(logs.text).toMatch(/would.block|monitor/i);
+    // Assert a would-block decision was actually recorded, not merely that the
+    // serialized rows contain the always-present would_block field. The old
+    // /would.block|monitor/ regex matched every row (`.` matches `_`, and
+    // `"would_block":false` satisfied it), so a monitor that never logged the
+    // transfer still passed.
+    expect(logs.text).toMatch(/["']would_?block["']\s*:\s*true/i);
   });
 });

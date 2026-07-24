@@ -98,6 +98,10 @@ test.describe('selective disclosure', () => {
         assertNoCanary(history.text, [
           m.personas.target.address,
           m.transactions.targetIncrement.hash,
+          // The disclosed transaction's counterparty is the counter contract.
+          // A grant that pseudonymizes/redacts `from` but leaks the real
+          // contract address in `to` must still fail this level's check.
+          m.contracts.counter.address,
         ], `${expectedLevel} transaction history`);
         if (expectedLevel === 'pseudonymous') {
           expect(txs.some(tx => [tx.from, tx.to].includes(expectedDisplay))).toBe(true);

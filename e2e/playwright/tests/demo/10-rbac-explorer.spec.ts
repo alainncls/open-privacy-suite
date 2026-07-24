@@ -95,7 +95,10 @@ test.describe('RBAC and explorer parity', () => {
       expect(detail.status).toBe(404);
       assertNoCanary(
         detail.text,
-        [...m.canaries.protectedAddresses, ...m.canaries.transactionHashes, ...m.canaries.calldata],
+        // The protected transaction's `to` is the counter contract. A regression
+        // that hides the two user addresses but returns the contract address must
+        // still fail, so forbid it explicitly alongside the user-address canaries.
+        [m.contracts.counter.address, ...m.canaries.protectedAddresses, ...m.canaries.transactionHashes, ...m.canaries.calldata],
         `${persona.did} transaction detail`,
       );
 

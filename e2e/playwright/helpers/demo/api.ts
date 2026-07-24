@@ -77,15 +77,25 @@ export async function waitForReceipt(
   request: APIRequestContext,
   hash: string,
   timeoutMs = 30_000,
-): Promise<{ blockNumber: string; contractAddress: string | null; logs: unknown[] }> {
+): Promise<{ status: string; blockNumber: string; contractAddress: string | null; logs: unknown[] }> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const receipt = await anvilRpc<{
+      status: string;
       blockNumber: string;
       contractAddress: string | null;
       logs: unknown[];
     } | null>(request, 'eth_getTransactionReceipt', [hash]);
-    if (receipt) return receipt;
+    if (receipt) {
+      // A mined receipt is not a successful one: reverted transactions also
+      // produce a hash and a receipt. Callers treat "receipt exists" as
+      // "the transfer succeeded", so fail loudly on a revert instead of
+      // letting an allow-story pass on a reverted transfer.
+      if (receipt.status !== '0x1') {
+        throw new Error(`Transaction ${hash} did not succeed (receipt status ${receipt.status})`);
+      }
+      return receipt;
+    }
     await new Promise(resolve => setTimeout(resolve, 250));
   }
   throw new Error(`Timed out waiting for receipt ${hash}`);
