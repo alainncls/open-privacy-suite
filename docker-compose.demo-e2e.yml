@@ -6,6 +6,15 @@
 # contract artifacts are built and the stack is always torn down.
 
 services:
+  chain-indexer:
+    # The demo suite consumes a prebuilt indexer image: CI builds it from
+    # source and tags it ghcr.io/gateway-fm/chain-indexer:${INDEXER_VERSION}
+    # (see e2e-playwright.yml); local runs pull the published tag. `!reset`
+    # drops the dev manifest's `build:` mapping so `up --build` doesn't try
+    # to rebuild from a sibling checkout the demo environment doesn't have.
+    build: !reset null
+    image: ghcr.io/gateway-fm/chain-indexer:${INDEXER_VERSION:-0.3.0}
+
   proxy-backend:
     environment:
       - BASE_URL=http://proxy-backend:8080
