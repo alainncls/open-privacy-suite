@@ -126,8 +126,11 @@ services:
     # ran local source (bit the RD-1149 acceptance run). The built image is
     # tagged :dev-local so it never clobbers a pinned published tag. To run
     # a published image instead, override this service in
-    # docker-compose.privacy.dev.override.yml with
-    # `image: gatewayfm/chain-indexer:<tag>` and no `build:`.
+    # docker-compose.privacy.dev.override.yml with BOTH
+    # `build: !reset null` and `image: gatewayfm/chain-indexer:<tag>`.
+    # The `!reset` is required: simply omitting `build:` in the override does
+    # NOT drop the inherited mapping, so `privacy-dev-up.sh`'s `up --build`
+    # would still rebuild local source and tag it with the published tag.
     #
     # If you point at a published tag: ≥ 0.2.0 is REQUIRED — earlier tags
     # stored from_address / to_address in EIP-55 checksum case but compared
