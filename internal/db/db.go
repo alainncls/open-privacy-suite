@@ -336,10 +336,11 @@ func checkVersionTableOwnership(ctx context.Context, conn *pgx.Conn, versionTabl
 
 	return fmt.Errorf(
 		"cannot migrate %[1]s: it is owned by %[2]s but this connection is %[3]s, and tern needs "+
-			"ALTER TABLE on it. Hand it over as a superuser, or as %[2]s once GRANT %[3]s TO %[2]s "+
-			"makes the transfer legal: ALTER TABLE %[1]s OWNER TO %[3]s; for an audit database whose "+
-			"AUDIT_ADMIN_DATABASE_URL moved to a dedicated role, transfer the whole schema instead: "+
-			"REASSIGN OWNED BY %[2]s TO %[3]s;",
+			"ALTER TABLE on it. As a superuser: ALTER TABLE %[1]s OWNER TO %[3]s; As %[2]s the transfer "+
+			"also needs membership in %[3]s, which must not outlive it, so run it as one transaction: "+
+			"BEGIN; GRANT %[3]s TO %[2]s; ALTER TABLE %[1]s OWNER TO %[3]s; REVOKE %[3]s FROM %[2]s; COMMIT; "+
+			"For an audit database whose AUDIT_ADMIN_DATABASE_URL moved to a dedicated role, use "+
+			"REASSIGN OWNED BY %[2]s TO %[3]s in place of the ALTER TABLE to move the whole schema.",
 		table, owner, currentUser)
 }
 

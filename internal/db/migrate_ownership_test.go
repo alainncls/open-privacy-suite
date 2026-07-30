@@ -116,6 +116,7 @@ func TestMigrateAuditOnly_NonOwnerWithoutPrimaryKey_ExplainsTheFix(t *testing.T)
 		"schema_version_audit",     // which table
 		"audit_migrator",           // who is connected
 		"OWNER TO",                 // the remediation
+		"REVOKE",                   // the elevation must not outlive the transfer
 		"REASSIGN OWNED BY",        // the remediation for a whole audit schema
 		"AUDIT_ADMIN_DATABASE_URL", // where this configuration comes from
 	} {
