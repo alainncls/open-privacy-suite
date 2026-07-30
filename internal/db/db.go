@@ -268,6 +268,10 @@ func (d *DB) migrateFS(ctx context.Context, fsys fs.FS, versionTable string) err
 	}
 	defer pgxConn.Close(ctx)
 
+	if err := checkVersionTableOwnership(ctx, pgxConn, versionTable); err != nil {
+		return err
+	}
+
 	migrator, err := migrate.NewMigrator(ctx, pgxConn, versionTable)
 	if err != nil {
 		return fmt.Errorf("failed to create migrator: %w", err)
@@ -282,6 +286,55 @@ func (d *DB) migrateFS(ctx context.Context, fsys fs.FS, versionTable string) err
 	}
 
 	return nil
+}
+
+// checkVersionTableOwnership fails fast, with a remediation, when the connected
+// role cannot run the DDL tern needs on a pre-existing version table.
+//
+// tern >= 2.4 retro-fits a PRIMARY KEY onto a version table created by an older
+// tern (migrate.ensureSchemaVersionTableExists). That is an ALTER TABLE, so it
+// needs ownership — but nothing in this project's role model guarantees the
+// migrating role owns the table. The audit database is the case that bites: the
+// documented path is to start on the derived DSNs (which connect as
+// DATABASE_URL's owner, so that role creates schema_version_audit) and later
+// switch AUDIT_ADMIN_DATABASE_URL to privacy_proxy_admin, which holds GRANTs but
+// not ownership. That deployment migrated fine until tern 2.4 and now dies at
+// startup on a bare `must be owner of table schema_version_audit (SQLSTATE
+// 42501)` that names neither the cause nor the fix.
+//
+// The check is deliberately narrow — it only trips on the exact combination tern
+// would fail on (table present, no primary key, caller cannot act as owner), so
+// a deployment whose version table already has its primary key keeps working
+// regardless of who owns it.
+func checkVersionTableOwnership(ctx context.Context, conn *pgx.Conn, versionTable string) error {
+	const q = `
+		SELECT pg_get_userbyid(c.relowner),
+		       pg_has_role(current_user, c.relowner, 'USAGE'),
+		       EXISTS (SELECT 1 FROM pg_constraint k WHERE k.conrelid = c.oid AND k.contype = 'p'),
+		       current_user
+		  FROM pg_class c
+		 WHERE c.oid = to_regclass($1)`
+
+	var owner, currentUser string
+	var canActAsOwner, hasPrimaryKey bool
+	err := conn.QueryRow(ctx, q, versionTable).Scan(&owner, &canActAsOwner, &hasPrimaryKey, &currentUser)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil // fresh database: tern creates the table (with its primary key) itself
+	}
+	if err != nil {
+		return fmt.Errorf("failed to inspect migration version table %q: %w", versionTable, err)
+	}
+	if hasPrimaryKey || canActAsOwner {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"cannot migrate %[1]q: it is owned by %[2]q but this connection is %[3]q, "+
+			"and tern needs ALTER TABLE on it to add the primary key that tern >= 2.4 expects. "+
+			"Hand the table over as %[2]q (or a superuser): ALTER TABLE %[1]s OWNER TO %[3]s; "+
+			"for an audit database provisioned before AUDIT_ADMIN_DATABASE_URL was pointed at a "+
+			"dedicated role, transfer the whole audit schema instead: REASSIGN OWNED BY %[2]s TO %[3]s;",
+		versionTable, owner, currentUser)
 }
 
 // MigrateWithProgress runs migrations with a progress callback for CLI usage.
