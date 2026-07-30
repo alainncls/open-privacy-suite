@@ -10,16 +10,11 @@ import (
 	migrationsaudit "privacy-proxy/internal/db/migrations_audit"
 )
 
-// The audit database's documented lifecycle is: start on the derived DSNs (which
-// connect as DATABASE_URL's owner), then point AUDIT_ADMIN_DATABASE_URL at the
-// dedicated privacy_proxy_admin role. That leaves schema_version_audit owned by
-// the first role while the second one migrates it. tern >= 2.4 retro-fits a
-// PRIMARY KEY onto a pre-existing version table, which is an ALTER TABLE and so
-// needs ownership — so that (previously working) deployment starts failing with
-// a bare "must be owner of table ... (SQLSTATE 42501)".
-//
-// These tests pin the diagnosis down to the exact combination tern fails on, and
-// assert the error tells the operator what to run.
+// tern >= 2.4 retro-fits a PRIMARY KEY onto a version table created by an older
+// tern, which needs ownership. The audit database's documented lifecycle leaves
+// schema_version_audit owned by DATABASE_URL's role while
+// AUDIT_ADMIN_DATABASE_URL migrates it, so that deployment starts failing with a
+// bare "must be owner of table ... (SQLSTATE 42501)".
 
 // asRole returns dsn rewritten to connect as the given role.
 func asRole(t *testing.T, dsn, role, password string) string {
@@ -35,44 +30,75 @@ func asRole(t *testing.T, dsn, role, password string) string {
 // dropVersionTablePrimaryKey reproduces a version table created by tern < 2.4.
 func dropVersionTablePrimaryKey(t *testing.T, database *db.DB) {
 	t.Helper()
-	_, err := database.Conn().ExecContext(context.Background(),
-		`ALTER TABLE schema_version_audit DROP CONSTRAINT IF EXISTS schema_version_audit_pkey`)
+	var name string
+	err := database.Conn().QueryRowContext(context.Background(),
+		`SELECT conname FROM pg_constraint
+		  WHERE conrelid = 'schema_version_audit'::regclass AND contype = 'p'`).Scan(&name)
 	if err != nil {
-		t.Fatalf("drop version table primary key: %v", err)
+		t.Fatalf("find version table primary key: %v", err)
+	}
+	if _, err := database.Conn().ExecContext(context.Background(),
+		`ALTER TABLE schema_version_audit DROP CONSTRAINT `+name); err != nil {
+		t.Fatalf("drop %s: %v", name, err)
 	}
 }
 
-// grantMigratorRole creates a login role with full privileges on the audit
-// schema but NO ownership — exactly what audit/001 grants privacy_proxy_admin.
-func grantMigratorRole(t *testing.T, database *db.DB, role, password string) {
+func versionTableHasPrimaryKey(t *testing.T, database *db.DB) bool {
 	t.Helper()
-	ctx := context.Background()
-	for _, stmt := range []string{
+	var ok bool
+	if err := database.Conn().QueryRowContext(context.Background(),
+		`SELECT EXISTS (SELECT 1 FROM pg_constraint
+		                 WHERE conrelid = 'schema_version_audit'::regclass AND contype = 'p')`,
+	).Scan(&ok); err != nil {
+		t.Fatalf("check primary key: %v", err)
+	}
+	return ok
+}
+
+// createLoginRole creates a login role holding every privilege audit/001 grants
+// privacy_proxy_admin — but no ownership. memberOfOwner additionally makes it a
+// member of the owning role, which is what lets Postgres treat it as the owner.
+func createLoginRole(t *testing.T, owner *db.DB, role, password string, memberOfOwner bool) {
+	t.Helper()
+	stmts := []string{
 		`DROP ROLE IF EXISTS ` + role,
 		`CREATE ROLE ` + role + ` LOGIN PASSWORD '` + password + `'`,
 		`GRANT USAGE, CREATE ON SCHEMA public TO ` + role,
 		`GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO ` + role,
 		`GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO ` + role,
-	} {
-		if _, err := database.Conn().ExecContext(ctx, stmt); err != nil {
+	}
+	if memberOfOwner {
+		var ownerRole string
+		if err := owner.Conn().QueryRowContext(context.Background(), `SELECT current_user`).Scan(&ownerRole); err != nil {
+			t.Fatalf("resolve owner role: %v", err)
+		}
+		stmts = append(stmts, `GRANT `+ownerRole+` TO `+role)
+	}
+	for _, stmt := range stmts {
+		if _, err := owner.Conn().ExecContext(context.Background(), stmt); err != nil {
 			t.Fatalf("%s: %v", stmt, err)
 		}
 	}
 }
 
-func TestMigrateAuditOnly_NonOwnerWithoutPrimaryKey_ExplainsTheFix(t *testing.T) {
+// setupAuditDB migrates a fresh audit database and returns the owner handle.
+func setupAuditDB(t *testing.T) (auditURL string, owner *db.DB) {
+	t.Helper()
 	if testing.Short() {
 		t.Skip("skipping database test in short mode")
 	}
 	auditURL, cleanup := db.SetupTestContainer(t)
-	defer cleanup()
+	t.Cleanup(cleanup)
 
-	owner := migrateAuditDB(t, auditURL)
-	defer owner.Close()
+	owner = migrateAuditDB(t, auditURL)
+	t.Cleanup(func() { owner.Close() })
+	return auditURL, owner
+}
 
-	// Rewind to the pre-tern-2.4 shape, then migrate as a non-owner.
+func TestMigrateAuditOnly_NonOwnerWithoutPrimaryKey_ExplainsTheFix(t *testing.T) {
+	auditURL, owner := setupAuditDB(t)
 	dropVersionTablePrimaryKey(t, owner)
-	grantMigratorRole(t, owner, "audit_migrator", "migratorpass")
+	createLoginRole(t, owner, "audit_migrator", "migratorpass", false)
 
 	migrator, err := db.NewWithoutMigrate(asRole(t, auditURL, "audit_migrator", "migratorpass"))
 	if err != nil {
@@ -97,26 +123,17 @@ func TestMigrateAuditOnly_NonOwnerWithoutPrimaryKey_ExplainsTheFix(t *testing.T)
 			t.Errorf("error should mention %q, got: %v", want, got)
 		}
 	}
-	// The point of the check is to replace the opaque driver error.
 	if strings.Contains(got, "SQLSTATE") {
 		t.Errorf("expected an actionable error rather than a raw SQLSTATE, got: %v", got)
 	}
 }
 
+// A primary key already in place means tern never issues the ALTER TABLE, so a
+// non-owner must keep migrating. This is what keeps the check from breaking
+// deployments that work today.
 func TestMigrateAuditOnly_NonOwnerWithPrimaryKey_StillMigrates(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping database test in short mode")
-	}
-	auditURL, cleanup := db.SetupTestContainer(t)
-	defer cleanup()
-
-	owner := migrateAuditDB(t, auditURL)
-	defer owner.Close()
-
-	// Primary key already in place: tern never issues the ALTER TABLE, so a
-	// non-owner must keep migrating exactly as it did before. This is what keeps
-	// the check from breaking deployments that are fine today.
-	grantMigratorRole(t, owner, "audit_migrator", "migratorpass")
+	auditURL, owner := setupAuditDB(t)
+	createLoginRole(t, owner, "audit_migrator", "migratorpass", false)
 
 	migrator, err := db.NewWithoutMigrate(asRole(t, auditURL, "audit_migrator", "migratorpass"))
 	if err != nil {
@@ -129,32 +146,35 @@ func TestMigrateAuditOnly_NonOwnerWithPrimaryKey_StillMigrates(t *testing.T) {
 	}
 }
 
-func TestMigrateAuditOnly_Owner_AddsThePrimaryKey(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping database test in short mode")
+// Membership in the owning role is enough for Postgres, so it must be enough
+// here too — this is why the check asks pg_has_role rather than comparing names.
+func TestMigrateAuditOnly_MemberOfOwner_Migrates(t *testing.T) {
+	auditURL, owner := setupAuditDB(t)
+	dropVersionTablePrimaryKey(t, owner)
+	createLoginRole(t, owner, "audit_member", "memberpass", true)
+
+	migrator, err := db.NewWithoutMigrate(asRole(t, auditURL, "audit_member", "memberpass"))
+	if err != nil {
+		t.Fatalf("open audit DB as a member of the owner: %v", err)
 	}
-	auditURL, cleanup := db.SetupTestContainer(t)
-	defer cleanup()
+	defer migrator.Close()
 
-	owner := migrateAuditDB(t, auditURL)
-	defer owner.Close()
+	if err := migrator.MigrateAuditOnly(context.Background(), migrationsaudit.FS); err != nil {
+		t.Fatalf("a member of the owning role must be able to migrate: %v", err)
+	}
+	if !versionTableHasPrimaryKey(t, owner) {
+		t.Error("tern should have added the version table's primary key")
+	}
+}
 
+func TestMigrateAuditOnly_Owner_AddsThePrimaryKey(t *testing.T) {
+	_, owner := setupAuditDB(t)
 	dropVersionTablePrimaryKey(t, owner)
 
-	// The owner can run the ALTER, so tern's retro-fit succeeds and the check
-	// must stay out of the way.
 	if err := owner.MigrateAuditOnly(context.Background(), migrationsaudit.FS); err != nil {
 		t.Fatalf("owner migration failed: %v", err)
 	}
-
-	var hasPrimaryKey bool
-	if err := owner.Conn().QueryRowContext(context.Background(),
-		`SELECT EXISTS (SELECT 1 FROM pg_constraint
-		                 WHERE conrelid = 'schema_version_audit'::regclass AND contype = 'p')`,
-	).Scan(&hasPrimaryKey); err != nil {
-		t.Fatalf("check primary key: %v", err)
-	}
-	if !hasPrimaryKey {
+	if !versionTableHasPrimaryKey(t, owner) {
 		t.Error("tern should have added the version table's primary key when run as owner")
 	}
 }
