@@ -330,14 +330,129 @@ func TestDryRun_FunctionLevelRules(t *testing.T) {
 			assert.Equal(t, tc.want, resp.Decision)
 			assert.Contains(t, resp.Reason, tc.wantReason)
 			assert.NotContains(t, resp.Reason, "function selector required")
-
-			// The enforcement path must reach the same verdict, so the two
-			// cannot drift apart again.
-			live, err := f.srv.rbacAccessCtrl.CheckAccess(ctx, dryRunAccessRequest(f.userDID, f.orgID, rpc))
-			require.NoError(t, err)
-			assert.Equal(t, live.Allowed, resp.Decision == "allow")
 		})
 	}
+}
+
+// TestDryRunAccessRequest_MatchesEnforcementDerivation pins the fields the
+// builder derives to the values JSONRPCProcessor derives for the same call,
+// computed here from the params the way the enforcement path does rather than
+// through the builder itself.
+func TestDryRunAccessRequest_MatchesEnforcementDerivation(t *testing.T) {
+	// Checksummed on the wire: grants are keyed lowercase, so a target that
+	// keeps its mixed case matches no contract and denies a call the live
+	// path allows.
+	t.Run("eth_call with a checksummed target", func(t *testing.T) {
+		params := []any{map[string]any{
+			"to":   "0xAbC0000000000000000000000000000000000001",
+			"data": "0x70a08231ff",
+		}, "latest"}
+		got, err := dryRunAccessRequest("did:x", "org", dryRunRPCBlock{Method: "eth_call", Params: params})
+		require.NoError(t, err)
+		assert.Equal(t, rbac.ResolveMethodAlias("eth_call"), got.AccessMethod)
+		assert.Equal(t, rbac.GetTargetAddress("eth_call", params), got.TargetAddress)
+		assert.Equal(t, "0xabc0000000000000000000000000000000000001", got.TargetAddress)
+		assert.Equal(t, rbac.GetFunctionSelector("eth_call", params), got.FunctionSelector)
+	})
+
+	t.Run("eth_sendRawTransaction", func(t *testing.T) {
+		to := common.HexToAddress("0x3333333333333333333333333333333333333333")
+		rawHex := drSignedRawTx(t, &to, []byte{0x70, 0xa0, 0x82, 0x31})
+		got, err := dryRunAccessRequest("did:x", "org", dryRunRPCBlock{
+			Method: "eth_sendRawTransaction", Params: []any{rawHex},
+		})
+		require.NoError(t, err)
+
+		// processRawTransaction(): decode, then check as eth_sendTransaction
+		// against the decoded target and calldata selector.
+		from, wantTo, data, value, _, err := decodeRawTransaction(rawHex)
+		require.NoError(t, err)
+		assert.Equal(t, "eth_sendTransaction", got.Method)
+		assert.Equal(t, wantTo, got.TargetAddress)
+		assert.Equal(t, extractSelector(data), got.FunctionSelector)
+		assert.Equal(t, buildTxParams(from, wantTo, data, value), got.Params)
+	})
+
+	t.Run("undecodable raw tx is an error, not an empty target", func(t *testing.T) {
+		_, err := dryRunAccessRequest("did:x", "org", dryRunRPCBlock{
+			Method: "eth_sendRawTransaction", Params: []any{"0xnotrealhex"},
+		})
+		require.Error(t, err)
+	})
+}
+
+// TestDryRun_RawTransactionChecksDecodedTarget covers the raw-tx contract gate
+// end to end. eth_sendRawTransaction hides its target in the signed blob, so a
+// check built from the undecoded params has no target address and skips
+// validateContractAccess entirely — every raw tx reached the tracer whatever
+// contract it pointed at, and its emitted logs came back in logs_emitted.
+func TestDryRun_RawTransactionChecksDecodedTarget(t *testing.T) {
+	f := setupDryRunFixture(t)
+	ctx := context.Background()
+
+	// A group allowed to send transactions, granted on one contract only.
+	groupID := uuid.New().String()
+	require.NoError(t, f.srv.db.CreateGroup(ctx, &rbac.Group{
+		ID: groupID, OrgID: f.orgID, Slug: "dr-sender", Name: "dr-sender", Depth: 0, Path: "dr-sender",
+	}))
+	require.NoError(t, f.srv.db.CreateGroupAccess(ctx, &rbac.GroupAccess{
+		ID: uuid.New().String(), GroupID: groupID, AllowedMethods: []string{"eth_sendTransaction"},
+	}))
+	senderDID := "did:dr:sender"
+	drCreateUserInGroup(t, f.srv.db, senderDID, groupID)
+
+	grantedAddr := "0x4444444444444444444444444444444444444444"
+	ungrantedAddr := "0x5555555555555555555555555555555555555555"
+	drCreateGrant(t, f.srv.db, drCreateContract(t, f.srv.db, f.orgID, grantedAddr, "DRGranted"), groupID)
+	drCreateContract(t, f.srv.db, f.orgID, ungrantedAddr, "DRUngranted")
+
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
+	}))
+	t.Cleanup(stub.Close)
+	f.srv.proxy = proxy.New(stub.URL)
+
+	tests := []struct {
+		name string
+		to   string
+		want string
+	}{
+		{"granted contract", grantedAddr, "allow"},
+		{"contract the group has no grant on", ungrantedAddr, "deny"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			to := common.HexToAddress(tc.to)
+			w := dryRunPost(t, f.srv, f.orgID, "jwt_admin", f.adminDID, map[string]any{
+				"user_did": senderDID,
+				"rpc": dryRunRPCBlock{
+					Method: "eth_sendRawTransaction",
+					Params: []any{drSignedRawTx(t, &to, []byte{0xab, 0xcd, 0xab, 0xcd})},
+				},
+			})
+			require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+			var resp dryRunResponse
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			assert.Equal(t, tc.want, resp.Decision, "reason: %s", resp.Reason)
+		})
+	}
+}
+
+// drSignedRawTx returns a signed legacy tx as 0x-prefixed hex, so tests reach
+// the production RLP decode + sender-recovery path.
+func drSignedRawTx(t *testing.T, to *common.Address, data []byte) string {
+	t.Helper()
+	key, err := crypto.GenerateKey()
+	require.NoError(t, err)
+	tx := types.NewTx(&types.LegacyTx{
+		Nonce: 0, GasPrice: big.NewInt(1_000_000_000), Gas: 100_000,
+		To: to, Value: big.NewInt(0), Data: data,
+	})
+	signed, err := types.SignTx(tx, types.LatestSignerForChainID(big.NewInt(1)), key)
+	require.NoError(t, err)
+	raw, err := signed.MarshalBinary()
+	require.NoError(t, err)
+	return "0x" + hex.EncodeToString(raw)
 }
 
 // TestDryRun_ParamsHashStable pins the params-hash invariant: same
