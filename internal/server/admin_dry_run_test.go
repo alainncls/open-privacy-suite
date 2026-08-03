@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -90,6 +91,7 @@ type dryRunFixture struct {
 	adminDID        string
 	userDID         string
 	otherOrgUserDID string
+	userGroupID     string
 	contractAddr    string
 }
 
@@ -130,6 +132,7 @@ func setupDryRunFixture(t *testing.T) *dryRunFixture {
 		adminDID:        adminDID,
 		userDID:         userDID,
 		otherOrgUserDID: otherOrgUserDID,
+		userGroupID:     userGroupID,
 		contractAddr:    contractAddr,
 	}
 }
@@ -255,6 +258,86 @@ func TestDryRun_DenyDecisionLoggedAndReturned(t *testing.T) {
 			f.adminDID, f.userDID).Scan(&count),
 	)
 	assert.Equal(t, 1, count, "expected exactly one deny row in impersonation_log")
+}
+
+const (
+	dryRunBalanceOfABI      = `[{"name":"balanceOf","type":"function","inputs":[{"name":"owner","type":"address"}],"outputs":[{"name":"","type":"uint256"}]}]`
+	dryRunBalanceOfSelector = "0x70a08231"
+)
+
+// TestDryRun_FunctionLevelRules pins dry-run's verdict to the enforcement
+// path's on a contract whose grant carries function-level rules. Pre-fix the
+// handler left FunctionSelector unset, so validateFunctionSelector denied
+// every such contract with "function selector required" — a call the user may
+// make and one blocked by a param rule were indistinguishable.
+func TestDryRun_FunctionLevelRules(t *testing.T) {
+	f := setupDryRunFixture(t)
+	ctx := context.Background()
+
+	// Grant the user balanceOf(self) on a contract of its own, and give the
+	// param rule what it needs: an ABI to decode the argument with, and a
+	// linked address to compare it against.
+	selfAddr := "0x00000000000000000000000000000000000000a1"
+	otherAddr := "0x00000000000000000000000000000000000000b2"
+	contractAddr := "0x2222222222222222222222222222222222222222"
+	contractID := drCreateContract(t, f.srv.db, f.orgID, contractAddr, "DRFunctionRules")
+	require.NoError(t, f.srv.db.UpdateContractABI(ctx, contractID, dryRunBalanceOfABI))
+	require.NoError(t, f.srv.db.SystemLinkEthAddress(ctx, f.userDID, selfAddr))
+	require.NoError(t, f.srv.db.CreateContractGrant(ctx, &rbac.ContractGrant{
+		ID: uuid.New().String(), ContractID: contractID, GroupID: f.userGroupID,
+		Functions: []rbac.FunctionRule{{
+			Selector:   dryRunBalanceOfSelector,
+			ParamRules: []rbac.ParamRule{{Index: 0, MustBe: "self"}},
+		}},
+	}))
+
+	// The allow case forwards upstream, so the fixture needs a node to answer.
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":"0x1"}`))
+	}))
+	t.Cleanup(stub.Close)
+	f.srv.proxy = proxy.New(stub.URL)
+
+	tests := []struct {
+		name       string
+		argAddr    string
+		want       string
+		wantReason string
+	}{
+		{"own balance", selfAddr, "allow", ""},
+		{"another address", otherAddr, "deny", "parameter constraint violation"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rpc := dryRunRPCBlock{
+				Method: "eth_call",
+				Params: []any{
+					map[string]any{
+						"to":   contractAddr,
+						"data": dryRunBalanceOfSelector + "000000000000000000000000" + strings.TrimPrefix(tc.argAddr, "0x"),
+					},
+					"latest",
+				},
+			}
+			w := dryRunPost(t, f.srv, f.orgID, "jwt_admin", f.adminDID, map[string]any{
+				"user_did": f.userDID,
+				"rpc":      rpc,
+			})
+			require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+
+			var resp dryRunResponse
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			assert.Equal(t, tc.want, resp.Decision)
+			assert.Contains(t, resp.Reason, tc.wantReason)
+			assert.NotContains(t, resp.Reason, "function selector required")
+
+			// The enforcement path must reach the same verdict, so the two
+			// cannot drift apart again.
+			live, err := f.srv.rbacAccessCtrl.CheckAccess(ctx, dryRunAccessRequest(f.userDID, f.orgID, rpc))
+			require.NoError(t, err)
+			assert.Equal(t, live.Allowed, resp.Decision == "allow")
+		})
+	}
 }
 
 // TestDryRun_ParamsHashStable pins the params-hash invariant: same

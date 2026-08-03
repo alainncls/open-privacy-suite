@@ -235,14 +235,7 @@ func (s *Server) handleDryRun(c *gin.Context) {
 	// contracts. With OrgID set, CheckAccess scopes resolution to
 	// admin's org; cross-org contracts evaluate as if Bob were a
 	// non-member there (the safe answer).
-	target := extractTargetAddressForDryRun(req.RPC.Method, req.RPC.Params)
-	accessResult, err := s.rbacAccessCtrl.CheckAccess(ctx, &rbac.AccessCheckRequest{
-		UserExternalID: req.UserDID,
-		OrgID:          orgID,
-		Method:         req.RPC.Method,
-		Params:         req.RPC.Params,
-		TargetAddress:  target,
-	})
+	accessResult, err := s.rbacAccessCtrl.CheckAccess(ctx, dryRunAccessRequest(req.UserDID, orgID, req.RPC))
 	if err != nil {
 		// H12: audit log fail-closed. If recordImpersonation errors,
 		// refuse to return the response — a compromised admin who can
@@ -704,6 +697,31 @@ func dryRunParamsHash(method string, params []any) string {
 	}
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:])
+}
+
+// dryRunAccessRequest builds the access check for an impersonated call,
+// deriving the same fields from (method, params) that
+// JSONRPCProcessor.Process derives for a real request. Without
+// FunctionSelector, CheckAccess denies every contract whose grant has
+// function-level rules with "function selector required", so a call the
+// user may make and one blocked by a param rule both came back as the
+// same uninformative deny.
+func dryRunAccessRequest(userDID, orgID string, rpc dryRunRPCBlock) *rbac.AccessCheckRequest {
+	accessMethod := rbac.ResolveMethodAlias(rpc.Method)
+	var requiredClaims []rbac.Claim
+	if claim := rbac.ClassifyOperation(accessMethod, rpc.Params); claim != "" {
+		requiredClaims = []rbac.Claim{claim}
+	}
+	return &rbac.AccessCheckRequest{
+		UserExternalID:   userDID,
+		OrgID:            orgID,
+		Method:           rpc.Method,
+		AccessMethod:     accessMethod,
+		Params:           rpc.Params,
+		TargetAddress:    extractTargetAddressForDryRun(accessMethod, rpc.Params),
+		FunctionSelector: rbac.GetFunctionSelector(accessMethod, rpc.Params),
+		RequiredClaims:   requiredClaims,
+	}
 }
 
 // extractTargetAddressForDryRun pulls the target address out of an RPC
