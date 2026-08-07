@@ -238,6 +238,11 @@ func (s *Server) handleDryRun(c *gin.Context) {
 	accessReq, err := dryRunAccessRequest(req.UserDID, orgID, req.RPC)
 	if err != nil {
 		slog.Warn("dry-run: could not build access check", "method", req.RPC.Method, "err", err)
+		if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", "decode_error", c.GetString("correlation_id")); logErr != nil {
+			slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid raw transaction"})
 		return
 	}

@@ -572,26 +572,80 @@ func TestDryRun_RawSendTransactionDecodes(t *testing.T) {
 	}
 }
 
-// TestDryRun_RawSendTransactionMalformedReturnsClearError confirms
-// the decode error path: a clearly invalid hex blob returns a
-// structured 4xx/5xx with a useful message, not a generic 500.
-func TestDryRun_RawSendTransactionMalformedReturnsClearError(t *testing.T) {
-	f := setupDryRunFixture(t)
-	body := map[string]any{
-		"user_did": f.userDID,
-		"rpc": map[string]any{
-			"method": "eth_sendRawTransaction",
-			"params": []any{"0xnotrealhex"},
-		},
-	}
-	w := dryRunPost(t, f.srv, f.orgID, "jwt_admin", f.adminDID, body)
-	// RBAC may deny first (no signature → no recovered sender → no
-	// linked address), or we may reach the trace path which then
-	// fails to decode. Either is acceptable — what we don't want is
-	// a generic 500 with no message.
-	if w.Code == http.StatusBadGateway {
-		assert.Contains(t, strings.ToLower(w.Body.String()), "decode")
-	}
+// TestDryRun_RawSendTransactionMalformedAudit confirms that malformed raw
+// transactions are recorded before the handler returns a client error, and
+// that an audit-write failure withholds that response.
+func TestDryRun_RawSendTransactionMalformedAudit(t *testing.T) {
+	const rawHex = "0xnotrealhex"
+
+	t.Run("records decode error before returning bad request", func(t *testing.T) {
+		f := setupDryRunFixture(t)
+		rpc := dryRunRPCBlock{
+			Method: "eth_sendRawTransaction",
+			Params: []any{rawHex},
+		}
+		w := dryRunPost(t, f.srv, f.orgID, "jwt_admin", f.adminDID, map[string]any{
+			"user_did": f.userDID,
+			"rpc":      rpc,
+		})
+
+		require.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
+		assert.Contains(t, w.Body.String(), "invalid raw transaction")
+
+		var method, paramsHash, decision, reason string
+		require.NoError(t, f.srv.db.Conn().QueryRowContext(context.Background(), `
+			SELECT method, params_hash, decision, reason
+			  FROM impersonation_log
+			 WHERE actor_did = $1 AND impersonated_did = $2 AND org_id = $3`,
+			f.adminDID, f.userDID, f.orgID,
+		).Scan(&method, &paramsHash, &decision, &reason))
+		assert.Equal(t, rpc.Method, method)
+		assert.Equal(t, dryRunParamsHash(rpc.Method, rpc.Params), paramsHash)
+		assert.Equal(t, "error", decision)
+		assert.Equal(t, "decode_error", reason)
+	})
+
+	t.Run("audit write failure is fail closed", func(t *testing.T) {
+		f := setupDryRunFixture(t)
+		ctx := context.Background()
+		conn := f.srv.db.Conn()
+
+		// NOT VALID avoids scanning existing audit rows but still enforces the
+		// constraint for this test's new insert.
+		_, err := conn.ExecContext(ctx, `
+			ALTER TABLE impersonation_log
+			ADD CONSTRAINT impersonation_log_reject_error_test
+			CHECK (decision <> 'error') NOT VALID`)
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_, dropErr := conn.ExecContext(context.Background(), `
+				ALTER TABLE impersonation_log
+				DROP CONSTRAINT IF EXISTS impersonation_log_reject_error_test`)
+			assert.NoError(t, dropErr)
+		})
+
+		rpc := dryRunRPCBlock{
+			Method: "eth_sendRawTransaction",
+			Params: []any{rawHex},
+		}
+		w := dryRunPost(t, f.srv, f.orgID, "jwt_admin", f.adminDID, map[string]any{
+			"user_did": f.userDID,
+			"rpc":      rpc,
+		})
+
+		require.Equal(t, http.StatusInternalServerError, w.Code, "body: %s", w.Body.String())
+		assert.JSONEq(t, `{"error":"internal error"}`, w.Body.String())
+
+		var count int
+		require.NoError(t, conn.QueryRowContext(ctx, `
+			SELECT COUNT(*)
+			  FROM impersonation_log
+			 WHERE actor_did = $1 AND impersonated_did = $2 AND org_id = $3
+			   AND params_hash = $4`,
+			f.adminDID, f.userDID, f.orgID, dryRunParamsHash(rpc.Method, rpc.Params),
+		).Scan(&count))
+		assert.Zero(t, count)
+	})
 }
 
 // ---- fixture helpers -------------------------------------------------
