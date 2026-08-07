@@ -135,6 +135,22 @@ At startup the proxy migrates the audit database (as the admin DSN), then reads 
 
 **Deployment dependency — the restricted role is what makes this work.** The append-only guarantee comes from the *database role* the runtime DSN connects as, not from the proxy. `AUDIT_DATABASE_URL` **must** connect as the restricted role (`privacy_proxy_app`, which the audit-database migration grants INSERT + SELECT on `access_logs`, no UPDATE/DELETE). If it connects as the owner instead (including the derived default), the proxy still works but the seal does **nothing** — the owner can update and delete rows. `AUDIT_ADMIN_DATABASE_URL` is the owner DSN and is used only for migrations and retention pruning.
 
+**`AUDIT_ADMIN_DATABASE_URL` must own the audit schema, not just hold grants on it.** It runs the migrations, and DDL needs ownership — `GRANT ALL PRIVILEGES` does not confer it. This bites when you follow the path above: the derived DSN's role created the audit tables, so it stays their owner after you switch to the dedicated roles. Transfer them at the same time. `REASSIGN OWNED` needs the privileges of both roles, so run it as a superuser, or grant the membership for the duration if `<derived_role>` may administer `privacy_proxy_admin` (as it can when it is a managed instance's master user):
+
+```sql
+-- in the audit database. One transaction: a failed transfer must not leave
+-- <derived_role> holding privacy_proxy_admin, which is the separation you came
+-- here to get.
+BEGIN;
+GRANT CREATE ON SCHEMA public TO privacy_proxy_admin;
+GRANT privacy_proxy_admin TO <derived_role>;        -- not needed as a superuser
+REASSIGN OWNED BY <derived_role> TO privacy_proxy_admin;
+REVOKE privacy_proxy_admin FROM <derived_role>;     -- not needed as a superuser
+COMMIT;
+```
+
+Existing grants survive the transfer, including the `privacy_proxy_app` append-only allowlist on `access_logs`. Do the transfer when you switch: the proxy refuses to start, naming the table and the statement to run, only when a migration is actually blocked by the missing ownership — it does not re-check ownership on every boot, so a deployment can start fine today and fail on the next migration that touches the schema.
+
 **Resilience.** Set `AUDIT_BUFFER_DIR` (see above) so a transient audit-database outage does not block request handling: entries are written to a durable local buffer and sealed into the audit database by a background worker when it is reachable again.
 
 ---

@@ -268,9 +268,9 @@ func (d *DB) migrateFS(ctx context.Context, fsys fs.FS, versionTable string) err
 	}
 	defer pgxConn.Close(ctx)
 
-	migrator, err := migrate.NewMigrator(ctx, pgxConn, versionTable)
+	migrator, err := newMigrator(ctx, pgxConn, versionTable)
 	if err != nil {
-		return fmt.Errorf("failed to create migrator: %w", err)
+		return err
 	}
 
 	if err := migrator.LoadMigrations(fsys); err != nil {
@@ -284,6 +284,66 @@ func (d *DB) migrateFS(ctx context.Context, fsys fs.FS, versionTable string) err
 	return nil
 }
 
+// newMigrator builds a tern migrator, refusing up front when the connected role
+// could not run the DDL tern is about to attempt.
+func newMigrator(ctx context.Context, conn *pgx.Conn, versionTable string) (*migrate.Migrator, error) {
+	if err := checkVersionTableOwnership(ctx, conn, versionTable); err != nil {
+		return nil, err
+	}
+	migrator, err := migrate.NewMigrator(ctx, conn, versionTable)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create migrator: %w", err)
+	}
+	return migrator, nil
+}
+
+// checkVersionTableOwnership turns tern's opaque "must be owner of table"
+// failure into an error carrying the fix.
+//
+// tern >= 2.4 retro-fits a PRIMARY KEY onto a version table created by an older
+// tern, which is an ALTER TABLE and so requires ownership. The audit database
+// reaches that state by following its documented lifecycle: the derived DSNs
+// create schema_version_audit as DATABASE_URL's owner, then
+// AUDIT_ADMIN_DATABASE_URL is pointed at privacy_proxy_admin, which audit/001
+// grants privileges to without making it the owner.
+//
+// pg_has_role(..., 'USAGE') mirrors the has_privs_of_role check Postgres itself
+// uses, so membership in the owning role counts. Identifiers come back through
+// regclass/quote_ident so the suggested SQL survives roles like "deploy-admin".
+// The check trips only on the combination tern itself fails on.
+func checkVersionTableOwnership(ctx context.Context, conn *pgx.Conn, versionTable string) error {
+	const q = `
+		SELECT c.oid::regclass::text,
+		       quote_ident(pg_get_userbyid(c.relowner)),
+		       quote_ident(current_user),
+		       pg_has_role(current_user, c.relowner, 'USAGE'),
+		       EXISTS (SELECT 1 FROM pg_constraint k WHERE k.conrelid = c.oid AND k.contype = 'p')
+		  FROM pg_class c
+		 WHERE c.oid = to_regclass($1)`
+
+	var table, owner, currentUser string
+	var canActAsOwner, hasPrimaryKey bool
+	err := conn.QueryRow(ctx, q, versionTable).Scan(&table, &owner, &currentUser, &canActAsOwner, &hasPrimaryKey)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil // fresh database: tern creates the table, primary key included
+	}
+	if err != nil {
+		return fmt.Errorf("failed to inspect migration version table %q: %w", versionTable, err)
+	}
+	if hasPrimaryKey || canActAsOwner {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"cannot migrate %[1]s: it is owned by %[2]s but this connection is %[3]s, and tern needs "+
+			"ALTER TABLE on it. As a superuser: ALTER TABLE %[1]s OWNER TO %[3]s; As %[2]s the transfer "+
+			"also needs membership in %[3]s, which must not outlive it, so run it as one transaction: "+
+			"BEGIN; GRANT %[3]s TO %[2]s; ALTER TABLE %[1]s OWNER TO %[3]s; REVOKE %[3]s FROM %[2]s; COMMIT; "+
+			"For an audit database whose AUDIT_ADMIN_DATABASE_URL moved to a dedicated role, use "+
+			"REASSIGN OWNED BY %[2]s TO %[3]s in place of the ALTER TABLE to move the whole schema.",
+		table, owner, currentUser)
+}
+
 // MigrateWithProgress runs migrations with a progress callback for CLI usage.
 // The callback receives: sequence number, migration name, direction ("up"/"down"), and SQL.
 func (d *DB) MigrateWithProgress(ctx context.Context, onStart func(sequence int32, name, direction, sql string)) error {
@@ -293,9 +353,9 @@ func (d *DB) MigrateWithProgress(ctx context.Context, onStart func(sequence int3
 	}
 	defer pgxConn.Close(ctx)
 
-	migrator, err := migrate.NewMigrator(ctx, pgxConn, "schema_version")
+	migrator, err := newMigrator(ctx, pgxConn, "schema_version")
 	if err != nil {
-		return fmt.Errorf("failed to create migrator: %w", err)
+		return err
 	}
 
 	if err := migrator.LoadMigrations(migrations.FS); err != nil {
@@ -321,9 +381,9 @@ func (d *DB) GetMigrationStatus(ctx context.Context) (currentVersion int32, pend
 	}
 	defer pgxConn.Close(ctx)
 
-	migrator, err := migrate.NewMigrator(ctx, pgxConn, "schema_version")
+	migrator, err := newMigrator(ctx, pgxConn, "schema_version")
 	if err != nil {
-		return 0, 0, fmt.Errorf("failed to create migrator: %w", err)
+		return 0, 0, err
 	}
 
 	if err := migrator.LoadMigrations(migrations.FS); err != nil {
