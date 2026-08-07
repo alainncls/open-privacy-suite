@@ -49,7 +49,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/.tmp/e2e-runs/gha-playwright-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Run the Playwright lane through the same isolated harness used on a
       # developer machine. `make e2e` is intentionally broader (Go, browser,
@@ -79,7 +79,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout Open Privacy Suite
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: privacy-proxy
 
@@ -88,7 +88,7 @@ jobs:
         run: git submodule update --init contracts/lib/forge-std
 
       - name: Checkout block explorer
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: gateway-fm/ops-explorer
           ref: ${{ inputs.explorer_ref || vars.BLOCK_EXPLORER_E2E_REF || 'main' }}
@@ -96,7 +96,7 @@ jobs:
           persist-credentials: false
 
       - name: Checkout chain indexer
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: gateway-fm/chain-indexer
           ref: ${{ vars.CHAIN_INDEXER_E2E_REF || 'main' }}
