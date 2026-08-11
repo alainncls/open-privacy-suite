@@ -20,6 +20,11 @@ import (
 //     no second request is issued to the Location target.
 //  2. do() re-asserts Scheme/Host/User from the trusted base URL on every call,
 //     so the outbound request can only ever address the configured upstream.
+//  3. doAs() rejects dot segments in the caller-supplied path, so a tool
+//     argument interpolated into a path (org ID, address, group ID) cannot
+//     climb out of the intended /api/v1/... namespace via "../" — url.JoinPath
+//     resolves dot segments, so without this the request would still land on
+//     the trusted host but at an unrelated endpoint.
 //
 // These tests exercise the real request path (get()/do(), the lowest-level
 // methods that drive the shared client) and assert the metadata sentinel is
@@ -106,18 +111,18 @@ func TestSSRF_HostRepinned(t *testing.T) {
 	// Each of these tries, in a different way, to escape the configured upstream
 	// and address the evil host instead.
 	maliciousPaths := []string{
-		"http://" + evilHost + "/latest/meta-data/", // absolute URL with attacker host
-		"https://" + evilHost + "/x",                // absolute https URL
-		"//" + evilHost + "/x",                      // scheme-relative authority
+		"http://" + evilHost + "/latest/meta-data/",  // absolute URL with attacker host
+		"https://" + evilHost + "/x",                 // absolute https URL
+		"//" + evilHost + "/x",                       // scheme-relative authority
 		"/api/v1/admin/orgs?next=http://" + evilHost, // attacker host smuggled in query
-		"user:pass@" + evilHost + "/x",              // embedded credentials + host
+		"user:pass@" + evilHost + "/x",               // embedded credentials + host
 	}
 
 	for _, p := range maliciousPaths {
 		t.Run(p, func(t *testing.T) {
 			gotHost = ""
 			// We don't care about the response here, only where the request went.
-			_, _ = client.get(p)
+			_, _ = client.get(apiPath(p))
 
 			if gotHost != wantHost {
 				t.Fatalf("SSRF: request for path %q reached host %q, want trusted upstream %q", p, gotHost, wantHost)
@@ -149,4 +154,142 @@ func TestSSRF_NewClientNeverFollowsRedirect(t *testing.T) {
 	if err := client.http.CheckRedirect(req, nil); err != http.ErrUseLastResponse {
 		t.Fatalf("CheckRedirect returned %v, want http.ErrUseLastResponse (do-not-follow)", err)
 	}
+}
+
+// TestSSRF_PathConfinedToNamespace is mitigation (3). Host re-pinning keeps the
+// request on the trusted upstream, but the path is still assembled from tool
+// arguments — e.g. fmt.Sprintf("/api/v1/admin/orgs/%s/compliance/config",
+// args.OrgID) in compliance.go. url.JoinPath resolves dot segments, so an OrgID
+// of "../.." would rewrite the request onto a different endpoint of the same
+// (privileged, admin-token-bearing) upstream. The request must be refused
+// before it is issued.
+func TestSSRF_PathConfinedToNamespace(t *testing.T) {
+	var reqPaths []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqPaths = append(reqPaths, r.URL.Path)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer upstream.Close()
+
+	client, err := newHTTPClient(upstream.URL, "test-admin-token")
+	if err != nil {
+		t.Fatalf("newHTTPClient: %v", err)
+	}
+
+	// Each entry is a path built from a hostile tool argument.
+	traversals := []string{
+		"/api/v1/admin/orgs/../../../internal/debug",  // climb out of the admin namespace
+		"/api/v1/admin/orgs/..%2f..%2fdebug/config",   // percent-encoded dot segments
+		"/api/v1/admin/orgs/./././secret",             // single-dot segments
+		"/api/v1/admin/orgs/../x/compliance?limit=10", // traversal alongside a query string
+	}
+
+	for _, p := range traversals {
+		t.Run(p, func(t *testing.T) {
+			if _, err := client.get(apiPath(p)); err == nil {
+				t.Fatalf("path %q was accepted; a dot segment must be refused before the request is issued", p)
+			}
+		})
+	}
+
+	if len(reqPaths) != 0 {
+		t.Fatalf("upstream received %d request(s) %v — traversal paths must never reach the network", len(reqPaths), reqPaths)
+	}
+
+	// A legitimate path with the same shape must still work: the guard rejects
+	// dot segments only, not ordinary IDs, queries or hyphenated segments.
+	for _, p := range []string{
+		"/api/v1/admin/orgs/org-123/compliance/config",
+		"/api/v1/admin/orgs/org-123/compliance/logs?limit=10&offset=0",
+	} {
+		if _, err := client.get(apiPath(p)); err != nil {
+			t.Fatalf("legitimate path %q was rejected: %v", p, err)
+		}
+	}
+	if len(reqPaths) != 2 {
+		t.Fatalf("upstream received %d legitimate request(s), want 2", len(reqPaths))
+	}
+}
+
+// TestSSRF_PathConfinement is the regression test for the review findings on #439.
+//
+// It asserts on r.URL.Path — the DECODED path, which is what a router matches on.
+// An earlier version of this test compared against the escaped form and therefore
+// passed while "victim/contracts" was still reaching a different endpoint: %2F is
+// decoded by net/http, and this upstream runs Gin with the default UseRawPath=false,
+// so the router sees a real separator. Escaping alone never confined that case.
+func TestSSRF_PathConfinement(t *testing.T) {
+	var gotPath, gotQuery string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// r.URL.Path, not RawPath: this is the value Gin routes on.
+		gotPath, gotQuery = r.URL.Path, r.URL.RawQuery
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer upstream.Close()
+
+	client, err := newHTTPClient(upstream.URL, "test-admin-token")
+	if err != nil {
+		t.Fatalf("newHTTPClient: %v", err)
+	}
+
+	// Confined: escaping keeps these inside their segment, and the escaping survives
+	// decoding because none of them decode to a separator.
+	confined := []string{
+		"victim?ignored",     // would truncate the path and demote the rest to a query
+		"victim?a=b",         // same, but parses as a real key=value pair
+		"victim#frag",        // fragment
+		"vic tim",            // space
+		"victim%2Fcontracts", // caller pre-encoded a slash: double-encoded, stays one segment
+	}
+	for _, orgID := range confined {
+		t.Run("confined/"+orgID, func(t *testing.T) {
+			gotPath, gotQuery = "", ""
+			if _, err := client.get(pathf("/api/v1/admin/orgs/%s/compliance/config", orgID)); err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			want := "/api/v1/admin/orgs/" + orgID + "/compliance/config"
+			if gotPath != want {
+				t.Fatalf("endpoint confinement broken:\n  router saw %q\n  want        %q", gotPath, want)
+			}
+			if gotQuery != "" {
+				t.Fatalf("hostile segment leaked into the query: %q", gotQuery)
+			}
+		})
+	}
+
+	// Rejected: a separator cannot be made safe by escaping, because the server
+	// decodes it back before routing. These must never reach the network at all.
+	rejected := []string{
+		"victim/contracts",                 // would match /orgs/:org_id/contracts instead
+		"victim?ignored/compliance/config", // the original review payload: "?" plus separators
+		"victim?a=b/rest",                  // key=value shape, still carries a separator
+		"victim\\contracts",                // backslash
+		"..",                               // dot segment
+		"../../debug",                      // traversal
+	}
+	for _, orgID := range rejected {
+		t.Run("rejected/"+orgID, func(t *testing.T) {
+			gotPath = ""
+			if _, err := client.get(pathf("/api/v1/admin/orgs/%s/compliance/config", orgID)); err == nil {
+				t.Fatalf("argument %q was accepted; the router would have seen %q", orgID, gotPath)
+			}
+			if gotPath != "" {
+				t.Fatalf("request reached the upstream despite rejection: %q", gotPath)
+			}
+		})
+	}
+
+	// A legitimate structured query must still arrive intact.
+	t.Run("legitimate query survives", func(t *testing.T) {
+		gotPath, gotQuery = "", ""
+		if _, err := client.get("/api/v1/admin/orgs", pageQuery(10, 20)); err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		if gotPath != "/api/v1/admin/orgs" {
+			t.Fatalf("path = %q", gotPath)
+		}
+		if gotQuery != "limit=10&offset=20" {
+			t.Fatalf("query = %q, want limit=10&offset=20", gotQuery)
+		}
+	})
 }
