@@ -130,18 +130,78 @@ Stop with `docker compose -f docker-compose.privacy.dev.yml down`. Add `-v` to w
 
 ## LAN Access
 
-To access from other devices on your network:
+Every port binds to `127.0.0.1` by default, so nothing is reachable from other
+devices until you opt in. Set `HOST_BIND` to expose the app and API:
 
 ```bash
-BASE_URL="http://YOUR_LAN_IP:8080" make run
+HOST_BIND=0.0.0.0 make run
 ```
 
-Replace `localhost` with your LAN IP in all URLs.
+Then open `http://YOUR_LAN_IP:5173` on the other device. Find your IP with
+`ipconfig getifaddr en0` (macOS) or `hostname -I` (Linux).
+
+That is the only variable you need. In particular:
+
+- **`BASE_URL` is not required.** The browser sends its own origin with the
+  login request, and the backend derives the callback URL from it.
+- **`CORS_ALLOWED_ORIGINS` is not required.** The frontend proxies `/api` to the
+  backend server-side, so browser requests are same-origin.
+- **`FRONTEND_URL` is not required.** It is only used by the OAuth server flow.
+
+Postgres and the local chain node stay on loopback regardless of `HOST_BIND` —
+only the app and API are exposed. `HOST_BIND=0.0.0.0` puts an unauthenticated
+dev stack on your network; use it on a network you trust.
+
+The RPC endpoint shown in the UI defaults to `localhost`. Pass
+`VITE_BACKEND_URL=http://YOUR_LAN_IP:8080` when starting the stack if you need
+it to display the LAN address for copy-paste.
+
+### Wallet login from a phone
+
+The Privado ID wallet calls back to the **API** (port 8080), not the app. Which
+address it is told to call depends on the address you opened the app at, so
+there are two distinct setups — do not mix them.
+
+**Same wifi, plain http.** Open the app at `http://YOUR_LAN_IP:5173`. The
+backend derives the callback from that origin and points the wallet at
+`http://YOUR_LAN_IP:8080`, which `HOST_BIND=0.0.0.0` has already exposed.
+Nothing else to set:
+
+```bash
+HOST_BIND=0.0.0.0 make run
+```
+
+**Wallet needs https — tunnel the API.** Here you must open the app at
+`http://localhost:5173` **on the machine running the stack**, and scan the QR
+code from the phone. `BASE_URL` is only consulted for a localhost origin; open
+the app at a LAN address and the backend derives the callback from that origin
+instead and ignores `BASE_URL`, so the wallet never sees the tunnel.
+
+```bash
+ngrok http 8080
+BASE_URL=https://YOUR-TUNNEL.ngrok-free.app make run
+```
+
+The phone only needs to reach the tunnel, so `HOST_BIND` is not required for
+this path. Tunnel the API — tunnelling 5173 instead breaks the callback.
+
+One tunnel is enough here because the wallet contacts exactly one address: the
+QR carries the whole authorization request inline, and the only URL inside it
+is the callback, which answers with JSON rather than a redirect.
+
+That is specific to wallet login. Two other sign-in flows redirect the browser
+to a second host and need that host reachable in its own right:
+
+- **Block explorer OAuth** — on completion the browser is sent to the client's
+  registered redirect URI.
+- **Microsoft Entra ID** — the browser leaves for Microsoft and returns to
+  `<origin>/auth/azure/callback`, so that origin must be reachable and
+  registered on the app registration.
 
 ## Custom Ports
 
 ```bash
-BACKEND_HOST_PORT=8081 POSTGRES_HOST_PORT=5433 BASE_URL="http://YOUR_IP:8081" make run
+HOST_PORT_PROXY=8081 HOST_PORT_UI=5174 HOST_PORT_DB=5433 HOST_PORT_RPC=8546 make run
 ```
 
 ## Next Steps
