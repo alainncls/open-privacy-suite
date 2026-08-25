@@ -7,6 +7,7 @@ import OnboardByDIDForm from './OnboardByDIDForm';
 import { ViewAsInExplorerButton } from './ViewAsInExplorerButton';
 import { useOrgContext } from './RBACManager';
 import { useAdmin } from '@/components/auth/RequireAdmin';
+import { useAuthOptional } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -60,6 +61,11 @@ export default function UserList() {
   const navigate = useNavigate();
   const { selectedOrg } = useOrgContext();
   const { isReadonlyAdmin } = useAdmin();
+  // RD-1238: the signed-in DID, used only to disable the Ban control on the
+  // caller's own row. Presentation only — the backend rejects a self-ban with
+  // 400 regardless. useAuthOptional (not useAuth) so the list still renders in
+  // component tests mounted without an AuthProvider.
+  const signedInDID = useAuthOptional()?.userDID ?? null;
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -202,7 +208,22 @@ export default function UserList() {
     }
   }, [userId, users]);
 
+  // RD-1238: would this click be a self-ban? True only when the row is the
+  // signed-in admin AND the toggle would ban (not unban) them. Compares
+  // lowercase — DID casing isn't semantic (same rule as
+  // ViewAsInExplorerButton's self-check). False when the identity is unknown,
+  // so an absent AuthProvider disables nothing; the backend 400 is the real
+  // guard. Self-unban stays available: it's the recovery direction.
+  const isSelfBanBlocked = (user: User) =>
+    !user.banned &&
+    signedInDID !== null &&
+    signedInDID.toLowerCase() === user.external_id.toLowerCase();
+
   const handleToggleBan = async (user: User) => {
+    // Rejected by the backend (400) because it revokes your own session
+    // immediately. Stop here so the click can't produce an error toast for
+    // something the UI already marks as unavailable.
+    if (isSelfBanBlocked(user)) return;
     try {
       await rbacApi.users.update(user.id, { banned: !user.banned });
       await loadUsers();
@@ -510,8 +531,30 @@ export default function UserList() {
                         variant={user.banned ? 'success' : 'destructive'}
                         size="sm"
                         onClick={() => handleToggleBan(user)}
-                        className="gap-1.5"
-                        title={user.banned ? 'Unban this user' : 'Ban this user'}
+                        // RD-1238: your own Ban control is inert — banning
+                        // yourself ends your session on the spot and only the
+                        // full admin token can undo it. aria-disabled rather
+                        // than `disabled`: the shared Button sets
+                        // disabled:pointer-events-none, and disabled controls
+                        // aren't focusable, so a real `disabled` would hide the
+                        // very tooltip that explains why. This keeps the button
+                        // hoverable and focusable while handleToggleBan returns
+                        // early, and announces the state to assistive tech.
+                        // Kept visible (not hidden) so the action column keeps
+                        // its alignment (cf. RD-996).
+                        aria-disabled={isSelfBanBlocked(user) || undefined}
+                        className={
+                          isSelfBanBlocked(user)
+                            ? 'gap-1.5 opacity-50 cursor-not-allowed'
+                            : 'gap-1.5'
+                        }
+                        title={
+                          isSelfBanBlocked(user)
+                            ? 'You cannot ban your own account — ask another admin'
+                            : user.banned
+                              ? 'Unban this user'
+                              : 'Ban this user'
+                        }
                       >
                         {user.banned ? (
                           <>

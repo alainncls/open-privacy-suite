@@ -352,14 +352,14 @@ func (s *Server) getRBACUser(c *gin.Context) {
 // updateRBACUser edits a user's KYC, ban, note, and/or metadata.
 //
 // @Summary      Update a user
-// @Description  Updates a user's kyc, banned, note, and/or metadata fields. All body fields are optional; only supplied fields change. Requires full (is_org_admin) scope over an org the user belongs to — read-only admins are rejected. Banning a user also revokes their refresh tokens for immediate session termination. Out-of-scope or unknown users return an opaque 403.
+// @Description  Updates a user's kyc, banned, note, and/or metadata fields. All body fields are optional; only supplied fields change. Requires full (is_org_admin) scope over an org the user belongs to — read-only admins are rejected. Banning a user also revokes their refresh tokens for immediate session termination; because of that, a tier-2 org-admin JWT cannot set banned=true on its own account (400) — that would be an immediate self-lockout recoverable only with the full admin token. Un-banning yourself is not blocked. Out-of-scope or unknown users return an opaque 403.
 // @Tags         Admin: RBAC
 // @Accept       json
 // @Produce      json
 // @Param        user_id path string true "User ID (UUID)"
 // @Param        request body rbacUserUpdateRequest true "fields to update (all optional)"
 // @Success      200 {object} rbac.User
-// @Failure      400 {object} APIError "invalid request body"
+// @Failure      400 {object} APIError "invalid request body, or an attempt to ban your own account"
 // @Failure      401 {object} APIError "missing or invalid admin token"
 // @Failure      403 {object} APIError "source address not on the private network, or user outside the caller's full-admin scope (opaque; also covers not-found)"
 // @Failure      500 {object} APIError
@@ -394,6 +394,26 @@ func (s *Server) updateRBACUser(c *gin.Context) {
 	if err := c.ShouldBindJSON(&input); err != nil {
 		respondBadRequestAndLog(c, "invalid request body",
 			"admin_rbac_user: invalid update body", "user_id", userID, "err", err)
+		return
+	}
+
+	// RD-1238: refuse to let a caller ban themselves. Banning revokes the
+	// target's refresh tokens and adminAuthMiddleware rejects a banned user on
+	// every later request, so self-banning is an instant self-lockout that only
+	// the super-admin token can undo. Self-UNBAN is deliberately still allowed:
+	// a banned admin cannot reach this endpoint anyway, so gating it would only
+	// obstruct recovery. Checked after the body is bound (the decision needs
+	// input.Banned) and before any field is applied, so nothing is persisted.
+	//
+	// Compares user.ID, NOT the raw :user_id path value. Postgres's uuid type
+	// accepts non-canonical spellings (upper case, no hyphens, braces), so a
+	// raw-string comparison would miss while GetUser and the scope check both
+	// still resolve the caller's own row — walking the self-ban straight
+	// through the guard. user.ID comes back canonical from the database, and so
+	// does the admin_user_id the auth middleware stores, so both sides match.
+	if input.Banned != nil && *input.Banned && isSelfBanAttempt(c, user.ID) {
+		slog.Warn("admin_rbac_user: self-ban rejected", "user_id", user.ID)
+		c.JSON(http.StatusBadRequest, gin.H{"error": errCannotSelfBan})
 		return
 	}
 

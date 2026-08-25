@@ -31,6 +31,11 @@ import {
   Clock,
 } from 'lucide-react';
 import { useAdmin } from '@/components/auth/RequireAdmin';
+import { useAuthOptional } from '@/contexts/AuthContext';
+
+// Ties the self-ban explanation to the Banned checkbox via aria-describedby
+// (RD-1238). Only one UserDetail renders at a time, so a constant id is safe.
+const SELF_BAN_HELP_ID = 'user-detail-self-ban-help';
 
 interface UserDetailProps {
   user: User;
@@ -47,6 +52,14 @@ interface LinkedAddress {
 export default function UserDetail({ user, onUpdate }: UserDetailProps) {
   const { organizations } = useOrgContext();
   const { isReadonlyAdmin } = useAdmin();
+  // RD-1238: banning yourself is rejected by the backend (400) — it would end
+  // your own session on the spot. Disable the Banned toggle on your own record
+  // so the form can't be armed into a save that must fail. Compares lowercase
+  // (DID casing isn't semantic) and stays false when the identity is unknown,
+  // so an absent AuthProvider disables nothing. Presentation only.
+  const signedInDID = useAuthOptional()?.userDID ?? null;
+  const isOwnRecord =
+    signedInDID !== null && signedInDID.toLowerCase() === user.external_id.toLowerCase();
   const [memberships, setMemberships] = useState<MembershipWithDetails[]>([]);
   const [effectivePermsByOrg, setEffectivePermsByOrg] = useState<Record<string, EffectivePermissions>>({});
   const [loadingPerms, setLoadingPerms] = useState(false);
@@ -104,6 +117,9 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
   // Edit form state
   const [kyc, setKyc] = useState(user.kyc);
   const [banned, setBanned] = useState(user.banned);
+  // Arming a ban on yourself is the blocked direction; an unban must stay
+  // possible so a mistake is recoverable from this same screen.
+  const selfBanBlocked = isOwnRecord && !banned;
   const [note, setNote] = useState(user.note || '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -290,25 +306,52 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
             </span>
           </label>
 
-          <label className="flex items-center gap-3 cursor-pointer group">
-            <div className="relative">
-              <input
-                type="checkbox"
-                checked={banned}
-                onChange={e => setBanned(e.target.checked)}
-                disabled={isReadonlyAdmin}
-                className="peer sr-only"
-              />
-              <div className="w-5 h-5 rounded border border-neutral-300 bg-neutral-100 peer-checked:bg-red-500 peer-checked:border-red-500 transition-all flex items-center justify-center">
-                {banned && (
-                  <X className="w-3 h-3 text-white" />
-                )}
+          <div className="space-y-1">
+            <label
+              className={
+                selfBanBlocked
+                  ? 'flex items-center gap-3 cursor-not-allowed group opacity-50'
+                  : 'flex items-center gap-3 cursor-pointer group'
+              }
+            >
+              <div className="relative">
+                <input
+                  type="checkbox"
+                  checked={banned}
+                  // RD-1238: never let an admin arm a ban on their own record.
+                  // aria-disabled rather than `disabled` (mirroring the Ban
+                  // button in UserList): a natively disabled control leaves the
+                  // tab order, which would put the explanation out of reach of
+                  // keyboard and screen-reader users. The handler below is the
+                  // thing that makes it inert; the server gate is the real
+                  // boundary either way.
+                  onChange={e => {
+                    if (selfBanBlocked) return;
+                    setBanned(e.target.checked);
+                  }}
+                  disabled={isReadonlyAdmin}
+                  aria-disabled={selfBanBlocked || undefined}
+                  aria-describedby={selfBanBlocked ? SELF_BAN_HELP_ID : undefined}
+                  className="peer sr-only"
+                />
+                <div className="w-5 h-5 rounded border border-neutral-300 bg-neutral-100 peer-checked:bg-red-500 peer-checked:border-red-500 transition-all flex items-center justify-center">
+                  {banned && (
+                    <X className="w-3 h-3 text-white" />
+                  )}
+                </div>
               </div>
-            </div>
-            <span className="text-sm text-neutral-700 group-hover:text-neutral-900 transition-colors">
-              Banned
-            </span>
-          </label>
+              <span className="text-sm text-neutral-700 group-hover:text-neutral-900 transition-colors">
+                Banned
+              </span>
+            </label>
+            {selfBanBlocked && (
+              // Visible, not a title tooltip: everyone gets the reason, and it
+              // doubles as the checkbox's accessible description.
+              <p id={SELF_BAN_HELP_ID} className="text-xs text-neutral-500">
+                You cannot ban your own account — ask another admin
+              </p>
+            )}
+          </div>
         </div>
 
         <div className="space-y-2">
