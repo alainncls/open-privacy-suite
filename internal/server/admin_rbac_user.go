@@ -708,7 +708,7 @@ func parseMembershipExpiry(c *gin.Context, raw *string) (*time.Time, bool) {
 // createUserMembership adds an existing user to a group.
 //
 // @Summary      Add a user to a group
-// @Description  Adds an existing user to a group. Body: group_id (required) and expires_at (optional RFC3339, must be in the future — a time-boxed access window; omit for permanent). Requires full (is_org_admin) scope over the target group's org; the check runs before the body is read so the response is not a user-enumeration oracle. Adding a member to an is_org_admin group is super-admin-only; adding to a regular group is rejected for the operator token. To onboard a not-yet-provisioned DID, use the by-did endpoint instead.
+// @Description  Adds an existing user to a group. Body: group_id (required) and expires_at (optional RFC3339, must be in the future — a time-boxed access window; omit for permanent). Requires full (is_org_admin) scope over the target group's org; the check runs before the body is read so the response is not a user-enumeration oracle. Adding a member to an is_org_admin group is rejected for a tier-2 org-admin JWT (an admin-tier token — full admin or operator — is required); adding to a regular group is rejected for the operator token (tenant management is the org admin's job). To onboard a not-yet-provisioned DID, use the by-did endpoint instead.
 // @Tags         Admin: RBAC
 // @Accept       json
 // @Produce      json
@@ -789,7 +789,8 @@ func (s *Server) createUserMembership(c *gin.Context) {
 
 	// is_org_admin escalation gate (RD-1099): adding a member to an org-admin
 	// group mints a new org admin — a peer who could ban/demote the granter —
-	// so it is super-admin-only, mirroring the group-CRUD gates. After the
+	// so a tier-2 JWT is refused and an admin-tier token (full admin or
+	// operator) is required, mirroring the group-CRUD gates. After the
 	// foreign-org check so cross-tenant probes stay opaque.
 	if denyJWTAdminTouchOrgAdminGroup(c, group) {
 		return
@@ -995,7 +996,7 @@ func isRelaxedDIDSyntax(did string) bool {
 // MOVE — symmetric with the existing remove path.
 //
 // @Summary      Onboard a DID into a group
-// @Description  Onboards a user identified by DID directly into a group in the path org, auto-provisioning the user if the DID is not yet known. Body: did (required, a syntactically valid W3C DID; iden3/Polygon-ID DIDs are checksum-verified), group_id (required), expires_at (optional RFC3339, future). Requires full (is_org_admin) scope over the path org; the target group must belong to that org (opaque 403 otherwise). Onboarding into an is_org_admin group is super-admin-only; a regular group is rejected for the operator token. Ban state is never revealed via this endpoint. ADD semantics — a new user is not also placed in the default group.
+// @Description  Onboards a user identified by DID directly into a group in the path org, auto-provisioning the user if the DID is not yet known. Body: did (required, a syntactically valid W3C DID; iden3/Polygon-ID DIDs are checksum-verified), group_id (required), expires_at (optional RFC3339, future). Requires full (is_org_admin) scope over the path org; the target group must belong to that org (opaque 403 otherwise). Onboarding into an is_org_admin group is rejected for a tier-2 org-admin JWT (an admin-tier token — full admin or operator — is required); onboarding into a regular group is rejected for the operator token (tenant management is the org admin's job). Ban state is never revealed via this endpoint. ADD semantics — a new user is not also placed in the default group.
 // @Tags         Admin: RBAC
 // @Accept       json
 // @Produce      json
@@ -1174,7 +1175,7 @@ func (s *Server) createMembershipByDID(c *gin.Context) {
 // (removing the last org admin is possible on both; see RD-1125 for governance).
 //
 // @Summary      Remove a DID from a group
-// @Description  Removes a user identified by DID from a group in the path org (the symmetric counterpart of onboard-by-did). Body: did (required), group_id (required). Requires full (is_org_admin) scope over the path org; the target group must belong to that org (opaque 403 otherwise). Removing from an is_org_admin group is super-admin-only; a regular group is rejected for the operator token. A DID that is unknown, or has no membership in the target group, returns the SAME opaque 403 as a foreign-org group — no existence oracle. No tenant read is performed.
+// @Description  Removes a user identified by DID from a group in the path org (the symmetric counterpart of onboard-by-did). Body: did (required), group_id (required). Requires full (is_org_admin) scope over the path org; the target group must belong to that org (opaque 403 otherwise). Removing from an is_org_admin group is rejected for a tier-2 org-admin JWT (an admin-tier token — full admin or operator — is required); removing from a regular group is rejected for the operator token (tenant management is the org admin's job). A DID that is unknown, or has no membership in the target group, returns the SAME opaque 403 as a foreign-org group — no existence oracle. No tenant read is performed.
 // @Tags         Admin: RBAC
 // @Accept       json
 // @Produce      json
@@ -1232,7 +1233,8 @@ func (s *Server) deleteMembershipByDID(c *gin.Context) {
 	}
 
 	// Escalation gates, onboard order: tier-2 JWT cannot touch org-admin groups
-	// (super-admin only); the operator is confined to admin-tier groups.
+	// (an admin-tier token — full admin or operator — is required); the operator
+	// is in turn confined to admin-tier groups.
 	if denyJWTAdminTouchOrgAdminGroup(c, group) {
 		return
 	}
@@ -1299,7 +1301,7 @@ func (s *Server) deleteMembershipByDID(c *gin.Context) {
 // deleteUserMembership removes a user from a group.
 //
 // @Summary      Remove a membership
-// @Description  Removes a user's membership from a group. Requires full (is_org_admin) scope over the group's org; an unknown or out-of-scope membership returns an opaque 403. Removing a member from an is_org_admin group (a demotion) is super-admin-only; removing from a regular group is rejected for the operator token.
+// @Description  Removes a user's membership from a group. Requires full (is_org_admin) scope over the group's org; an unknown or out-of-scope membership returns an opaque 403. Removing a member from an is_org_admin group (a demotion) is rejected for a tier-2 org-admin JWT (an admin-tier token — full admin or operator — is required); removing from a regular group is rejected for the operator token (tenant management is the org admin's job).
 // @Tags         Admin: RBAC
 // @Produce      json
 // @Param        user_id path string true "User ID (UUID)"
@@ -1356,8 +1358,9 @@ func (s *Server) deleteUserMembership(c *gin.Context) {
 
 	// is_org_admin escalation gate (RD-1099): removing a member from an
 	// org-admin group demotes an org admin — the "ban or demote the granter"
-	// power the gate exists to prevent — so it is super-admin-only, symmetric
-	// with the add path. After the foreign-org check so probes stay opaque.
+	// power the gate exists to prevent — so a tier-2 JWT is refused and an
+	// admin-tier token (full admin or operator) is required, symmetric with the
+	// add path. After the foreign-org check so probes stay opaque.
 	if denyJWTAdminTouchOrgAdminGroup(c, group) {
 		return
 	}
