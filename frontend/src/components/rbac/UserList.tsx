@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { rbacApi } from '@/api/rbac';
 import type { User, GroupWithAccess, UserRoleFilter } from '@/types/rbac';
@@ -62,11 +62,15 @@ export default function UserList() {
   const { isReadonlyAdmin } = useAdmin();
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [showUpdateError, setShowUpdateError] = useState(false);
   const [onboardOpen, setOnboardOpen] = useState(false);
+  // DID to seed the onboard dialog with. Set when the dialog is opened from the
+  // empty-search hint so the admin doesn't have to paste the DID a second time.
+  const [onboardPrefillDid, setOnboardPrefillDid] = useState('');
 
   // Search state
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -78,6 +82,15 @@ export default function UserList() {
 
   // Group filter options — populated when an org is selected.
   const [groupOptions, setGroupOptions] = useState<GroupWithAccess[]>([]);
+  const [groupsLoadFailed, setGroupsLoadFailed] = useState(false);
+
+  // Monotonic id of the newest users request. Searches are debounced but not
+  // serialised, so two can be in flight at once and settle out of order. The
+  // empty-result branch below is read together with the CURRENT query, so a
+  // stale empty page would claim the currently-searched DID was never
+  // onboarded and prefill the onboard dialog with it — inviting a duplicate
+  // membership. Every state write in loadUsers is gated on still being newest.
+  const usersRequestIdRef = useRef(0);
 
   // Debounce search input
   useEffect(() => {
@@ -91,6 +104,7 @@ export default function UserList() {
   // are org-scoped, so a previous selection is meaningless under a new org.
   useEffect(() => {
     setSelectedGroupIds([]);
+    setGroupsLoadFailed(false);
     if (!selectedOrg) {
       setGroupOptions([]);
       return;
@@ -102,7 +116,9 @@ export default function UserList() {
         if (!cancelled) setGroupOptions(res.data.data || []);
       })
       .catch(() => {
-        if (!cancelled) setGroupOptions([]);
+        if (cancelled) return;
+        setGroupOptions([]);
+        setGroupsLoadFailed(true);
       });
     return () => {
       cancelled = true;
@@ -111,6 +127,8 @@ export default function UserList() {
 
   const loadUsers = useCallback(async (newOffset?: number) => {
     const currentOffset = newOffset ?? offset;
+    const requestId = ++usersRequestIdRef.current;
+    const isNewest = () => usersRequestIdRef.current === requestId;
 
     try {
       setLoading(true);
@@ -138,17 +156,27 @@ export default function UserList() {
         params.role = roleFilter;
       }
       const response = await rbacApi.users.list(params);
+      // A superseded response must not touch state: it would overwrite the
+      // newer query's rows and be re-interpreted against that newer query.
+      if (!isNewest()) return;
       const page = response.data;
       setUsers(page.data || []);
       setTotal(page.total);
+      setLoadFailed(false);
       if (newOffset !== undefined) {
         setOffset(newOffset);
       }
     } catch (error) {
       console.error('Failed to load users:', error);
+      if (!isNewest()) return;
       setUsers([]);
+      // A failed request must not render as "no such user" — that would invite
+      // onboarding someone who may already exist.
+      setLoadFailed(true);
     } finally {
-      setLoading(false);
+      // Not just cosmetic: clearing this for a superseded request presents the
+      // in-flight view as settled, flashing the stale page's empty state.
+      if (isNewest()) setLoading(false);
     }
   }, [selectedOrg, debouncedSearch, selectedGroupIds, roleFilter, offset]);
 
@@ -206,6 +234,24 @@ export default function UserList() {
     return `${id.slice(0, 10)}...${id.slice(-8)}`;
   };
 
+  // Onboarding writes membership, so read-only admins (RD-866) don't get the
+  // affordance, and the target org has to be known.
+  const canOnboard = !!selectedOrg && !isReadonlyAdmin;
+
+  const openOnboard = (prefillDid = '') => {
+    setOnboardPrefillDid(prefillDid);
+    setOnboardOpen(true);
+  };
+
+  // The search box also accepts wallet addresses, which don't belong in a DID
+  // field — only carry the query over when it is plausibly a DID.
+  const searchedDid = debouncedSearch.trim();
+  const onboardPrefillFromSearch = searchedDid.startsWith('did:') ? searchedDid : '';
+
+  // With a role/group filter also applied, "never onboarded" is not the only
+  // explanation for an empty result — don't let the hint assert it is.
+  const filtersNarrowing = roleFilter !== 'any' || selectedGroupIds.length > 0;
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
@@ -215,10 +261,10 @@ export default function UserList() {
             Manage user accounts, KYC status, and group memberships
           </p>
         </div>
-        {selectedOrg && !isReadonlyAdmin && (
+        {canOnboard && (
           <Button
             size="sm"
-            onClick={() => setOnboardOpen(true)}
+            onClick={() => openOnboard()}
             className="gap-2"
             data-testid="onboard-by-did-button"
             title="Onboard a user by their DID into a group in this organization"
@@ -313,10 +359,60 @@ export default function UserList() {
           <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-neutral-100 flex items-center justify-center">
             <Users className="w-8 h-8 text-neutral-400" />
           </div>
-          <p className="text-neutral-500 mb-2">No users found</p>
-          <p className="text-neutral-400 text-sm">
-            Users are created automatically when they authenticate
-          </p>
+          {loadFailed ? (
+            <div data-testid="users-load-error">
+              <p className="text-neutral-500 mb-2">Couldn't load users</p>
+              <p className="text-neutral-400 text-sm max-w-md mx-auto">
+                The request failed, so this list is incomplete. Retry before
+                concluding that a user is missing.
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => loadUsers()}
+                className="gap-2 mt-4"
+                data-testid="users-retry-button"
+              >
+                Retry
+              </Button>
+            </div>
+          ) : debouncedSearch ? (
+            // RD-1239: this list only returns users who already belong to an org
+            // the caller administers, so a not-yet-onboarded DID can never match.
+            // Saying so turns a dead end ("is search broken?") into the next step.
+            <div data-testid="users-empty-search">
+              <p className="text-neutral-500 mb-2">No users match this search</p>
+              <p className="text-neutral-400 text-sm max-w-md mx-auto">
+                Search covers users who already belong to an organization you
+                administer. Someone who has never been onboarded won't appear here.
+              </p>
+              {filtersNarrowing && (
+                <p className="text-neutral-400 text-sm max-w-md mx-auto mt-1">
+                  The active role or group filters may also be hiding matches.
+                </p>
+              )}
+              {canOnboard && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => openOnboard(onboardPrefillFromSearch)}
+                  className="gap-2 mt-4"
+                  data-testid="onboard-by-did-hint-button"
+                  title="Onboard a user by their DID into a group in this organization"
+                >
+                  <UserPlus className="w-4 h-4" />
+                  Onboard by DID
+                </Button>
+              )}
+            </div>
+          ) : (
+            <>
+              <p className="text-neutral-500 mb-2">No users found</p>
+              <p className="text-neutral-400 text-sm">
+                Users are created automatically when they authenticate
+              </p>
+            </>
+          )}
         </div>
       ) : (
         <Table>
@@ -497,8 +593,18 @@ export default function UserList() {
           </DialogHeader>
           {selectedOrg && (
             <OnboardByDIDForm
+              // initialDid is read at mount. The host dialog normally unmounts on
+              // close, but during its exit animation it briefly does not — keying
+              // on the prefill makes a reopen remount deterministically, so a DID
+              // carried over from the hint can never linger into the next open.
+              key={onboardPrefillDid}
               orgId={selectedOrg.id}
-              groups={groupOptions.map(g => g.group)}
+              // On a failed group load, hand the form no list rather than an
+              // empty one: an empty list reads as "this org has no groups", so
+              // the form would advise creating one after a network error. Omitting
+              // the prop makes it fetch and report the failure itself.
+              groups={groupsLoadFailed ? undefined : groupOptions.map(g => g.group)}
+              initialDid={onboardPrefillDid}
               onClose={() => setOnboardOpen(false)}
               onSave={() => {
                 setOnboardOpen(false);
