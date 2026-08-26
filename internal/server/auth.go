@@ -429,6 +429,7 @@ func (s *Server) handleAuthCallback(c *gin.Context) {
 	const maxBodySize = 1 << 20 // 1MB
 	body, err := io.ReadAll(io.LimitReader(c.Request.Body, maxBodySize))
 	if err != nil {
+		s.failAuthSession(sessionID, AuthFailInvalidRequest)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read request body"})
 		return
 	}
@@ -442,6 +443,7 @@ func (s *Server) handleAuthCallback(c *gin.Context) {
 		} else if token, ok := tokenPayload["jwz_token"].(string); ok {
 			jwzToken = token
 		} else {
+			s.failAuthSession(sessionID, AuthFailInvalidRequest)
 			c.JSON(http.StatusBadRequest, gin.H{"error": "token not found in request body"})
 			return
 		}
@@ -451,6 +453,7 @@ func (s *Server) handleAuthCallback(c *gin.Context) {
 	}
 
 	if jwzToken == "" {
+		s.failAuthSession(sessionID, AuthFailInvalidRequest)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "jwz_token required"})
 		return
 	}
@@ -516,6 +519,30 @@ type HumanityVerificationError struct {
 	VerifyURL string `json:"verify_url"`
 }
 
+// failAuthSession records a rejected auth attempt on the session so the polling
+// browser is told what happened (RD-1242). The wallet already has the error in
+// its own response; this is the only channel the browser has.
+//
+// sessionID is empty on the paths that never resolved a session (dev manual
+// verify with a bad body, a callback with no session parameter) - nothing to
+// record there, and the caller in those cases is the browser itself.
+func (s *Server) failAuthSession(sessionID, reason string) {
+	if sessionID == "" || s.sessionStore == nil {
+		return
+	}
+	if err := s.sessionStore.FailSession(sessionID, reason); err != nil {
+		// Expected when the session already expired; the wallet still got its
+		// error response, so this is not worth failing the request over.
+		slog.Debug("auth: could not record session failure",
+			"session_id", sessionID, "reason", reason, "err", err)
+		return
+	}
+	// The precise reason, for operators. The polled status endpoint collapses
+	// oracle-sensitive codes, so this log and the super-admin session list are
+	// the only places the exact cause is available.
+	slog.Info("auth: session marked failed", "session_id", sessionID, "reason", reason)
+}
+
 // verifyAndIssueTokens is a helper that verifies JWZ proof and issues JWT tokens
 // Returns the response or sends error and returns nil
 func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authRequest *protocol.AuthorizationRequestMessage, sessionID string) (*AuthResponse, error) {
@@ -527,6 +554,10 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 	isMockLogin := false
 	userDID, err = s.tryMockLogin(c, jwzToken)
 	if err != nil {
+		// Malformed mock token (dev builds only). tryMockLogin has already
+		// written the response; record it so a browser polling this session is
+		// not left waiting either.
+		s.failAuthSession(sessionID, AuthFailInvalidRequest)
 		return nil, err
 	}
 	if userDID != "" {
@@ -538,9 +569,13 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 		// Use VerifyJWZWithProofData to get both the DID and any ZK credential data
 		verificationResult, verifyErr := s.privadoVerifier.VerifyJWZWithProofData(c.Request.Context(), jwzToken, authRequest, s.config.VerifierID)
 		if verifyErr != nil {
-			// Shared with the OAuth login path so the two cannot drift on what
-			// they disclose — see respondVerificationError (RD-1241).
-			s.recordAuthAttempt("privado", string(s.respondVerificationError(c, "auth", verifyErr)))
+			// RD-1241 owns the wire response so the auth and OAuth paths cannot
+			// drift on what they disclose; RD-1242 records the same outcome on
+			// the session, so a browser polling it stops instead of waiting out
+			// the poll budget and then reporting a timeout that never happened.
+			class := s.respondVerificationError(c, "auth", verifyErr)
+			s.recordAuthAttempt("privado", string(class))
+			s.failAuthSession(sessionID, authFailReasonForVerification(class))
 			return nil, verifyErr
 		}
 		userDID = verificationResult.UserDID
@@ -584,11 +619,16 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 		user, err = s.rbacAccessCtrl.EnsureUserExists(c.Request.Context(), userDID, kyc, false)
 		if err != nil {
 			slog.Error("auth: failed to ensure RBAC user exists", "user", userDID, "error", err)
+			s.failAuthSession(sessionID, AuthFailInternalError)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to persist user record"})
 			return nil, fmt.Errorf("ensure user exists: %w", err)
 		}
 		if user != nil {
 			if user.Banned {
+				// Recorded precisely for operators; collapsed on the wire so a
+				// third party holding only the on-screen QR cannot learn an
+				// account's ban state (see auth_failure_reasons.go).
+				s.failAuthSession(sessionID, AuthFailAccountBanned)
 				c.JSON(http.StatusForbidden, gin.H{"error": "account is banned"})
 				return nil, fmt.Errorf("account is banned")
 			}
@@ -612,6 +652,7 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 	// Issue access token (short-lived)
 	accessToken, err := s.jwtService.IssueAccessToken(userDID, kyc)
 	if err != nil {
+		s.failAuthSession(sessionID, AuthFailInternalError)
 		respondInternalErrorAndLog(c, "failed to issue access token",
 			"auth: IssueAccessToken failed", "user_did", userDID, "err", err)
 		return nil, err
@@ -620,6 +661,7 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 	// Issue refresh token (long-lived)
 	refreshToken, err := s.jwtService.IssueRefreshToken(userDID)
 	if err != nil {
+		s.failAuthSession(sessionID, AuthFailInternalError)
 		respondInternalErrorAndLog(c, "failed to issue refresh token",
 			"auth: IssueRefreshToken failed", "user_did", userDID, "err", err)
 		return nil, err
@@ -629,6 +671,7 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 	tokenHash := auth.HashToken(refreshToken)
 	expiresAt := time.Now().Add(RefreshTokenTTL)
 	if err := s.db.SaveRefreshToken(c.Request.Context(), tokenHash, userDID, expiresAt); err != nil {
+		s.failAuthSession(sessionID, AuthFailInternalError)
 		respondInternalErrorAndLog(c, "failed to save refresh token",
 			"auth: SaveRefreshToken failed", "user_did", userDID, "err", err)
 		return nil, err
@@ -660,13 +703,20 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 type SessionStatusResponse struct {
 	Completed bool          `json:"completed"`
 	Tokens    *AuthResponse `json:"tokens,omitempty"`
+	// Failed reports that the wallet's proof was rejected. Additive: clients
+	// that only read `completed` are unaffected.
+	Failed bool `json:"failed,omitempty"`
+	// Reason is one of: verification_failed, humanity_required,
+	// invalid_request, authentication_failed. Sensitive and unrecognised
+	// failures collapse to authentication_failed.
+	Reason string `json:"reason,omitempty"`
 }
 
 // handleAuthSessionStatus handles GET /api/auth/session/:id/status - poll for session completion
 // Frontend polls this after displaying QR code to check if wallet has completed auth
 //
 // @Summary      Poll a Privado ID auth session for completion
-// @Description  The frontend polls this after showing the QR code to learn whether the wallet has completed authentication. While pending it returns `completed:false`; once complete it returns the issued tokens (and mirrors the access JWT into an HttpOnly cookie). Deliberately not rate-limited: it is read-only polling during the login flow.
+// @Description  The frontend polls this after showing the QR code to learn whether the wallet has completed authentication. While pending it returns `completed:false`; once complete it returns the issued tokens (and mirrors the access JWT into an HttpOnly cookie). If the wallet's proof was rejected it returns `failed:true` with a `reason`, so the caller can surface the failure immediately instead of polling until it times out. `reason` is one of `verification_failed`, `humanity_required`, `invalid_request`, or `authentication_failed`; sensitive and unrecognised failures collapse to `authentication_failed`, and the value never carries internal error detail. A rejection is not final: a wallet that retries successfully still completes the session, so callers should keep polling while presenting the failure. Deliberately not rate-limited: it is read-only polling during the login flow.
 // @Tags         Auth
 // @Produce      json
 // @Param        id path string true "auth session ID"
@@ -688,6 +738,19 @@ func (s *Server) handleAuthSessionStatus(c *gin.Context) {
 	}
 
 	if !session.Completed {
+		// RD-1242: a rejected proof is reported so the browser can stop polling.
+		// Checked inside the not-completed branch so a session that failed and
+		// then succeeded on a wallet retry still returns its tokens. The 404
+		// above stays the only signal about session existence - a failed
+		// session looks like any other live one to an ID that does not exist.
+		if session.Failed {
+			c.JSON(http.StatusOK, SessionStatusResponse{
+				Completed: false,
+				Failed:    true,
+				Reason:    wireAuthFailureReason(session.FailureReason),
+			})
+			return
+		}
 		c.JSON(http.StatusOK, SessionStatusResponse{Completed: false})
 		return
 	}
