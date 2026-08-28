@@ -188,28 +188,31 @@ func (t *Tracer) TraceCall(ctx context.Context, from, to, data, value string, bl
 		return nil, fmt.Errorf("RPC error %d: %s", rpcResp.Error.Code, rpcResp.Error.Message)
 	}
 
-	// Parse the call frame result
+	return ParseCallTraceResult(rpcResp.Result)
+}
+
+// ParseCallTraceResult parses the raw result object returned by geth's
+// callTracer preset. It is exported so callers that need the original trace
+// payload (for example the admin dry-run endpoint) can validate the exact
+// trace they are about to return instead of issuing a second, racy trace.
+func ParseCallTraceResult(raw json.RawMessage) (*TraceResult, error) {
 	var frame callFrame
-	if err := json.Unmarshal(rpcResp.Result, &frame); err != nil {
+	if err := json.Unmarshal(raw, &frame); err != nil {
 		return nil, fmt.Errorf("failed to parse trace result: %w", err)
 	}
 
-	// Extract all call targets from the trace
 	result := &TraceResult{
 		CallTargets: make([]CallTarget, 0),
 		Error:       frame.Error,
 	}
-
-	// Parse gas used from the top-level frame
 	if frame.GasUsed != "" {
 		result.GasUsed = parseHexUint64(frame.GasUsed)
 	}
 
-	// Recursively extract all call targets
-	if err := t.extractCallTargets(&frame, result, 0); err != nil {
+	var parser Tracer
+	if err := parser.extractCallTargets(&frame, result, 0); err != nil {
 		return nil, err
 	}
-
 	return result, nil
 }
 

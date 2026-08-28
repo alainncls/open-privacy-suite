@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"privacy-proxy/internal/rbac"
+	"privacy-proxy/internal/tracer"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -235,14 +236,18 @@ func (s *Server) handleDryRun(c *gin.Context) {
 	// contracts. With OrgID set, CheckAccess scopes resolution to
 	// admin's org; cross-org contracts evaluate as if Bob were a
 	// non-member there (the safe answer).
-	target := extractTargetAddressForDryRun(req.RPC.Method, req.RPC.Params)
-	accessResult, err := s.rbacAccessCtrl.CheckAccess(ctx, &rbac.AccessCheckRequest{
-		UserExternalID: req.UserDID,
-		OrgID:          orgID,
-		Method:         req.RPC.Method,
-		Params:         req.RPC.Params,
-		TargetAddress:  target,
-	})
+	accessReq, err := dryRunAccessRequest(req.UserDID, orgID, req.RPC)
+	if err != nil {
+		slog.Warn("dry-run: could not build access check", "method", req.RPC.Method, "err", err)
+		if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", "decode_error", c.GetString("correlation_id")); logErr != nil {
+			slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid raw transaction"})
+		return
+	}
+	accessResult, err := s.rbacAccessCtrl.CheckAccess(ctx, accessReq)
 	if err != nil {
 		// H12: audit log fail-closed. If recordImpersonation errors,
 		// refuse to return the response — a compromised admin who can
@@ -270,6 +275,36 @@ func (s *Server) handleDryRun(c *gin.Context) {
 		return
 	}
 
+	// Check the same nested-call gate as the live eth_call path. The helper
+	// preserves the runtime tracing toggle but pins validation to the admin's
+	// path org, so a multi-org target user cannot make Org B data visible to an
+	// Org A administrator.
+	if req.RPC.Method == "eth_call" && s.jsonrpcProcessor != nil {
+		traceErr := s.jsonrpcProcessor.validateEthCallWithTracingInOrg(ctx, &ProcessRequest{
+			Method: req.RPC.Method,
+			Params: req.RPC.Params,
+			UserID: req.UserDID,
+			OrgID:  orgID,
+		}, accessReq.TargetAddress, orgID)
+		if traceErr != nil {
+			decision := "deny"
+			if traceErr.StatusCode >= http.StatusInternalServerError {
+				decision = "error"
+			}
+			if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, decision, sanitizeDryRunReason(traceErr.Reason), c.GetString("correlation_id")); logErr != nil {
+				slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+				return
+			}
+			if decision == "error" {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+				return
+			}
+			c.JSON(http.StatusOK, dryRunResponse{Decision: "deny", Reason: traceErr.Message})
+			return
+		}
+	}
+
 	// Allowed — execute or trace. Both branches log on success.
 	if isTrace {
 		traceResp, traceErr := s.forwardDryRunTrace(ctx, req.RPC)
@@ -280,6 +315,23 @@ func (s *Server) handleDryRun(c *gin.Context) {
 				return
 			}
 			c.JSON(http.StatusBadGateway, gin.H{"error": "upstream trace error"})
+			return
+		}
+		if validationErr := s.validateDryRunTrace(ctx, user, userPerms, orgID, accessReq.TargetAddress, traceResp.Parsed); validationErr != nil {
+			decision := "deny"
+			if validationErr.StatusCode >= http.StatusInternalServerError {
+				decision = "error"
+			}
+			if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, decision, sanitizeDryRunReason(validationErr.Reason), c.GetString("correlation_id")); logErr != nil {
+				slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+				return
+			}
+			if decision == "error" {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+				return
+			}
+			c.JSON(http.StatusOK, dryRunResponse{Decision: "deny", Reason: validationErr.Message})
 			return
 		}
 		if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "allow", "", c.GetString("correlation_id")); logErr != nil {
@@ -419,8 +471,9 @@ func sanitizeDryRunReason(in any) string {
 
 // dryRunTraceResult is what forwardDryRunTrace returns to the handler.
 type dryRunTraceResult struct {
-	Trace json.RawMessage   // the raw debug_traceCall response (callTracer + withLog)
-	Logs  []json.RawMessage // logs extracted from the trace frames
+	Trace  json.RawMessage     // the raw debug_traceCall response (callTracer + withLog)
+	Logs   []json.RawMessage   // logs extracted from the trace frames
+	Parsed *tracer.TraceResult // the same trace parsed for access validation
 }
 
 // forwardDryRunTrace translates a write-method call (eth_sendTransaction
@@ -529,11 +582,91 @@ func (s *Server) forwardDryRunTrace(ctx context.Context, rpc dryRunRPCBlock) (*d
 		}
 		return nil, fmt.Errorf("trace failed: %s", rpcResp.Error.Message)
 	}
+	parsed, err := tracer.ParseCallTraceResult(rpcResp.Result)
+	if err != nil {
+		return nil, fmt.Errorf("could not validate trace: %w", err)
+	}
 	_ = ctx
 	return &dryRunTraceResult{
-		Trace: rpcResp.Result,
-		Logs:  extractLogsFromCallTrace(rpcResp.Result),
+		Trace:  rpcResp.Result,
+		Logs:   extractLogsFromCallTrace(rpcResp.Result),
+		Parsed: parsed,
 	}, nil
+}
+
+// validateDryRunTrace applies the live trace validator to the exact callTracer
+// payload returned by forwardDryRunTrace. Validation is deliberately pinned to
+// orgID rather than all of the impersonated user's memberships: an Org A admin
+// must not receive nested Org B calls merely because the user belongs to both.
+func (s *Server) validateDryRunTrace(
+	ctx context.Context,
+	user *rbac.User,
+	perms *rbac.EffectivePermissions,
+	orgID, targetAddr string,
+	traceResult *tracer.TraceResult,
+) *ProcessError {
+	if user == nil || perms == nil || traceResult == nil || s.db == nil {
+		return &ProcessError{
+			StatusCode: http.StatusInternalServerError,
+			Message:    sendTraceValidatorError,
+			Reason:     ReasonTracingUnavailable,
+		}
+	}
+
+	validator := rbac.NewTraceValidator(s.db)
+	var traceOpts []rbac.TraceOption
+	if s.jsonrpcProcessor != nil {
+		if s.jsonrpcProcessor.traceValidator != nil {
+			validator = s.jsonrpcProcessor.traceValidator
+		}
+		var err error
+		traceOpts, err = s.jsonrpcProcessor.intraOrgGrantTraceOptions(
+			ctx, user.ID, targetAddr, map[string]bool{orgID: true},
+		)
+		if err != nil {
+			slog.Warn("dry-run trace: grant resolution failed",
+				slog.String("user", user.ExternalID), slog.String("org_id", orgID), slog.Any("err", err))
+			return &ProcessError{
+				StatusCode: http.StatusInternalServerError,
+				Message:    sendTraceValidatorError,
+				Reason:     ReasonTracingUnavailable,
+			}
+		}
+	}
+
+	validation, err := validator.ValidateTrace(
+		ctx,
+		map[string]bool{orgID: true},
+		traceResult,
+		effectivePermissionsHasDeployClaim(perms),
+		traceOpts...,
+	)
+	if err != nil {
+		slog.Warn("dry-run trace: validator error",
+			slog.String("user", user.ExternalID), slog.String("org_id", orgID), slog.Any("err", err))
+		return &ProcessError{
+			StatusCode: http.StatusInternalServerError,
+			Message:    sendTraceValidatorError,
+			Reason:     ReasonTracingUnavailable,
+		}
+	}
+	if !validation.Allowed {
+		slog.Info("dry-run trace: denial",
+			slog.String("user", user.ExternalID),
+			slog.String("org_id", orgID),
+			slog.String("kind", string(validation.DenialKind)))
+		slog.Debug("dry-run trace: denial detail",
+			slog.String("user", user.ExternalID),
+			slog.String("org_id", orgID),
+			slog.String("reason", validation.Reason),
+			slog.String("denied_target", validation.DeniedTarget))
+		return &ProcessError{
+			StatusCode: http.StatusForbidden,
+			Message:    sendTraceDenyMessage(validation.Reason),
+			Reason:     ReasonCrossOrg,
+		}
+	}
+	return nil
 }
 
 // extractLogsFromCallTrace walks a callTracer-with-withLog response
@@ -706,32 +839,45 @@ func dryRunParamsHash(method string, params []any) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// extractTargetAddressForDryRun pulls the target address out of an RPC
-// param list when it's an obvious place to look (eth_call's `to`,
-// eth_getTransactionReceipt has none, etc.). Mirrors the
-// access-checker's existing target-address extraction so
-// CheckAccess resolves the same way it does for a real request.
-func extractTargetAddressForDryRun(method string, params []any) string {
-	switch method {
-	case "eth_call", "eth_getCode", "eth_getBalance", "eth_getStorageAt":
-		if len(params) > 0 {
-			if obj, ok := params[0].(map[string]any); ok {
-				if to, ok := obj["to"].(string); ok {
-					return to
-				}
-			}
-			if s, ok := params[0].(string); ok {
-				return s
-			}
+// dryRunAccessRequest builds the access check for an impersonated call with
+// the same helpers JSONRPCProcessor.Process uses on a real request, so the
+// dry-run verdict matches enforcement. Without FunctionSelector, CheckAccess
+// denies every contract whose grant has function-level rules with "function
+// selector required", so a call the user may make and one blocked by a param
+// rule both came back as the same uninformative deny.
+//
+// eth_sendRawTransaction keeps its target and calldata inside the signed
+// blob, so it is decoded and checked as eth_sendTransaction exactly as
+// processRawTransaction does. Derived from the undecoded params it has no
+// target at all, which skips the contract gates entirely and waves every
+// raw tx through to the tracer whatever it points at.
+func dryRunAccessRequest(userDID, orgID string, rpc dryRunRPCBlock) (*rbac.AccessCheckRequest, error) {
+	method, params := rpc.Method, rpc.Params
+	if rbac.ResolveMethodAlias(method) == "eth_sendRawTransaction" {
+		rawHex, err := extractRawTxHex(params)
+		if err != nil {
+			return nil, err
 		}
-	case "eth_sendTransaction":
-		if len(params) > 0 {
-			if obj, ok := params[0].(map[string]any); ok {
-				if to, ok := obj["to"].(string); ok {
-					return to
-				}
-			}
+		from, to, data, value, _, err := decodeRawTransaction(rawHex)
+		if err != nil {
+			return nil, err
 		}
+		method, params = "eth_sendTransaction", buildTxParams(from, to, data, value)
 	}
-	return ""
+
+	accessMethod := rbac.ResolveMethodAlias(method)
+	var requiredClaims []rbac.Claim
+	if claim := rbac.ClassifyOperation(accessMethod, params); claim != "" {
+		requiredClaims = []rbac.Claim{claim}
+	}
+	return &rbac.AccessCheckRequest{
+		UserExternalID:   userDID,
+		OrgID:            orgID,
+		Method:           method,
+		AccessMethod:     accessMethod,
+		Params:           params,
+		TargetAddress:    rbac.GetTargetAddress(accessMethod, params),
+		FunctionSelector: rbac.GetFunctionSelector(accessMethod, params),
+		RequiredClaims:   requiredClaims,
+	}, nil
 }

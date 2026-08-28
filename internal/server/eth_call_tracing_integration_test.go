@@ -221,6 +221,35 @@ func TestEthCallTracing_DeniesCrossOrgInternalCall(t *testing.T) {
 	assert.NotContains(t, err.Message, strings.TrimPrefix(addrB, "0x"))
 }
 
+func TestEthCallTracing_PinnedOrgDeniesOtherMembershipOrg(t *testing.T) {
+	addrA := fixedAddr(0xaa)
+	addrB := fixedAddr(0xbb)
+	scripted := newScriptedTracer(t, traceFrame{
+		Type: "CALL", From: fixedAddr(0xee), To: addrA,
+		Calls: []traceFrame{{Type: "STATICCALL", From: addrA, To: addrB}},
+	})
+	proc, ts := setupProcessorWithMockTracer(t, scripted)
+
+	ctx := context.Background()
+	did, callerOrg := callerSameOrg(t, ctx, ts, addrA)
+	otherOrg := registerForeignOrgContract(t, ctx, ts, addrB)
+	user, err := ts.db.GetUserByExternalID(ctx, did)
+	require.NoError(t, err)
+	require.NotNil(t, user)
+	otherGroupID := uuid.New().String()
+	insertGroupRawSQL(t, ctx, ts.db, otherGroupID, otherOrg,
+		"other-grp-"+otherGroupID[:8], "Other Grp", "other-grp-"+otherGroupID[:8])
+	require.NoError(t, ts.db.CreateMembership(ctx, &rbac.UserMembership{
+		ID: uuid.New().String(), UserID: user.ID, GroupID: otherGroupID,
+		Source: rbac.MembershipSourceAdmin,
+	}))
+
+	traceErr := proc.validateEthCallWithTracingInOrg(ctx, ethCallReq(did, addrA), addrA, callerOrg)
+	require.NotNil(t, traceErr, "dry-run validation must stay in the administrator's path org")
+	assert.Equal(t, http.StatusForbidden, traceErr.StatusCode)
+	assert.Equal(t, ethCallDenyCrossOrg, traceErr.Message)
+}
+
 // =============================================================================
 // #2, #9 — Multi-hop A→B→C-foreign and self-recursion
 // =============================================================================
