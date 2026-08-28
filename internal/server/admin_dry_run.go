@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"privacy-proxy/internal/rbac"
+	"privacy-proxy/internal/tracer"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -274,6 +275,36 @@ func (s *Server) handleDryRun(c *gin.Context) {
 		return
 	}
 
+	// Check the same nested-call gate as the live eth_call path. The helper
+	// preserves the runtime tracing toggle but pins validation to the admin's
+	// path org, so a multi-org target user cannot make Org B data visible to an
+	// Org A administrator.
+	if req.RPC.Method == "eth_call" && s.jsonrpcProcessor != nil {
+		traceErr := s.jsonrpcProcessor.validateEthCallWithTracingInOrg(ctx, &ProcessRequest{
+			Method: req.RPC.Method,
+			Params: req.RPC.Params,
+			UserID: req.UserDID,
+			OrgID:  orgID,
+		}, accessReq.TargetAddress, orgID)
+		if traceErr != nil {
+			decision := "deny"
+			if traceErr.StatusCode >= http.StatusInternalServerError {
+				decision = "error"
+			}
+			if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, decision, sanitizeDryRunReason(traceErr.Reason), c.GetString("correlation_id")); logErr != nil {
+				slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+				return
+			}
+			if decision == "error" {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+				return
+			}
+			c.JSON(http.StatusOK, dryRunResponse{Decision: "deny", Reason: traceErr.Message})
+			return
+		}
+	}
+
 	// Allowed — execute or trace. Both branches log on success.
 	if isTrace {
 		traceResp, traceErr := s.forwardDryRunTrace(ctx, req.RPC)
@@ -284,6 +315,23 @@ func (s *Server) handleDryRun(c *gin.Context) {
 				return
 			}
 			c.JSON(http.StatusBadGateway, gin.H{"error": "upstream trace error"})
+			return
+		}
+		if validationErr := s.validateDryRunTrace(ctx, user, userPerms, orgID, accessReq.TargetAddress, traceResp.Parsed); validationErr != nil {
+			decision := "deny"
+			if validationErr.StatusCode >= http.StatusInternalServerError {
+				decision = "error"
+			}
+			if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, decision, sanitizeDryRunReason(validationErr.Reason), c.GetString("correlation_id")); logErr != nil {
+				slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+				return
+			}
+			if decision == "error" {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+				return
+			}
+			c.JSON(http.StatusOK, dryRunResponse{Decision: "deny", Reason: validationErr.Message})
 			return
 		}
 		if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "allow", "", c.GetString("correlation_id")); logErr != nil {
@@ -423,8 +471,9 @@ func sanitizeDryRunReason(in any) string {
 
 // dryRunTraceResult is what forwardDryRunTrace returns to the handler.
 type dryRunTraceResult struct {
-	Trace json.RawMessage   // the raw debug_traceCall response (callTracer + withLog)
-	Logs  []json.RawMessage // logs extracted from the trace frames
+	Trace  json.RawMessage     // the raw debug_traceCall response (callTracer + withLog)
+	Logs   []json.RawMessage   // logs extracted from the trace frames
+	Parsed *tracer.TraceResult // the same trace parsed for access validation
 }
 
 // forwardDryRunTrace translates a write-method call (eth_sendTransaction
@@ -533,11 +582,91 @@ func (s *Server) forwardDryRunTrace(ctx context.Context, rpc dryRunRPCBlock) (*d
 		}
 		return nil, fmt.Errorf("trace failed: %s", rpcResp.Error.Message)
 	}
+	parsed, err := tracer.ParseCallTraceResult(rpcResp.Result)
+	if err != nil {
+		return nil, fmt.Errorf("could not validate trace: %w", err)
+	}
 	_ = ctx
 	return &dryRunTraceResult{
-		Trace: rpcResp.Result,
-		Logs:  extractLogsFromCallTrace(rpcResp.Result),
+		Trace:  rpcResp.Result,
+		Logs:   extractLogsFromCallTrace(rpcResp.Result),
+		Parsed: parsed,
 	}, nil
+}
+
+// validateDryRunTrace applies the live trace validator to the exact callTracer
+// payload returned by forwardDryRunTrace. Validation is deliberately pinned to
+// orgID rather than all of the impersonated user's memberships: an Org A admin
+// must not receive nested Org B calls merely because the user belongs to both.
+func (s *Server) validateDryRunTrace(
+	ctx context.Context,
+	user *rbac.User,
+	perms *rbac.EffectivePermissions,
+	orgID, targetAddr string,
+	traceResult *tracer.TraceResult,
+) *ProcessError {
+	if user == nil || perms == nil || traceResult == nil || s.db == nil {
+		return &ProcessError{
+			StatusCode: http.StatusInternalServerError,
+			Message:    sendTraceValidatorError,
+			Reason:     ReasonTracingUnavailable,
+		}
+	}
+
+	validator := rbac.NewTraceValidator(s.db)
+	var traceOpts []rbac.TraceOption
+	if s.jsonrpcProcessor != nil {
+		if s.jsonrpcProcessor.traceValidator != nil {
+			validator = s.jsonrpcProcessor.traceValidator
+		}
+		var err error
+		traceOpts, err = s.jsonrpcProcessor.intraOrgGrantTraceOptions(
+			ctx, user.ID, targetAddr, map[string]bool{orgID: true},
+		)
+		if err != nil {
+			slog.Warn("dry-run trace: grant resolution failed",
+				slog.String("user", user.ExternalID), slog.String("org_id", orgID), slog.Any("err", err))
+			return &ProcessError{
+				StatusCode: http.StatusInternalServerError,
+				Message:    sendTraceValidatorError,
+				Reason:     ReasonTracingUnavailable,
+			}
+		}
+	}
+
+	validation, err := validator.ValidateTrace(
+		ctx,
+		map[string]bool{orgID: true},
+		traceResult,
+		effectivePermissionsHasDeployClaim(perms),
+		traceOpts...,
+	)
+	if err != nil {
+		slog.Warn("dry-run trace: validator error",
+			slog.String("user", user.ExternalID), slog.String("org_id", orgID), slog.Any("err", err))
+		return &ProcessError{
+			StatusCode: http.StatusInternalServerError,
+			Message:    sendTraceValidatorError,
+			Reason:     ReasonTracingUnavailable,
+		}
+	}
+	if !validation.Allowed {
+		slog.Info("dry-run trace: denial",
+			slog.String("user", user.ExternalID),
+			slog.String("org_id", orgID),
+			slog.String("kind", string(validation.DenialKind)))
+		slog.Debug("dry-run trace: denial detail",
+			slog.String("user", user.ExternalID),
+			slog.String("org_id", orgID),
+			slog.String("reason", validation.Reason),
+			slog.String("denied_target", validation.DeniedTarget))
+		return &ProcessError{
+			StatusCode: http.StatusForbidden,
+			Message:    sendTraceDenyMessage(validation.Reason),
+			Reason:     ReasonCrossOrg,
+		}
+	}
+	return nil
 }
 
 // extractLogsFromCallTrace walks a callTracer-with-withLog response

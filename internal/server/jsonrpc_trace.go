@@ -372,6 +372,15 @@ func sendTraceDenyMessage(reason string) string {
 //
 // Returns nil to allow the eth_call to be forwarded; non-nil to deny.
 func (p *JSONRPCProcessor) validateEthCallWithTracing(ctx context.Context, req *ProcessRequest, targetAddr string) *ProcessError {
+	return p.validateEthCallWithTracingInOrg(ctx, req, targetAddr, "")
+}
+
+// validateEthCallWithTracingInOrg is the dry-run-safe variant of
+// validateEthCallWithTracing. When orgID is non-empty, trace validation is
+// pinned to that organization instead of using every organization the
+// impersonated user belongs to. This prevents an Org A administrator from
+// receiving an Org B trace merely because the target user is a member of both.
+func (p *JSONRPCProcessor) validateEthCallWithTracingInOrg(ctx context.Context, req *ProcessRequest, targetAddr, orgID string) *ProcessError {
 	// Lock-free atomic load of the (env + runtime-override) state. The
 	// super-admin endpoint can replace this between any two invocations;
 	// each call reads a self-consistent snapshot.
@@ -470,18 +479,33 @@ func (p *JSONRPCProcessor) validateEthCallWithTracing(ctx context.Context, req *
 		}
 	}
 
-	// Org memberships → for ValidateTrace's cross-org check.
-	memberships, err := p.rbacAccessCtrl.Store().ListUserMembershipsWithDetails(ctx, user.ID)
-	if err != nil {
-		slog.Warn("eth_call trace: membership lookup failed",
-			slog.String("user_uuid", user.ID), slog.Any("err", err))
-		return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyTracerError, Reason: ReasonTracingUnavailable}
-	}
+	// Org memberships → for ValidateTrace's cross-org check. Admin dry-run
+	// pins this to the path org; the normal RPC path retains the user's complete
+	// membership set.
 	userOrgIDs := make(map[string]bool)
-	for _, m := range memberships {
-		if m.Group != nil {
-			userOrgIDs[m.Group.OrgID] = true
+	userHasDeploy := false
+	if orgID != "" {
+		perms, permErr := p.rbacAccessCtrl.GetEffectivePermissionsByIDs(ctx, user.ID, orgID)
+		if permErr != nil || perms == nil {
+			slog.Warn("eth_call trace: pinned-org permission lookup failed",
+				slog.String("user_uuid", user.ID), slog.String("org_id", orgID), slog.Any("err", permErr))
+			return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyTracerError, Reason: ReasonTracingUnavailable}
 		}
+		userOrgIDs[orgID] = true
+		userHasDeploy = effectivePermissionsHasDeployClaim(perms)
+	} else {
+		memberships, membershipErr := p.rbacAccessCtrl.Store().ListUserMembershipsWithDetails(ctx, user.ID)
+		if membershipErr != nil {
+			slog.Warn("eth_call trace: membership lookup failed",
+				slog.String("user_uuid", user.ID), slog.Any("err", membershipErr))
+			return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyTracerError, Reason: ReasonTracingUnavailable}
+		}
+		for _, m := range memberships {
+			if m.Group != nil {
+				userOrgIDs[m.Group.OrgID] = true
+			}
+		}
+		userHasDeploy = p.userHasDeployClaim(ctx, memberships)
 	}
 
 	// Per-call timeout. Distinct from the 30s send-side TraceTimeout.
@@ -512,11 +536,6 @@ func (p *JSONRPCProcessor) validateEthCallWithTracing(ctx context.Context, req *
 		slog.Warn("eth_call trace: nil result", slog.String("user", req.UserID), slog.String("to", to))
 		return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyTracerError, Reason: ReasonTracingUnavailable}
 	}
-
-	// userHasDeploy is irrelevant for read-only validation but the
-	// validator's signature requires it; the deploy-claim branch only
-	// affects CREATE-frame handling, which eth_call cannot produce.
-	userHasDeploy := p.userHasDeployClaim(ctx, memberships)
 
 	// RD-1053: opt into intra-org grant scoping when the knob is on. Fail
 	// closed if the grant set can't be resolved — a knob that is on must
@@ -858,6 +877,18 @@ func (p *JSONRPCProcessor) userHasDeployClaim(ctx context.Context, memberships [
 			if c == rbac.ClaimDeploy || c == rbac.ClaimAdmin {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+func effectivePermissionsHasDeployClaim(perms *rbac.EffectivePermissions) bool {
+	if perms == nil {
+		return false
+	}
+	for _, claim := range perms.Claims {
+		if claim == rbac.ClaimDeploy || claim == rbac.ClaimAdmin {
+			return true
 		}
 	}
 	return false

@@ -381,6 +381,71 @@ func TestDryRunAccessRequest_MatchesEnforcementDerivation(t *testing.T) {
 	})
 }
 
+// TestDryRun_FunctionRuleTraceStaysInPathOrg covers the gap between the
+// top-level access check and the live processor's nested-call validation. The
+// impersonated user belongs to both orgs, but an Org A administrator must not
+// receive an Org B subcall through an allowed Org A wrapper function.
+func TestDryRun_FunctionRuleTraceStaysInPathOrg(t *testing.T) {
+	f := setupDryRunFixture(t)
+	ctx := context.Background()
+	const selector = "0xabcdef01"
+
+	groupID := uuid.New().String()
+	require.NoError(t, f.srv.db.CreateGroup(ctx, &rbac.Group{
+		ID: groupID, OrgID: f.orgID, Slug: "dr-trace-user", Name: "dr-trace-user", Depth: 0, Path: "dr-trace-user",
+	}))
+	require.NoError(t, f.srv.db.CreateGroupAccess(ctx, &rbac.GroupAccess{
+		ID: uuid.New().String(), GroupID: groupID, AllowedMethods: []string{"eth_sendTransaction"},
+	}))
+	userDID := "did:dr:trace-user"
+	userID := drCreateUserInGroup(t, f.srv.db, userDID, groupID)
+
+	wrapperAddr := "0x6666666666666666666666666666666666666666"
+	wrapperID := drCreateContract(t, f.srv.db, f.orgID, wrapperAddr, "DRWrapper")
+	require.NoError(t, f.srv.db.CreateContractGrant(ctx, &rbac.ContractGrant{
+		ID: uuid.New().String(), ContractID: wrapperID, GroupID: groupID,
+		Functions: []rbac.FunctionRule{{Selector: selector}},
+	}))
+
+	// Give the user an Org B membership as well. Trace validation must still
+	// use only f.orgID because that is the administrator's path scope.
+	otherGroupID := drCreateGroup(t, f.srv.db, f.otherOrgID, "dr-trace-other", nil, false)
+	require.NoError(t, f.srv.db.CreateMembership(ctx, &rbac.UserMembership{
+		ID: uuid.New().String(), UserID: userID, GroupID: otherGroupID, Source: rbac.MembershipSourceAdmin,
+	}))
+	foreignAddr := "0x7777777777777777777777777777777777777777"
+	drCreateContract(t, f.srv.db, f.otherOrgID, foreignAddr, "DRForeign")
+
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"result": map[string]any{
+				"type": "CALL", "from": "0x0000000000000000000000000000000000000000", "to": wrapperAddr,
+				"calls": []map[string]any{{"type": "STATICCALL", "from": wrapperAddr, "to": foreignAddr}},
+			},
+		})
+	}))
+	t.Cleanup(stub.Close)
+	f.srv.proxy = proxy.New(stub.URL)
+
+	w := dryRunPost(t, f.srv, f.orgID, "jwt_admin", f.adminDID, map[string]any{
+		"user_did": userDID,
+		"rpc": dryRunRPCBlock{
+			Method: "eth_sendTransaction",
+			Params: []any{map[string]any{"to": wrapperAddr, "data": selector}},
+		},
+	})
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+
+	var resp dryRunResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "deny", resp.Decision)
+	assert.Equal(t, sendTraceDenyCrossOrg, resp.Reason)
+	assert.Empty(t, resp.Trace, "a denied nested call must not expose its trace")
+	assert.Empty(t, resp.LogsEmitted, "a denied nested call must not expose its logs")
+}
+
 // TestDryRun_RawTransactionChecksDecodedTarget covers the raw-tx contract gate
 // end to end. eth_sendRawTransaction hides its target in the signed blob, so a
 // check built from the undecoded params has no target address and skips
