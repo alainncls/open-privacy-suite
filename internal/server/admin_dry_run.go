@@ -58,7 +58,7 @@ import (
 
 // dryRunResponse is the handler's reply.
 type dryRunResponse struct {
-	Decision string `json:"decision"` // "allow" | "deny"
+	Decision string `json:"decision"` // "allow" | "deny" | "indeterminate"
 	Reason   string `json:"reason,omitempty"`
 	// For read methods: the redacted-as-user response.
 	Response json.RawMessage `json:"response,omitempty"`
@@ -293,6 +293,12 @@ func (s *Server) handleDryRun(c *gin.Context) {
 		}
 		if validationErr := s.validateDryRunTrace(ctx, user, userPerms, orgID, accessReq.TargetAddress, traceResp.Parsed); validationErr != nil {
 			decision := "deny"
+			wireDecision := "deny"
+			wireReason := validationErr.Message
+			if validationErr.Reason == ReasonCrossOrg {
+				wireDecision = "indeterminate"
+				wireReason = "external_scope_required"
+			}
 			if validationErr.StatusCode >= http.StatusInternalServerError {
 				decision = "error"
 			}
@@ -305,7 +311,7 @@ func (s *Server) handleDryRun(c *gin.Context) {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 				return
 			}
-			c.JSON(http.StatusOK, dryRunResponse{Decision: "deny", Reason: validationErr.Message})
+			c.JSON(http.StatusOK, dryRunResponse{Decision: wireDecision, Reason: wireReason})
 			return
 		}
 		if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "allow", "", c.GetString("correlation_id")); logErr != nil {

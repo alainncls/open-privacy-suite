@@ -401,14 +401,15 @@ func (p *JSONRPCProcessor) validateEthCallWithTracingInOrg(ctx context.Context, 
 	// wildcards opts out of RBAC, and re-tracing on top of that would defeat
 	// the wildcard semantic.
 	//
-	// H10 (security audit follow-up to RD-915): eth_estimateGas runs the
-	// EVM exactly like eth_call — revert reasons, SLOAD-derived branches,
-	// and STATICCALL return values flow through the same way. The
+	// H10 (security audit follow-up to RD-915): eth_estimateGas and
+	// eth_createAccessList run the EVM like eth_call — revert reasons,
+	// SLOAD-derived branches, touched slots, and STATICCALL return values
+	// flow through the same way. The
 	// cross-org composability leak the entry-point check used to allow is
 	// identical. Both methods (and their operator-aliased equivalents)
 	// share this gate.
 	resolved := rbac.ResolveMethodAlias(req.Method)
-	if resolved != "eth_call" && resolved != "eth_estimateGas" {
+	if resolved != "eth_call" && resolved != "eth_estimateGas" && resolved != "eth_createAccessList" {
 		return nil
 	}
 	if targetAddr == "" {

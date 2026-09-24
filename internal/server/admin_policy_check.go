@@ -65,11 +65,18 @@ func (op policyCheckRPCBlock) rpcBlock() apimodels.DryRunRPCBlock {
 	return apimodels.DryRunRPCBlock{Method: op.Method, Params: op.Params}
 }
 
-// policyCheckResponse is the handler's reply: verdict only, no tenant data.
+// policyCheckResponse is projected according to the configured server mode.
+// verdict_only omits Artifacts; full_simulation includes the authorized trace.
 type policyCheckResponse struct {
-	Allowed bool `json:"allowed"`
+	Allowed   bool                  `json:"allowed"`
+	Artifacts *policyCheckArtifacts `json:"artifacts,omitempty"`
 	// Reason is set only on deny, sanitized to a coarse category (RD-934).
 	Reason string `json:"reason,omitempty"`
+}
+
+type policyCheckArtifacts struct {
+	Trace json.RawMessage   `json:"trace"`
+	Logs  []json.RawMessage `json:"logs,omitempty"`
 }
 
 // policyCheckKnownReasonCategories is the wire-facing allowlist of deny
@@ -157,17 +164,17 @@ func (s *Server) resolvePolicyCheckSubject(ctx context.Context, subj policyCheck
 	}
 }
 
-// handlePolicyCheck handles POST /api/v1/admin/policy-check.
+// handlePolicyCheck handles POST /api/v1/admin/cross-org-authorization-oracle.
 //
 // @Summary      Check whether a subject would be allowed to make an RPC call
-// @Description  Privacy-policy verdict for a trusted infrastructure caller. Subject is a DID or Ethereum address. Operation is a JSON-RPC method and params. EVM execution methods use debug_traceCall with the same upstream credential as live calls. Write methods also run a side-effect-free compliance preview. The endpoint does not submit the call or consume a travel-rule record. A supplied sender must link to the subject. Trace checks share the per-caller concurrency and rate budget of live calls. debug_traceCall and debug_traceTransaction are not supported. Requires the full X-Admin-Token credential. The operator token and JWT admin credentials are not accepted. Every evaluation is audited and fails closed. Operational failures (upstream trace errors, concurrency or rate exhaustion) return 429 or 503, never a policy verdict.
+// @Description  Cross-organization privacy-policy oracle for an explicitly trusted infrastructure caller. Subject is a DID or Ethereum address. Operation is a JSON-RPC method and params. EVM execution methods use debug_traceCall with the same upstream credential as live calls. Write methods also run a side-effect-free compliance preview. The endpoint does not submit the call or consume a travel-rule record. A supplied sender must link to the subject. Trace checks share the per-caller concurrency and rate budget of live calls. debug_traceCall and debug_traceTransaction are not supported. Requires the dedicated X-Cross-Org-Authorization-Oracle-Token credential and an allowlisted organization. Admin, operator, and JWT credentials are not accepted. Every evaluation is audited and fails closed. Operational failures (upstream trace errors, concurrency or rate exhaustion) return 429 or 503, never a policy verdict.
 // @Tags         Admin: RBAC
 // @Accept       json
 // @Produce      json
 // @Param        request body policyCheckRequest true "subject, operation, and optional org_id"
 // @Success      200 {object} policyCheckResponse
 // @Failure      400 {object} map[string]string "invalid body, missing operation.method, an invalid subject address, or subject has neither/both of did and address"
-// @Failure      401 {object} map[string]string "missing or invalid X-Admin-Token"
+// @Failure      401 {object} map[string]string "missing or invalid X-Cross-Org-Authorization-Oracle-Token"
 // @Failure      403 {object} map[string]string "source address not on the private network, or the credential cannot read tenant policy"
 // @Failure      429 {object} map[string]string "concurrency or rate budget exhausted; operational, not a policy verdict"
 // @Failure      500 {object} map[string]string "internal error (includes audit-log write failure, response withheld)"
@@ -300,11 +307,12 @@ func (s *Server) handlePolicyCheck(c *gin.Context) {
 
 	allowed := result.Allowed
 	auditReason, wireReason := "", ""
+	var artifacts policyCheckArtifacts
 	if !allowed {
 		auditReason = sanitizeDryRunReason(result.Reason)
 		wireReason = sanitizePolicyCheckReason(result.Reason)
 	} else {
-		wireReason, auditReason, err = s.simulatePolicyCheck(ctx, did, operation, accessReq, result)
+		wireReason, auditReason, err = s.simulatePolicyCheck(ctx, did, operation, accessReq, result, &artifacts)
 		if err != nil {
 			// Caller-controlled operation shapes (malformed params) are a client
 			// error, not a denial and not an infrastructure failure.
@@ -344,7 +352,11 @@ func (s *Server) handlePolicyCheck(c *gin.Context) {
 		respondInternalError(c, "internal error")
 		return
 	}
-	c.JSON(http.StatusOK, policyCheckResponse{Allowed: allowed, Reason: wireReason})
+	response := policyCheckResponse{Allowed: allowed, Reason: wireReason}
+	if allowed && s.config != nil && strings.EqualFold(strings.TrimSpace(s.config.CrossOrgAuthorizationOracleMode), "full_simulation") {
+		response.Artifacts = &artifacts
+	}
+	c.JSON(http.StatusOK, response)
 }
 
 // policyCheckSubjectAuthorized enforces service-to-subject authority before
@@ -385,6 +397,7 @@ func (s *Server) simulatePolicyCheck(
 	op apimodels.DryRunRPCBlock,
 	accessReq *rbac.AccessCheckRequest,
 	accessResult *rbac.AccessCheckResult,
+	artifacts *policyCheckArtifacts,
 ) (wireReason, auditReason string, err error) {
 	effectiveMethod := rbac.ResolveMethodAlias(op.Method)
 	switch effectiveMethod {
@@ -457,6 +470,10 @@ func (s *Server) simulatePolicyCheck(
 		}
 		if traceResult == nil || traceResult.Parsed == nil {
 			return "", "", fmt.Errorf("%w: trace returned no result", errSimUpstreamUnavailable)
+		}
+		if artifacts != nil {
+			artifacts.Trace = traceResult.Trace
+			artifacts.Logs = traceResult.Logs
 		}
 		if validationErr := s.validatePolicyCheckTrace(ctx, user, perms, accessResult.OrgID, accessReq.TargetAddress, traceResult.Parsed); validationErr != nil {
 			if validationErr.StatusCode >= http.StatusInternalServerError {

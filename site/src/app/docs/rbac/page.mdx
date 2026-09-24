@@ -141,19 +141,21 @@ To ban an admin, have another admin in the same organization do it, or use the f
 
 ---
 
-## Policy Check Endpoint
+## Cross-Organization Authorization Oracle
 
-`POST /api/v1/admin/policy-check` lets a trusted service test a JSON-RPC operation before submission.
-Use the full `ADMIN_API_TOKEN`. The operator token and JWT admin credentials cannot use this endpoint.
+`POST /api/v1/admin/cross-org-authorization-oracle` lets an explicitly trusted service test a JSON-RPC operation before submission.
+It is disabled by default. When enabled, use the dedicated `CROSS_ORG_AUTHORIZATION_ORACLE_TOKEN` in the
+`X-Cross-Org-Authorization-Oracle-Token` header. Admin, operator, and JWT credentials cannot use this endpoint.
 
 The request identifies one subject by DID or linked Ethereum address. An optional `org_id` selects the organization.
-A supplied `from` address must link to the subject. The response contains only `allowed` and a safe reason category.
+A supplied `from` address must link to the subject. In `verdict_only` mode the response contains only `allowed` and a safe
+reason category; `full_simulation` additionally returns authorized trace artifacts.
 
 The endpoint checks RBAC and nested EVM calls with `debug_traceCall`. Write operations also use a side-effect-free compliance preview.
 The preview does not send a transaction, write a compliance log, or consume a travel-rule record.
 
 The upstream node must support `debug_traceCall`. The endpoint fails closed when tracing is unavailable or exceeds five seconds.
-Trace checks use the same upstream RPC credential as live calls. The service credential is limited to 100 traces per second and 10,000 traces per day.
+Trace checks use the same upstream RPC credential and configured shared budget as live calls; timeout and concurrency limits also protect resources.
 `debug_traceCall` and `debug_traceTransaction` are not supported. The endpoint also uses the authenticated-request concurrency limit.
 
 Each returned allow or deny verdict writes a row to `policy_check_log`. Body or subject validation failures return an HTTP error without an audit row; an invalid operation (for example an undecodable raw transaction) returns an HTTP error and is still audited with reason `decode_error`.

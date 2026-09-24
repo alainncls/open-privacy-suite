@@ -26,6 +26,21 @@ components:
         media_type:
           type: string
       type: object
+    internal_server.policyCheckArtifacts:
+      properties:
+        logs:
+          items:
+            items:
+              type: integer
+            type: array
+          type: array
+          uniqueItems: false
+        trace:
+          items:
+            type: integer
+          type: array
+          uniqueItems: false
+      type: object
     internal_server.policyCheckRPCBlock:
       properties:
         method:
@@ -55,6 +70,8 @@ components:
       properties:
         allowed:
           type: boolean
+        artifacts:
+          $ref: '#/components/schemas/internal_server.policyCheckArtifacts'
         reason:
           description: Reason is set only on deny, sanitized to a coarse category
             (RD-934).
@@ -4260,17 +4277,18 @@ paths:
       - 'Admin: RBAC'
   /api/v1/admin/cross-org-authorization-oracle:
     post:
-      description: Privacy-policy verdict for a trusted infrastructure caller. Subject
-        is a DID or Ethereum address. Operation is a JSON-RPC method and params. EVM
-        execution methods use debug_traceCall with the same upstream credential as
-        live calls. Write methods also run a side-effect-free compliance preview.
-        The endpoint does not submit the call or consume a travel-rule record. A supplied
-        sender must link to the subject. Trace checks share the per-caller concurrency
-        and rate budget of live calls. debug_traceCall and debug_traceTransaction
-        are not supported. Requires the full X-Admin-Token credential. The operator
-        token and JWT admin credentials are not accepted. Every evaluation is audited
-        and fails closed. Operational failures (upstream trace errors, concurrency
-        or rate exhaustion) return 429 or 503, never a policy verdict.
+      description: Cross-organization privacy-policy oracle for an explicitly trusted
+        infrastructure caller. Subject is a DID or Ethereum address. Operation is
+        a JSON-RPC method and params. EVM execution methods use debug_traceCall with
+        the same upstream credential as live calls. Write methods also run a side-effect-free
+        compliance preview. The endpoint does not submit the call or consume a travel-rule
+        record. A supplied sender must link to the subject. Trace checks share the
+        per-caller concurrency and rate budget of live calls. debug_traceCall and
+        debug_traceTransaction are not supported. Requires the dedicated X-Cross-Org-Authorization-Oracle-Token
+        credential and an allowlisted organization. Admin, operator, and JWT credentials
+        are not accepted. Every evaluation is audited and fails closed. Operational
+        failures (upstream trace errors, concurrency or rate exhaustion) return 429
+        or 503, never a policy verdict.
       parameters:
       - description: Dedicated cross-org oracle token
         in: header
@@ -4312,7 +4330,7 @@ paths:
                 additionalProperties:
                   type: string
                 type: object
-          description: missing or invalid X-Admin-Token
+          description: missing or invalid X-Cross-Org-Authorization-Oracle-Token
         "403":
           content:
             application/json:

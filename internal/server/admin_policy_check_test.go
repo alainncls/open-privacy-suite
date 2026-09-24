@@ -861,6 +861,27 @@ func TestPolicyCheck_TraceUsesResolvedUpstreamCredential(t *testing.T) {
 	assert.True(t, decodePolicyCheckResponse(t, w).Allowed)
 }
 
+func TestPolicyCheck_ResponseProjectionFollowsConfiguredMode(t *testing.T) {
+	f := setupPCFixture(t)
+	body := map[string]any{
+		"subject":   map[string]any{"did": f.userDID},
+		"org_id":    f.orgA,
+		"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr),
+	}
+
+	f.srv.config.CrossOrgAuthorizationOracleMode = "verdict_only"
+	verdict := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", body)
+	require.Equal(t, http.StatusOK, verdict.Code, "body: %s", verdict.Body.String())
+	assert.Nil(t, decodePolicyCheckResponse(t, verdict).Artifacts)
+
+	f.srv.config.CrossOrgAuthorizationOracleMode = "full_simulation"
+	full := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", body)
+	require.Equal(t, http.StatusOK, full.Code, "body: %s", full.Body.String())
+	response := decodePolicyCheckResponse(t, full)
+	require.NotNil(t, response.Artifacts)
+	assert.NotEmpty(t, response.Artifacts.Trace)
+}
+
 func TestPolicyCheck_CreateAccessListTracesNestedCalls(t *testing.T) {
 	f := setupPCFixture(t)
 	node := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

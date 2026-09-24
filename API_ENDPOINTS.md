@@ -26,7 +26,7 @@ Note: gin registers `.Any()` mounts (the impersonation JSON-RPC mirrors) as one 
 | DELETE | `/api/v1/admin/compliance/sanctions/{id}` | Admin token + private network |  |
 | GET | `/api/v1/admin/compliance/system-token-prices` | Admin token + private network |  |
 | GET | `/api/v1/admin/contracts/by-address/{address}` | Admin token + private network |  |
-| POST | `/api/v1/admin/cross-org-authorization-oracle` | Admin token + private network |  |
+| POST | `/api/v1/admin/cross-org-authorization-oracle` | Dedicated cross-org oracle token + private network |  |
 | POST | `/api/v1/admin/dev/deploy-demo-erc20` | Admin token + private network |  |
 | GET | `/api/v1/admin/disclosure/check-access` | Admin token + private network |  |
 | GET | `/api/v1/admin/disclosure/grants` | Admin token + private network |  |

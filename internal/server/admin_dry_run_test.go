@@ -441,8 +441,8 @@ func TestDryRun_FunctionRuleTraceStaysInPathOrg(t *testing.T) {
 
 	var resp dryRunResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, "deny", resp.Decision)
-	assert.Equal(t, sendTraceDenyCrossOrg, resp.Reason)
+	assert.Equal(t, "indeterminate", resp.Decision)
+	assert.Equal(t, "external_scope_required", resp.Reason)
 	assert.Empty(t, resp.Trace, "a denied nested call must not expose its trace")
 	assert.Empty(t, resp.LogsEmitted, "a denied nested call must not expose its logs")
 }
