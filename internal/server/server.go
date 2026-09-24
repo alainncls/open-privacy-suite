@@ -1220,11 +1220,9 @@ func (s *Server) setupRouter() *gin.Engine {
 	orgScope := s.orgScopingMiddleware()
 	apiV1 := router.Group("/api/v1")
 	{
-		if s.crossOrgAuthorizationOracleEnabled() {
-			oracle := apiV1.Group("/admin")
-			oracle.Use(middleware.BodyLimit(MaxRequestBodySize), s.localhostOnlyMiddleware(), s.crossOrgAuthorizationOracleAuthMiddleware())
-			oracle.POST("/cross-org-authorization-oracle", s.handlePolicyCheck)
-		}
+		oracle := apiV1.Group("/admin")
+		oracle.Use(middleware.BodyLimit(MaxRequestBodySize), s.localhostOnlyMiddleware(), s.crossOrgAuthorizationOracleAuthMiddleware())
+		oracle.POST("/cross-org-authorization-oracle", s.handlePolicyCheck)
 
 		// Admin endpoints - private network + token auth + org scoping
 		admin := apiV1.Group("/admin")
@@ -1758,10 +1756,15 @@ func (s *Server) crossOrgAuthorizationOracleEnabled() bool {
 
 func (s *Server) crossOrgAuthorizationOracleAuthMiddleware() gin.HandlerFunc {
 	expectedToken := ""
+	enabled := s.crossOrgAuthorizationOracleEnabled()
 	if s != nil && s.config != nil {
 		expectedToken = strings.TrimSpace(s.config.CrossOrgAuthorizationOracleToken)
 	}
 	return func(c *gin.Context) {
+		if !enabled {
+			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "not found"})
+			return
+		}
 		provided := strings.TrimSpace(c.GetHeader("X-Cross-Org-Authorization-Oracle-Token"))
 		if expectedToken == "" || provided == "" ||
 			subtle.ConstantTimeCompare([]byte(provided), []byte(expectedToken)) != 1 {
