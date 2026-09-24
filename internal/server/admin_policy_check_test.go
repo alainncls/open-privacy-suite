@@ -463,10 +463,8 @@ func TestPolicyCheck_UnknownDIDDenied(t *testing.T) {
 		"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr),
 	}
 	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", body)
-	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
-	resp := decodePolicyCheckResponse(t, w)
-	assert.False(t, resp.Allowed)
-	assert.NotEmpty(t, resp.Reason)
+	require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+	assert.Contains(t, w.Body.String(), "outside the oracle allowlist")
 }
 
 // TestPolicyCheck_AddressSubjectResolvesAndMatchesDID verifies that an address
@@ -644,8 +642,8 @@ func TestPolicyCheck_ExplicitOrgIDSubjectNotMemberDenied(t *testing.T) {
 		"org_id": f.orgB,
 	}
 	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", body)
-	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
-	assert.False(t, decodePolicyCheckResponse(t, w).Allowed)
+	require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+	assert.Contains(t, w.Body.String(), "outside the oracle allowlist")
 }
 
 func TestPolicyCheck_ExplicitOrgIDOutsideAllowlistForbidden(t *testing.T) {

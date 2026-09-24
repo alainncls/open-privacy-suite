@@ -253,6 +253,19 @@ func (s *Server) handlePolicyCheck(c *gin.Context) {
 		c.JSON(http.StatusOK, policyCheckResponse{Allowed: false, Reason: "method_not_allowed"})
 		return
 	}
+	if authorized, authorityErr := s.policyCheckSubjectAuthorized(ctx, did, req.OrgID); authorityErr != nil {
+		slog.Error("policy-check: subject authority resolution failed", "err", authorityErr)
+		respondInternalError(c, "internal error")
+		return
+	} else if !authorized {
+		if logErr := s.recordPolicyCheck(ctx, authMethod, did, req.Subject.Address, req.OrgID, operation, false, "organization_not_authorized", correlationID); logErr != nil {
+			slog.Error("policy-check: audit log write failed; refusing response", "err", logErr)
+			respondInternalError(c, "internal error")
+			return
+		}
+		respondForbidden(c, "subject is outside the oracle allowlist")
+		return
+	}
 
 	accessReq, err := dryRunAccessRequest(did, req.OrgID, operation)
 	if err != nil {
@@ -334,6 +347,36 @@ func (s *Server) handlePolicyCheck(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, policyCheckResponse{Allowed: allowed, Reason: wireReason})
+}
+
+// policyCheckSubjectAuthorized enforces service-to-subject authority before
+// RBAC, contract, compliance, or trace policy is loaded. With an explicit org,
+// the subject must have an active membership in that allowlisted org. Without
+// one, at least one active membership must intersect the configured allowlist.
+func (s *Server) policyCheckSubjectAuthorized(ctx context.Context, subjectDID, requestedOrgID string) (bool, error) {
+	if s.db == nil || s.rbacAccessCtrl == nil {
+		return false, errors.New("policy authority store is unavailable")
+	}
+	user, err := s.db.GetUserByExternalID(ctx, subjectDID)
+	if err != nil {
+		return false, err
+	}
+	if user == nil {
+		return false, nil
+	}
+	memberships, err := s.rbacAccessCtrl.Store().ListActiveUserMembershipsWithDetails(ctx, user.ID)
+	if err != nil {
+		return false, err
+	}
+	for _, membership := range memberships {
+		if membership.Group == nil || !s.crossOrgAuthorizationOracleOrgAllowed(membership.Group.OrgID) {
+			continue
+		}
+		if requestedOrgID == "" || membership.Group.OrgID == requestedOrgID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // simulatePolicyCheck traces methods that can execute EVM code. It returns an
