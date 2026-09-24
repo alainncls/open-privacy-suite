@@ -1025,7 +1025,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		slog.Warn("CROSS-ORG AUTHORIZATION ORACLE ENABLED: the dedicated caller can query policy across the configured organization allowlist",
 			"mode", cfg.CrossOrgAuthorizationOracleMode,
 			"allowed_org_count", len(cfg.CrossOrgAuthorizationOracleOrgIDs))
-		if err := database.LogAuditAction(context.Background(), "configuration.cross_org_authorization_oracle.enabled", map[string]any{
+		if err := database.LogAuditAction(context.Background(), "cross_org_oracle.enabled", map[string]any{
 			"mode":              cfg.CrossOrgAuthorizationOracleMode,
 			"allowed_org_count": len(cfg.CrossOrgAuthorizationOracleOrgIDs),
 			"allowed_org_ids":   cfg.CrossOrgAuthorizationOracleOrgIDs,
