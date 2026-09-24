@@ -267,8 +267,17 @@ func (s *Server) handlePolicyCheck(c *gin.Context) {
 		return
 	}
 
-	accessReq, err := dryRunAccessRequest(did, req.OrgID, operation)
+	evaluation, err := s.evaluateOperation(ctx, did, operation, authorizationScopeAllActiveMemberships, req.OrgID)
 	if err != nil {
+		var accessErr *operationAccessError
+		if errors.As(err, &accessErr) {
+			slog.Error("policy-check: CheckAccess errored", "subject_did", did, "method", operation.Method, "err", err)
+			if logErr := s.recordPolicyCheck(ctx, authMethod, did, req.Subject.Address, req.OrgID, operation, false, "error", correlationID); logErr != nil {
+				slog.Error("policy-check: audit log write also failed", "err", logErr)
+			}
+			respondInternalError(c, "internal error")
+			return
+		}
 		// A malformed raw transaction is a client error, not a denial; still audited.
 		if logErr := s.recordPolicyCheck(ctx, authMethod, did, req.Subject.Address, req.OrgID, operation, false, "decode_error", correlationID); logErr != nil {
 			slog.Error("policy-check: audit log write failed; refusing response", "err", logErr)
@@ -278,18 +287,7 @@ func (s *Server) handlePolicyCheck(c *gin.Context) {
 		respondBadRequest(c, "invalid operation")
 		return
 	}
-
-	result, err := s.rbacAccessCtrl.CheckAccess(ctx, accessReq)
-	if err != nil {
-		// CheckAccess errors expose RBAC internals; they stay operator-only. The
-		// audit write is best-effort here since this branch answers 500 either way.
-		slog.Error("policy-check: CheckAccess errored", "subject_did", did, "method", operation.Method, "err", err)
-		if logErr := s.recordPolicyCheck(ctx, authMethod, did, req.Subject.Address, req.OrgID, operation, false, "error", correlationID); logErr != nil {
-			slog.Error("policy-check: audit log write also failed", "err", logErr)
-		}
-		respondInternalError(c, "internal error")
-		return
-	}
+	accessReq, result := evaluation.AccessRequest, evaluation.AccessResult
 	if result.OrgID != "" && !s.crossOrgAuthorizationOracleOrgAllowed(result.OrgID) {
 		if logErr := s.recordPolicyCheck(ctx, authMethod, did, req.Subject.Address, result.OrgID, operation, false, "organization_not_authorized", correlationID); logErr != nil {
 			slog.Error("policy-check: audit log write failed; refusing response", "err", logErr)
