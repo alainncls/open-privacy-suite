@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -212,8 +213,18 @@ func (s *Server) handleDryRun(c *gin.Context) {
 	// contracts. With OrgID set, CheckAccess scopes resolution to
 	// admin's org; cross-org contracts evaluate as if Bob were a
 	// non-member there (the safe answer).
-	accessReq, err := dryRunAccessRequest(req.UserDID, orgID, req.RPC)
+	evaluation, err := s.evaluateOperation(ctx, req.UserDID, req.RPC, authorizationScopeOrgLocal, orgID)
 	if err != nil {
+		var accessErr *operationAccessError
+		if errors.As(err, &accessErr) {
+			if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", sanitizeDryRunReason(err), c.GetString("correlation_id")); logErr != nil {
+				slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			return
+		}
 		slog.Warn("dry-run: could not build access check", "method", req.RPC.Method, "err", err)
 		if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", "decode_error", c.GetString("correlation_id")); logErr != nil {
 			slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
@@ -223,20 +234,7 @@ func (s *Server) handleDryRun(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid raw transaction"})
 		return
 	}
-	accessResult, err := s.rbacAccessCtrl.CheckAccess(ctx, accessReq)
-	if err != nil {
-		// H12: audit log fail-closed. If recordImpersonation errors,
-		// refuse to return the response — a compromised admin who can
-		// intermittently break the log write must not be able to
-		// exfiltrate data with no audit trail.
-		if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", sanitizeDryRunReason(err), c.GetString("correlation_id")); logErr != nil {
-			slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-		return
-	}
+	accessReq, accessResult := evaluation.AccessRequest, evaluation.AccessResult
 
 	if !accessResult.Allowed {
 		if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "deny", sanitizeDryRunReason(accessResult.Reason), c.GetString("correlation_id")); logErr != nil {
