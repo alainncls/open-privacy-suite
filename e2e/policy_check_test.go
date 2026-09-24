@@ -34,14 +34,14 @@ import (
 func TestPolicyCheckMatchesLiveEnforcement(t *testing.T) {
 	const adminToken = "pc-e2e-admin-token"
 	const operatorToken = "pc-e2e-operator-token"
-	srv, serverURL, cleanup := setupPolicyCheckE2E(t, adminToken, operatorToken)
+	orgID := uuid.New().String()
+	otherOrgID := uuid.New().String()
+	srv, serverURL, cleanup := setupPolicyCheckE2E(t, adminToken, operatorToken, []string{orgID, otherOrgID})
 	defer cleanup()
 	database := srv.DB()
 	ctx := context.Background()
 
 	// One participant org has a contract grant. A third-party org has none.
-	orgID := uuid.New().String()
-	otherOrgID := uuid.New().String()
 	require.NoError(t, database.CreateOrganization(ctx, &rbac.Organization{ID: orgID, Slug: "pc-e2e-a", Name: "PC E2E A", Settings: map[string]any{}}))
 	require.NoError(t, database.CreateOrganization(ctx, &rbac.Organization{ID: otherOrgID, Slug: "pc-e2e-b", Name: "PC E2E B", Settings: map[string]any{}}))
 
@@ -107,7 +107,7 @@ func TestPolicyCheckMatchesLiveEnforcement(t *testing.T) {
 			require.Equal(t, tc.want, liveAllowed,
 				"fixture no longer produces the intended live outcome (status %d)", rpcResp.StatusCode)
 
-			allowed, _ := policyCheckVerdict(t, serverURL, adminToken, map[string]any{
+			allowed, _ := policyCheckVerdict(t, serverURL, adminToken+"-oracle", map[string]any{
 				"subject": tc.subject, "operation": op, "org_id": orgID,
 			})
 			require.Equal(t, liveAllowed, allowed, "policy-check disagrees with live enforcement")
@@ -123,7 +123,7 @@ func TestPolicyCheckMatchesLiveEnforcement(t *testing.T) {
 		}
 		raw, err := json.Marshal(body)
 		require.NoError(t, err)
-		req, err := http.NewRequest(http.MethodPost, serverURL+"/api/v1/admin/policy-check", bytes.NewReader(raw))
+		req, err := http.NewRequest(http.MethodPost, serverURL+"/api/v1/admin/cross-org-authorization-oracle", bytes.NewReader(raw))
 		require.NoError(t, err)
 		req.Header.Set("X-Admin-Token", operatorToken)
 		req.Header.Set("Content-Type", "application/json")
@@ -140,9 +140,9 @@ func policyCheckVerdict(t *testing.T, serverURL, token string, body map[string]a
 	t.Helper()
 	raw, err := json.Marshal(body)
 	require.NoError(t, err)
-	req, err := http.NewRequest(http.MethodPost, serverURL+"/api/v1/admin/policy-check", bytes.NewReader(raw))
+	req, err := http.NewRequest(http.MethodPost, serverURL+"/api/v1/admin/cross-org-authorization-oracle", bytes.NewReader(raw))
 	require.NoError(t, err)
-	req.Header.Set("X-Admin-Token", token)
+	req.Header.Set("X-Cross-Org-Authorization-Oracle-Token", token)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
 	require.NoError(t, err)
@@ -161,12 +161,12 @@ func policyCheckVerdict(t *testing.T, serverURL, token string, body map[string]a
 // handlePolicyCheck's credential gate.
 func TestPolicyCheckRejectsRealJWTAdmin(t *testing.T) {
 	const adminToken = "pc-e2e-jwt-admin-token"
-	srv, serverURL, cleanup := setupPolicyCheckE2E(t, adminToken, "")
+	orgID := uuid.New().String()
+	srv, serverURL, cleanup := setupPolicyCheckE2E(t, adminToken, "", []string{orgID})
 	defer cleanup()
 	database := srv.DB()
 	ctx := context.Background()
 
-	orgID := uuid.New().String()
 	require.NoError(t, database.CreateOrganization(ctx, &rbac.Organization{ID: orgID, Slug: "pc-e2e-jwt", Name: "PC E2E JWT", Settings: map[string]any{}}))
 	orgAdminGID := createGroup(t, database, orgID, "pc-e2e-org-admin", nil, true)
 	attachAllowedMethods(t, database, orgAdminGID, []string{"eth_call"})
@@ -178,7 +178,7 @@ func TestPolicyCheckRejectsRealJWTAdmin(t *testing.T) {
 		"subject":   map[string]any{"did": orgAdminDID},
 		"operation": map[string]any{"method": "eth_call", "params": []any{}},
 	})
-	req, _ := http.NewRequest(http.MethodPost, serverURL+"/api/v1/admin/policy-check", bytes.NewReader(body))
+	req, _ := http.NewRequest(http.MethodPost, serverURL+"/api/v1/admin/cross-org-authorization-oracle", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+jwt)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
@@ -189,14 +189,14 @@ func TestPolicyCheckRejectsRealJWTAdmin(t *testing.T) {
 
 func TestPolicyCheckRejectsRealNoCredential(t *testing.T) {
 	const adminToken = "pc-e2e-nocred-token"
-	_, serverURL, cleanup := setupPolicyCheckE2E(t, adminToken, "")
+	_, serverURL, cleanup := setupPolicyCheckE2E(t, adminToken, "", []string{"00000000-0000-0000-0000-000000000001"})
 	defer cleanup()
 
 	body, _ := json.Marshal(map[string]any{
 		"subject":   map[string]any{"did": "did:pc-e2e:whoever"},
 		"operation": map[string]any{"method": "eth_call", "params": []any{}},
 	})
-	req, _ := http.NewRequest(http.MethodPost, serverURL+"/api/v1/admin/policy-check", bytes.NewReader(body))
+	req, _ := http.NewRequest(http.MethodPost, serverURL+"/api/v1/admin/cross-org-authorization-oracle", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
 	require.NoError(t, err)
@@ -206,14 +206,14 @@ func TestPolicyCheckRejectsRealNoCredential(t *testing.T) {
 
 func TestPolicyCheckRejectsRealWrongToken(t *testing.T) {
 	const adminToken = "pc-e2e-wrongtoken-real"
-	_, serverURL, cleanup := setupPolicyCheckE2E(t, adminToken, "")
+	_, serverURL, cleanup := setupPolicyCheckE2E(t, adminToken, "", []string{"00000000-0000-0000-0000-000000000001"})
 	defer cleanup()
 
 	body, _ := json.Marshal(map[string]any{
 		"subject":   map[string]any{"did": "did:pc-e2e:whoever"},
 		"operation": map[string]any{"method": "eth_call", "params": []any{}},
 	})
-	req, _ := http.NewRequest(http.MethodPost, serverURL+"/api/v1/admin/policy-check", bytes.NewReader(body))
+	req, _ := http.NewRequest(http.MethodPost, serverURL+"/api/v1/admin/cross-org-authorization-oracle", bytes.NewReader(body))
 	req.Header.Set("X-Admin-Token", "not-the-configured-token")
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
@@ -226,7 +226,7 @@ func TestPolicyCheckRejectsRealWrongToken(t *testing.T) {
 // AdminAPIToken/OperatorAPIToken. The shared helper leaves them empty, i.e.
 // no-token dev mode, which is the wrong fixture for tests whose whole point is
 // the token gate. operatorToken may be "".
-func setupPolicyCheckE2E(t *testing.T, adminToken, operatorToken string) (*server.Server, string, func()) {
+func setupPolicyCheckE2E(t *testing.T, adminToken, operatorToken string, allowedOrgIDs []string) (*server.Server, string, func()) {
 	t.Helper()
 
 	dbURL := os.Getenv("E2E_DATABASE_URL")
@@ -294,21 +294,24 @@ func setupPolicyCheckE2E(t *testing.T, adminToken, operatorToken string) (*serve
 	}
 
 	cfg := &config.Config{
-		NodeURL:                      nodeURL,
-		DatabaseURL:                  dbURL,
-		AuditDatabaseURL:             dbURL,
-		AuditAdminDatabaseURL:        dbURL,
-		PrivadoRPCURL:                "https://rpc-mainnet.privado.id",
-		IPFSGateway:                  "https://ipfs-proxy-cache.privado.id",
-		JWTSecret:                    "test-secret",
-		JWTRefreshSecret:             "test-refresh-secret",
-		VerifierID:                   "did:privado:verifier:test",
-		BaseURL:                      "http://127.0.0.1",
-		Environment:                  "development",
-		AllowMockLogin:               true,
-		AdminAPIToken:                adminToken,
-		OperatorAPIToken:             operatorToken,
-		RuntimeTracingEthCallEnabled: true,
+		NodeURL:                           nodeURL,
+		DatabaseURL:                       dbURL,
+		AuditDatabaseURL:                  dbURL,
+		AuditAdminDatabaseURL:             dbURL,
+		PrivadoRPCURL:                     "https://rpc-mainnet.privado.id",
+		IPFSGateway:                       "https://ipfs-proxy-cache.privado.id",
+		JWTSecret:                         "test-secret",
+		JWTRefreshSecret:                  "test-refresh-secret",
+		VerifierID:                        "did:privado:verifier:test",
+		BaseURL:                           "http://127.0.0.1",
+		Environment:                       "development",
+		AllowMockLogin:                    true,
+		AdminAPIToken:                     adminToken,
+		OperatorAPIToken:                  operatorToken,
+		CrossOrgAuthorizationOracleMode:   "verdict_only",
+		CrossOrgAuthorizationOracleToken:  adminToken + "-oracle",
+		CrossOrgAuthorizationOracleOrgIDs: allowedOrgIDs,
+		RuntimeTracingEthCallEnabled:      true,
 	}
 
 	srv, err := server.NewWithVerifier(cfg, nil)

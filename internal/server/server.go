@@ -1021,6 +1021,18 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	if cfg.AdminAPIToken == "" {
 		slog.Warn("ADMIN_API_TOKEN is not set - admin API is unprotected, any request from the private network will be accepted without authentication")
 	}
+	if s.crossOrgAuthorizationOracleEnabled() {
+		slog.Warn("CROSS-ORG AUTHORIZATION ORACLE ENABLED: the dedicated caller can query policy across the configured organization allowlist",
+			"mode", cfg.CrossOrgAuthorizationOracleMode,
+			"allowed_org_count", len(cfg.CrossOrgAuthorizationOracleOrgIDs))
+		if err := database.LogAuditAction(context.Background(), "configuration.cross_org_authorization_oracle.enabled", map[string]any{
+			"mode":              cfg.CrossOrgAuthorizationOracleMode,
+			"allowed_org_count": len(cfg.CrossOrgAuthorizationOracleOrgIDs),
+			"allowed_org_ids":   cfg.CrossOrgAuthorizationOracleOrgIDs,
+		}); err != nil {
+			return nil, fmt.Errorf("audit enabled cross-org authorization oracle configuration: %w", err)
+		}
+	}
 
 	// Startup registration is done: from here on the registries are read
 	// lock-free by request handlers, so any further RegisterExtraNamespaces
@@ -1208,6 +1220,12 @@ func (s *Server) setupRouter() *gin.Engine {
 	orgScope := s.orgScopingMiddleware()
 	apiV1 := router.Group("/api/v1")
 	{
+		if s.crossOrgAuthorizationOracleEnabled() {
+			oracle := apiV1.Group("/admin")
+			oracle.Use(middleware.BodyLimit(MaxRequestBodySize), s.localhostOnlyMiddleware(), s.crossOrgAuthorizationOracleAuthMiddleware())
+			oracle.POST("/cross-org-authorization-oracle", s.handlePolicyCheck)
+		}
+
 		// Admin endpoints - private network + token auth + org scoping
 		admin := apiV1.Group("/admin")
 		admin.Use(middleware.BodyLimit(MaxRequestBodySize), s.localhostOnlyMiddleware(), adminAuth, orgScope)
@@ -1723,6 +1741,35 @@ func (s *Server) adminAuthMiddleware() gin.HandlerFunc {
 
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "admin authentication required"})
 		c.Abort()
+	}
+}
+
+func (s *Server) crossOrgAuthorizationOracleEnabled() bool {
+	if s == nil || s.config == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(s.config.CrossOrgAuthorizationOracleMode)) {
+	case "verdict_only", "full_simulation":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Server) crossOrgAuthorizationOracleAuthMiddleware() gin.HandlerFunc {
+	expectedToken := ""
+	if s != nil && s.config != nil {
+		expectedToken = strings.TrimSpace(s.config.CrossOrgAuthorizationOracleToken)
+	}
+	return func(c *gin.Context) {
+		provided := strings.TrimSpace(c.GetHeader("X-Cross-Org-Authorization-Oracle-Token"))
+		if expectedToken == "" || provided == "" ||
+			subtle.ConstantTimeCompare([]byte(provided), []byte(expectedToken)) != 1 {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid or missing cross-org authorization oracle token"})
+			return
+		}
+		c.Set("auth_method", "cross_org_authorization_oracle_token")
+		c.Next()
 	}
 }
 

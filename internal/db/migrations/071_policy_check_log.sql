@@ -26,7 +26,7 @@ CREATE TABLE policy_check_log (
     correlation_id     UUID,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT policy_check_log_caller_auth_method_chk
-        CHECK (caller_auth_method IN ('admin_token', 'operator_token'))
+        CHECK (caller_auth_method = 'cross_org_authorization_oracle_token')
 );
 
 -- Browse by subject (who was checked, when?)

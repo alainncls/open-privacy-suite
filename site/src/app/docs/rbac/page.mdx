@@ -14,6 +14,15 @@ The Open Privacy Suite implements a **multi-tenant RBAC** system that protects b
 node access. Organizations define fine-grained permissions for users accessing JSON-RPC methods and
 smart contracts.
 
+<Callout type="warning" title="Cross-organization authorization oracle">
+The cross-org oracle is disabled by default. Enabling it requires a dedicated
+`CROSS_ORG_AUTHORIZATION_ORACLE_TOKEN`, distinct from admin/operator tokens,
+and an explicit `CROSS_ORG_AUTHORIZATION_ORACLE_ORG_IDS` allowlist. Calls use
+`POST /api/v1/admin/cross-org-authorization-oracle` and the
+`X-Cross-Org-Authorization-Oracle-Token` header. Even `verdict_only` reveals
+policy information and must be treated as a cross-tenant trust boundary.
+</Callout>
+
 **Key features:**
 
 - **Multi-tenant** -- multiple independent organizations with isolated permission sets

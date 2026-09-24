@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/compliance"
 	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/proxy"
@@ -34,7 +35,7 @@ import (
 // without re-testing gin auth itself (covered in admin_auth_test.go).
 //
 // Header set by tests:
-//   - X-Test-Auth-Method: "jwt_admin" | "admin_token" | "operator_token" | ""
+//   - X-Test-Auth-Method: "jwt_admin" | "cross_org_authorization_oracle_token" | "operator_token" | ""
 type policyCheckTestServer struct {
 	*testServerRBAC
 }
@@ -50,6 +51,7 @@ func (policyCheckDenyingRateLimiter) Stop() {}
 func setupPolicyCheckTestServer(t *testing.T) *policyCheckTestServer {
 	t.Helper()
 	ts := setupTestServerForRBAC(t)
+	ts.config.CrossOrgAuthorizationOracleMode = "verdict_only"
 
 	router := gin.New()
 	api := router.Group("/api")
@@ -163,6 +165,7 @@ func setupPCFixture(t *testing.T) *pcFixture {
 	orgA := uuid.New().String()
 	orgB := uuid.New().String()
 	orgC := uuid.New().String()
+	srv.config.CrossOrgAuthorizationOracleOrgIDs = []string{orgA, orgB, orgC}
 	require.NoError(t, database.CreateOrganization(ctx, &rbac.Organization{ID: orgA, Slug: "pc-a", Name: "PC A", Settings: map[string]any{}}))
 	require.NoError(t, database.CreateOrganization(ctx, &rbac.Organization{ID: orgB, Slug: "pc-b", Name: "PC B", Settings: map[string]any{}}))
 	require.NoError(t, database.CreateOrganization(ctx, &rbac.Organization{ID: orgC, Slug: "pc-c", Name: "PC C", Settings: map[string]any{}}))
@@ -266,17 +269,17 @@ func TestPolicyCheck_RejectsJWTAdmin(t *testing.T) {
 		"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr),
 	}
 	w := policyCheckPost(t, f.srv, "jwt_admin", body)
-	assert.Equal(t, http.StatusForbidden, w.Code)
-	assert.Contains(t, w.Body.String(), "service credential")
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Contains(t, w.Body.String(), "oracle authentication")
 }
 
-func TestPolicyCheck_AcceptsAdminToken(t *testing.T) {
+func TestPolicyCheck_AcceptsOracleToken(t *testing.T) {
 	f := setupPCFixture(t)
 	body := map[string]any{
 		"subject":   map[string]any{"did": f.userDID},
 		"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr),
 	}
-	w := policyCheckPost(t, f.srv, "admin_token", body)
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", body)
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 	assert.True(t, decodePolicyCheckResponse(t, w).Allowed)
 }
@@ -285,7 +288,7 @@ func TestPolicyCheck_RejectsUnlinkedSender(t *testing.T) {
 	f := setupPCFixture(t)
 	op := pcBalanceOfCallOp(f.contractAddr, f.userAddr)
 	op["params"].([]any)[0].(map[string]any)["from"] = f.unlinkedAddr
-	w := policyCheckPost(t, f.srv, "admin_token", map[string]any{
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", map[string]any{
 		"subject": map[string]any{"did": f.userDID}, "operation": op,
 	})
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
@@ -301,7 +304,7 @@ func TestPolicyCheck_UsesConcurrencyLimit(t *testing.T) {
 	defer limiter.Release(policyCheckLimiterKey)
 	f.srv.jsonrpcProcessor = &JSONRPCProcessor{concurrencyLimiter: limiter}
 
-	w := policyCheckPost(t, f.srv, "admin_token", map[string]any{
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", map[string]any{
 		"subject":   map[string]any{"did": f.userDID},
 		"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr),
 	})
@@ -317,7 +320,7 @@ func TestPolicyCheck_UsesTraceRateLimit(t *testing.T) {
 		"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr),
 	}
 
-	w := policyCheckPost(t, f.srv, "admin_token", body)
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", body)
 	// A spent trace rate budget is operational unavailability, not a policy deny.
 	require.Equal(t, http.StatusTooManyRequests, w.Code, "body: %s", w.Body.String())
 }
@@ -339,18 +342,26 @@ func policyCheckPostRaw(t *testing.T, srv *policyCheckTestServer, authMethod, ra
 func TestPolicyCheck_RejectsTrailingJSON(t *testing.T) {
 	f := setupPCFixture(t)
 	valid := `{"subject":{"did":"` + f.userDID + `"},"operation":{"method":"eth_call","params":[{"to":"` + f.contractAddr + `","data":"0x70a08231"},"latest"]}}`
-	w := policyCheckPostRaw(t, f.srv, "admin_token", valid+`{"unexpected":true}`)
+	w := policyCheckPostRaw(t, f.srv, "cross_org_authorization_oracle_token", valid+`{"unexpected":true}`)
 	assert.Equal(t, http.StatusBadRequest, w.Code, "trailing JSON must be rejected; body: %s", w.Body.String())
 }
 
 func TestPolicyCheck_MalformedCallParamsReturn400(t *testing.T) {
 	f := setupPCFixture(t)
 	// eth_call with a non-object first param is a caller error, not a 500.
-	w := policyCheckPost(t, f.srv, "admin_token", map[string]any{
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", map[string]any{
 		"subject":   map[string]any{"did": f.userDID},
 		"operation": map[string]any{"method": "eth_call", "params": []any{"not-an-object"}},
 	})
 	assert.Equal(t, http.StatusBadRequest, w.Code, "malformed params must return 400; body: %s", w.Body.String())
+
+	var reason string
+	require.NoError(t, f.srv.db.Conn().QueryRowContext(context.Background(), `
+		SELECT reason FROM policy_check_log
+		 WHERE subject_did = $1 AND method = 'eth_call' ORDER BY created_at DESC LIMIT 1`,
+		f.userDID,
+	).Scan(&reason))
+	assert.Equal(t, "decode_error", reason)
 }
 
 func TestPolicyCheck_RejectsOperatorToken(t *testing.T) {
@@ -360,13 +371,13 @@ func TestPolicyCheck_RejectsOperatorToken(t *testing.T) {
 		"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr),
 	}
 	w := policyCheckPost(t, f.srv, "operator_token", body)
-	require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
-	assert.Contains(t, w.Body.String(), "tenant data")
+	require.Equal(t, http.StatusUnauthorized, w.Code, "body: %s", w.Body.String())
+	assert.Contains(t, w.Body.String(), "oracle authentication")
 }
 
 func TestPolicyCheck_RejectsDebugTraceMethods(t *testing.T) {
 	f := setupPCFixture(t)
-	w := policyCheckPost(t, f.srv, "admin_token", map[string]any{
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", map[string]any{
 		"subject": map[string]any{"did": f.userDID},
 		"operation": map[string]any{
 			"method": "debug_traceCall",
@@ -391,7 +402,7 @@ func TestPolicyCheck_RejectsInvalidJSON(t *testing.T) {
 	f := setupPCFixture(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/policy-check", bytes.NewReader([]byte("{not json")))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Test-Auth-Method", "admin_token")
+	req.Header.Set("X-Test-Auth-Method", "cross_org_authorization_oracle_token")
 	w := httptest.NewRecorder()
 	f.srv.router.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -403,7 +414,7 @@ func TestPolicyCheck_RejectsMissingOperationMethod(t *testing.T) {
 		"subject":   map[string]any{"did": f.userDID},
 		"operation": map[string]any{"params": []any{}},
 	}
-	w := policyCheckPost(t, f.srv, "admin_token", body)
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", body)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
@@ -413,7 +424,7 @@ func TestPolicyCheck_RejectsSubjectWithBothFields(t *testing.T) {
 		"subject":   map[string]any{"did": f.userDID, "address": f.userAddr},
 		"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr),
 	}
-	w := policyCheckPost(t, f.srv, "admin_token", body)
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", body)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "exactly one of did or address")
 }
@@ -424,14 +435,14 @@ func TestPolicyCheck_RejectsSubjectWithNeitherField(t *testing.T) {
 		"subject":   map[string]any{},
 		"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr),
 	}
-	w := policyCheckPost(t, f.srv, "admin_token", body)
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", body)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "exactly one of did or address")
 }
 
 func TestPolicyCheck_RejectsMalformedAddressSubject(t *testing.T) {
 	f := setupPCFixture(t)
-	w := policyCheckPost(t, f.srv, "admin_token", map[string]any{
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", map[string]any{
 		"subject":   map[string]any{"address": "not-an-ethereum-address"},
 		"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr),
 	})
@@ -451,7 +462,7 @@ func TestPolicyCheck_UnknownDIDDenied(t *testing.T) {
 		"subject":   map[string]any{"did": "did:pc:nobody"},
 		"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr),
 	}
-	w := policyCheckPost(t, f.srv, "admin_token", body)
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", body)
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 	resp := decodePolicyCheckResponse(t, w)
 	assert.False(t, resp.Allowed)
@@ -464,11 +475,11 @@ func TestPolicyCheck_UnknownDIDDenied(t *testing.T) {
 func TestPolicyCheck_AddressSubjectResolvesAndMatchesDID(t *testing.T) {
 	f := setupPCFixture(t)
 
-	byDID := policyCheckPost(t, f.srv, "admin_token", map[string]any{
+	byDID := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", map[string]any{
 		"subject":   map[string]any{"did": f.userDID},
 		"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr),
 	})
-	byAddr := policyCheckPost(t, f.srv, "admin_token", map[string]any{
+	byAddr := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", map[string]any{
 		"subject":   map[string]any{"address": f.userAddr},
 		"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr),
 	})
@@ -481,7 +492,7 @@ func TestPolicyCheck_AddressSubjectResolvesAndMatchesDID(t *testing.T) {
 func TestPolicyCheck_AddressSubjectCaseInsensitive(t *testing.T) {
 	f := setupPCFixture(t)
 	mixedCase := "0x" + strings.ToUpper(strings.TrimPrefix(f.userAddr, "0x"))
-	w := policyCheckPost(t, f.srv, "admin_token", map[string]any{
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", map[string]any{
 		"subject":   map[string]any{"address": mixedCase},
 		"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr),
 	})
@@ -491,7 +502,7 @@ func TestPolicyCheck_AddressSubjectCaseInsensitive(t *testing.T) {
 
 func TestPolicyCheck_UnlinkedAddressDenied(t *testing.T) {
 	f := setupPCFixture(t)
-	w := policyCheckPost(t, f.srv, "admin_token", map[string]any{
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", map[string]any{
 		"subject":   map[string]any{"address": f.unlinkedAddr},
 		"operation": pcBalanceOfCallOp(f.contractAddr, f.unlinkedAddr),
 	})
@@ -507,7 +518,7 @@ func TestPolicyCheck_UnlinkedAddressDenied(t *testing.T) {
 // bypass that filter (e.g. via a different, unfiltered lookup path).
 func TestPolicyCheck_RevokedLinkOnlyDenied(t *testing.T) {
 	f := setupPCFixture(t)
-	w := policyCheckPost(t, f.srv, "admin_token", map[string]any{
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", map[string]any{
 		"subject":   map[string]any{"address": f.revokedOnlyAddr},
 		"operation": pcBalanceOfCallOp(f.contractAddr, f.revokedOnlyAddr),
 	})
@@ -525,7 +536,7 @@ func TestPolicyCheck_RevokedLinkOnlyDenied(t *testing.T) {
 // must never collapse to that behaviour.
 func TestPolicyCheck_CollisionAddressRefusesToChoose(t *testing.T) {
 	f := setupPCFixture(t)
-	w := policyCheckPost(t, f.srv, "admin_token", map[string]any{
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", map[string]any{
 		"subject":   map[string]any{"address": f.collisionAddr},
 		"operation": pcBalanceOfCallOp(f.contractAddr, f.collisionAddr),
 	})
@@ -554,7 +565,7 @@ func TestPolicyCheck_OrgOmittedDerivedFromRegisteredTarget(t *testing.T) {
 		"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr),
 		// org_id omitted entirely.
 	}
-	w := policyCheckPost(t, f.srv, "admin_token", body)
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", body)
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 	assert.True(t, decodePolicyCheckResponse(t, w).Allowed)
 }
@@ -582,7 +593,7 @@ func TestPolicyCheck_OrgOmittedMultiOrgSubjectDenied(t *testing.T) {
 			"params": []any{map[string]any{"to": "0x0000000000000000000000000000000000feed01", "data": "0x"}, "latest"},
 		},
 	}
-	w := policyCheckPost(t, f.srv, "admin_token", body)
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", body)
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 	resp := decodePolicyCheckResponse(t, w)
 	assert.False(t, resp.Allowed)
@@ -617,7 +628,7 @@ func TestPolicyCheck_ExplicitOrgIDCrossOrgTargetDenied(t *testing.T) {
 		},
 		"org_id": f.orgA,
 	}
-	w := policyCheckPost(t, f.srv, "admin_token", body)
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", body)
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 	assert.False(t, decodePolicyCheckResponse(t, w).Allowed)
 }
@@ -632,21 +643,21 @@ func TestPolicyCheck_ExplicitOrgIDSubjectNotMemberDenied(t *testing.T) {
 		},
 		"org_id": f.orgB,
 	}
-	w := policyCheckPost(t, f.srv, "admin_token", body)
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", body)
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 	assert.False(t, decodePolicyCheckResponse(t, w).Allowed)
 }
 
-func TestPolicyCheck_ExplicitOrgIDUnknownDenied(t *testing.T) {
+func TestPolicyCheck_ExplicitOrgIDOutsideAllowlistForbidden(t *testing.T) {
 	f := setupPCFixture(t)
 	body := map[string]any{
 		"subject":   map[string]any{"did": f.userDID},
 		"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr),
 		"org_id":    uuid.New().String(), // does not exist
 	}
-	w := policyCheckPost(t, f.srv, "admin_token", body)
-	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
-	assert.False(t, decodePolicyCheckResponse(t, w).Allowed)
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", body)
+	require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+	assert.Contains(t, w.Body.String(), "outside the oracle allowlist")
 }
 
 func TestPolicyCheck_ThirdPartyNoGrantAnywhereDenied(t *testing.T) {
@@ -655,7 +666,7 @@ func TestPolicyCheck_ThirdPartyNoGrantAnywhereDenied(t *testing.T) {
 		"subject":   map[string]any{"did": f.bankCUserDID},
 		"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr),
 	}
-	w := policyCheckPost(t, f.srv, "admin_token", body)
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", body)
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 	assert.False(t, decodePolicyCheckResponse(t, w).Allowed)
 }
@@ -680,7 +691,7 @@ func TestPolicyCheck_FunctionLevelRulesMatchEnforcement(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			w := policyCheckPost(t, f.srv, "admin_token", map[string]any{
+			w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", map[string]any{
 				"subject":   map[string]any{"did": f.userDID},
 				"operation": pcBalanceOfCallOp(f.contractAddr, tc.argAddr),
 			})
@@ -699,7 +710,7 @@ func TestPolicyCheck_FunctionLevelRulesMatchEnforcement(t *testing.T) {
 func TestPolicyCheck_ChecksummedTargetNormalized(t *testing.T) {
 	f := setupPCFixture(t)
 	checksummed := "0x" + strings.ToUpper(strings.TrimPrefix(f.contractAddr, "0x")[:1]) + strings.TrimPrefix(f.contractAddr, "0x")[1:]
-	w := policyCheckPost(t, f.srv, "admin_token", map[string]any{
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", map[string]any{
 		"subject":   map[string]any{"did": f.userDID},
 		"operation": pcBalanceOfCallOp(checksummed, f.userAddr),
 	})
@@ -712,7 +723,7 @@ func TestPolicyCheck_ReadTraceDeniesNestedForeignCall(t *testing.T) {
 	node := newPolicyTraceNode(t, f.orgBContractAddr)
 	f.srv.proxy = proxy.New(node.URL)
 
-	w := policyCheckPost(t, f.srv, "admin_token", map[string]any{
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", map[string]any{
 		"subject":   map[string]any{"did": f.userDID},
 		"org_id":    f.orgA,
 		"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr),
@@ -744,7 +755,7 @@ func TestPolicyCheck_WriteTraceDeniesNestedForeignCall(t *testing.T) {
 
 	node := newPolicyTraceNode(t, f.orgBContractAddr)
 	f.srv.proxy = proxy.New(node.URL)
-	w := policyCheckPost(t, f.srv, "admin_token", map[string]any{
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", map[string]any{
 		"subject": map[string]any{"did": writerDID},
 		"org_id":  f.orgA,
 		"operation": map[string]any{
@@ -787,7 +798,7 @@ func TestPolicyCheck_WriteRunsCompliancePreview(t *testing.T) {
 	}, "usd"))
 	f.srv.complianceChecker = compliance.NewChecker(f.db, 24*time.Hour, 15*time.Minute)
 
-	w := policyCheckPost(t, f.srv, "admin_token", map[string]any{
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", map[string]any{
 		"subject": map[string]any{"did": did},
 		"org_id":  f.orgA,
 		"operation": map[string]any{
@@ -817,7 +828,7 @@ func TestPolicyCheck_TraceUnavailableFailsClosed(t *testing.T) {
 	t.Cleanup(node.Close)
 	f.srv.proxy = proxy.New(node.URL)
 
-	w := policyCheckPost(t, f.srv, "admin_token", map[string]any{
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", map[string]any{
 		"subject":   map[string]any{"did": f.userDID},
 		"org_id":    f.orgA,
 		"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr),
@@ -844,7 +855,7 @@ func TestPolicyCheck_TraceUsesResolvedUpstreamCredential(t *testing.T) {
 		defaultRPCAPIKeyHeader: "X-RPC-Key",
 	}
 
-	w := policyCheckPost(t, f.srv, "admin_token", map[string]any{
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", map[string]any{
 		"subject":   map[string]any{"did": f.userDID},
 		"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr),
 	})
@@ -852,8 +863,36 @@ func TestPolicyCheck_TraceUsesResolvedUpstreamCredential(t *testing.T) {
 	assert.True(t, decodePolicyCheckResponse(t, w).Allowed)
 }
 
+func TestPolicyCheck_CreateAccessListTracesNestedCalls(t *testing.T) {
+	f := setupPCFixture(t)
+	node := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Method string `json:"method"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+		require.Equal(t, "debug_traceCall", request.Method)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0", "id": 1,
+			"result": map[string]any{"type": "CALL", "from": f.userAddr, "to": f.contractAddr},
+		})
+	}))
+	t.Cleanup(node.Close)
+	f.srv.proxy = proxy.New(node.URL)
+
+	result, err := f.srv.forwardDryRunTraceWithAPIKey(context.Background(), apimodels.DryRunRPCBlock{
+		Method: "eth_createAccessList",
+		Params: []any{map[string]any{"from": f.userAddr, "to": f.contractAddr}, "latest"},
+	}, "", proxy.DefaultAPIKeyHeader)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, result.Parsed)
+	require.NotEmpty(t, result.Parsed.CallTargets)
+	assert.Equal(t, strings.ToLower(f.contractAddr), strings.ToLower(result.Parsed.CallTargets[0].To))
+}
+
 func TestValidatePolicyCheckVisibleTo(t *testing.T) {
-	validContractCall := dryRunRPCBlock{
+	validContractCall := apimodels.DryRunRPCBlock{
 		Method: "eth_sendTransaction",
 		Params: []any{map[string]any{
 			"to": "0x000000000000000000000000000000000000ac51", "data": "0x12345678",
@@ -873,7 +912,7 @@ func TestValidatePolicyCheckVisibleTo(t *testing.T) {
 	})
 
 	t.Run("rejects plain value transfers", func(t *testing.T) {
-		op := dryRunRPCBlock{Method: "eth_sendTransaction", Params: []any{map[string]any{
+		op := apimodels.DryRunRPCBlock{Method: "eth_sendTransaction", Params: []any{map[string]any{
 			"to": "0x000000000000000000000000000000000000ac51", "value": "0x1", "visibleTo": []any{"did:example:recipient"},
 		}}}
 		reason, err := validatePolicyCheckVisibleTo(op)
@@ -919,7 +958,7 @@ func TestPolicyCheck_DeploymentRequiresClaim(t *testing.T) {
 	}
 
 	t.Run("no deploy claim, denied", func(t *testing.T) {
-		w := policyCheckPost(t, f.srv, "admin_token", map[string]any{
+		w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", map[string]any{
 			"subject":   map[string]any{"did": f.userDID}, // orgA participant, no deploy claim
 			"operation": deployOp,
 		})
@@ -928,7 +967,7 @@ func TestPolicyCheck_DeploymentRequiresClaim(t *testing.T) {
 	})
 
 	t.Run("deploy claim, allowed", func(t *testing.T) {
-		w := policyCheckPost(t, f.srv, "admin_token", map[string]any{
+		w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", map[string]any{
 			"subject":   map[string]any{"did": deployerDID},
 			"operation": deployOp,
 		})
@@ -972,7 +1011,7 @@ func TestPolicyCheck_RawSendTransactionMatchesEnforcement(t *testing.T) {
 			to := common.HexToAddress(tc.to)
 			rawTx, sender := pcSignedRawTx(t, &to, []byte{0xab, 0xcd, 0xab, 0xcd})
 			require.NoError(t, f.srv.db.SystemLinkEthAddress(ctx, senderDID, sender))
-			w := policyCheckPost(t, f.srv, "admin_token", map[string]any{
+			w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", map[string]any{
 				"subject": map[string]any{"did": senderDID},
 				"operation": map[string]any{
 					"method": "eth_sendRawTransaction",
@@ -991,7 +1030,7 @@ func TestPolicyCheck_MalformedRawTransactionBadRequestAndAudited(t *testing.T) {
 		"method": "eth_sendRawTransaction",
 		"params": []any{"0xnotrealhex"},
 	}
-	w := policyCheckPost(t, f.srv, "admin_token", map[string]any{
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", map[string]any{
 		"subject":   map[string]any{"did": f.userDID},
 		"operation": op,
 	})
@@ -1032,7 +1071,7 @@ func TestPolicyCheck_AuditWriteFailureIsFailClosed(t *testing.T) {
 
 	otherAddr := "0x000000000000000000000000000000000000ac88"
 	op := pcBalanceOfCallOp(f.contractAddr, otherAddr) // denied by the param rule
-	w := policyCheckPost(t, f.srv, "admin_token", map[string]any{
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", map[string]any{
 		"subject":   map[string]any{"did": f.userDID},
 		"operation": op,
 	})
@@ -1056,7 +1095,7 @@ func TestPolicyCheck_AuditWriteFailureIsFailClosed(t *testing.T) {
 
 func TestPolicyCheck_AuditRowRecordsCallerAndSubject(t *testing.T) {
 	f := setupPCFixture(t)
-	w := policyCheckPost(t, f.srv, "admin_token", map[string]any{
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", map[string]any{
 		"subject":   map[string]any{"did": f.userDID},
 		"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr),
 	})
@@ -1069,7 +1108,7 @@ func TestPolicyCheck_AuditRowRecordsCallerAndSubject(t *testing.T) {
 		 WHERE subject_did = $1 ORDER BY created_at DESC LIMIT 1`,
 		f.userDID,
 	).Scan(&callerAuthMethod, &method, &paramsHash, &allowed))
-	assert.Equal(t, "admin_token", callerAuthMethod)
+	assert.Equal(t, "cross_org_authorization_oracle_token", callerAuthMethod)
 	assert.Equal(t, "eth_call", method)
 	assert.True(t, allowed)
 	assert.Len(t, paramsHash, 64)
@@ -1077,7 +1116,7 @@ func TestPolicyCheck_AuditRowRecordsCallerAndSubject(t *testing.T) {
 
 func TestPolicyCheck_AuditRowRecordsSubjectAddressForAddressPath(t *testing.T) {
 	f := setupPCFixture(t)
-	w := policyCheckPost(t, f.srv, "admin_token", map[string]any{
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", map[string]any{
 		"subject":   map[string]any{"address": f.userAddr},
 		"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr),
 	})

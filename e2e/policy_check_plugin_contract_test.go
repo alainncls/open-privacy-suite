@@ -36,12 +36,12 @@ const pluginTransferCalldata = "0xa9059cbb" +
 // and function selector from the JSON-RPC payload.
 func TestPolicyCheckAcceptsRPCPayload(t *testing.T) {
 	const adminToken = "pc-plugin-contract-token"
-	srv, serverURL, cleanup := setupPolicyCheckE2E(t, adminToken, "")
+	orgID := uuid.New().String()
+	srv, serverURL, cleanup := setupPolicyCheckE2E(t, adminToken, "", []string{orgID})
 	defer cleanup()
 	database := srv.DB()
 	ctx := context.Background()
 
-	orgID := uuid.New().String()
 	require.NoError(t, database.CreateOrganization(ctx, &rbac.Organization{
 		ID: orgID, Slug: "pc-plugin-org", Name: "PC Plugin Org", Settings: map[string]any{},
 	}))
@@ -80,7 +80,7 @@ func TestPolicyCheckAcceptsRPCPayload(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			body := fmt.Sprintf(pluginPolicyCheckPayload, tc.from, tc.from, tc.to, tc.data)
-			allowed, reason := postRawPolicyCheck(t, serverURL, adminToken, body)
+			allowed, reason := postRawPolicyCheck(t, serverURL, adminToken+"-oracle", body)
 			require.Equal(t, tc.wantAllowed, allowed, "reason=%q", reason)
 			if !tc.wantAllowed {
 				// The plugin surfaces this straight into a peer-visible abort reason, so it must
@@ -97,12 +97,12 @@ func TestPolicyCheckAcceptsRPCPayload(t *testing.T) {
 // TestPolicyCheckDerivesSelectorFromRPCPayload verifies function-level rules.
 func TestPolicyCheckDerivesSelectorFromRPCPayload(t *testing.T) {
 	const adminToken = "pc-plugin-selector-token"
-	srv, serverURL, cleanup := setupPolicyCheckE2E(t, adminToken, "")
+	orgID := uuid.New().String()
+	srv, serverURL, cleanup := setupPolicyCheckE2E(t, adminToken, "", []string{orgID})
 	defer cleanup()
 	database := srv.DB()
 	ctx := context.Background()
 
-	orgID := uuid.New().String()
 	require.NoError(t, database.CreateOrganization(ctx, &rbac.Organization{
 		ID: orgID, Slug: "pc-selector-org", Name: "PC Selector Org", Settings: map[string]any{},
 	}))
@@ -118,7 +118,7 @@ func TestPolicyCheckDerivesSelectorFromRPCPayload(t *testing.T) {
 	contractID := createContract(t, database, orgID, dest, "PCSelectorGated")
 	createGrantWithFunctionRule(t, database, contractID, groupID, "0xa9059cbb")
 
-	allowed, _ := postRawPolicyCheck(t, serverURL, adminToken,
+	allowed, _ := postRawPolicyCheck(t, serverURL, adminToken+"-oracle",
 		fmt.Sprintf(pluginPolicyCheckPayload, originator, originator, dest, pluginTransferCalldata))
 	require.True(t, allowed, "the permitted selector must be allowed")
 
@@ -126,7 +126,7 @@ func TestPolicyCheckDerivesSelectorFromRPCPayload(t *testing.T) {
 	const approveCalldata = "0x095ea7b3" +
 		"00000000000000000000000000000000000000000000000000000000000000ff" +
 		"0000000000000000000000000000000000000000000000000000000000000001"
-	allowed, reason := postRawPolicyCheck(t, serverURL, adminToken,
+	allowed, reason := postRawPolicyCheck(t, serverURL, adminToken+"-oracle",
 		fmt.Sprintf(pluginPolicyCheckPayload, originator, originator, dest, approveCalldata))
 	require.False(t, allowed, "a selector outside the rule must deny (RD-435), reason=%q", reason)
 }
@@ -145,9 +145,9 @@ func createGrantWithFunctionRule(t *testing.T, database *db.DB, contractID, grou
 
 func postRawPolicyCheck(t *testing.T, serverURL, token, rawBody string) (bool, string) {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodPost, serverURL+"/api/v1/admin/policy-check", bytes.NewReader([]byte(rawBody)))
+	req, err := http.NewRequest(http.MethodPost, serverURL+"/api/v1/admin/cross-org-authorization-oracle", bytes.NewReader([]byte(rawBody)))
 	require.NoError(t, err)
-	req.Header.Set("X-Admin-Token", token)
+	req.Header.Set("X-Cross-Org-Authorization-Oracle-Token", token)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
 	require.NoError(t, err)

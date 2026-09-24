@@ -41,9 +41,6 @@ func (s *Server) registerRBACRoutes(api *gin.RouterGroup) {
 	// admin_dry_run.go for threat-model rationale.
 	api.POST("/orgs/:org_id/dry-run", s.handleDryRun)
 
-	// Policy-check for trusted infrastructure callers (X-Admin-Token only).
-	// Distinct from POST /access/check below (human-admin debugging tool).
-	api.POST("/policy-check", s.handlePolicyCheck)
 	api.POST("/orgs/:org_id/contracts/sync-check", s.checkContractsOnChain)
 	api.POST("/orgs/:org_id/contracts/sync-delete", s.deleteStaleContracts)
 	api.GET("/orgs/:org_id/contracts/grant-summary", s.getContractGrantSummary)

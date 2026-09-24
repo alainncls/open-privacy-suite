@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/compliance"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
@@ -60,8 +61,8 @@ type policyCheckRPCBlock struct {
 }
 
 // rpcBlock converts the policy-check operation to the shared evaluation model.
-func (op policyCheckRPCBlock) rpcBlock() dryRunRPCBlock {
-	return dryRunRPCBlock{Method: op.Method, Params: op.Params}
+func (op policyCheckRPCBlock) rpcBlock() apimodels.DryRunRPCBlock {
+	return apimodels.DryRunRPCBlock{Method: op.Method, Params: op.Params}
 }
 
 // policyCheckResponse is the handler's reply: verdict only, no tenant data.
@@ -171,23 +172,16 @@ func (s *Server) resolvePolicyCheckSubject(ctx context.Context, subj policyCheck
 // @Failure      429 {object} map[string]string "concurrency or rate budget exhausted; operational, not a policy verdict"
 // @Failure      500 {object} map[string]string "internal error (includes audit-log write failure, response withheld)"
 // @Failure      503 {object} map[string]string "policy simulation unavailable (upstream trace failure); operational, not a policy verdict"
-// @Security     AdminToken
-// @Router       /api/v1/admin/policy-check [post]
+// @Param        X-Cross-Org-Authorization-Oracle-Token header string true "Dedicated cross-org oracle token"
+// @Router       /api/v1/admin/cross-org-authorization-oracle [post]
 func (s *Server) handlePolicyCheck(c *gin.Context) {
 	ctx := c.Request.Context()
 
-	// Service credential only. Dev-mode and JWT admins are not authorized here.
+	// Dedicated oracle credential only. General admin/operator/JWT credentials
+	// are deliberately outside this cross-tenant trust boundary.
 	authMethod := c.GetString("auth_method")
-	if authMethod != "admin_token" {
-		if authMethod == "operator_token" {
-			denyOperatorTenantRead(c)
-			return
-		}
-		if authMethod == "jwt_admin" {
-			respondForbidden(c, "policy-check requires the full X-Admin-Token service credential; JWT admin credentials are not authorised for this endpoint")
-			return
-		}
-		respondUnauthorized(c, "admin authentication required")
+	if authMethod != "cross_org_authorization_oracle_token" {
+		respondUnauthorized(c, "cross-org authorization oracle authentication required")
 		return
 	}
 
@@ -216,6 +210,11 @@ func (s *Server) handlePolicyCheck(c *gin.Context) {
 	req.Operation.Method = rbac.CanonicalizeMethod(strings.TrimSpace(req.Operation.Method))
 	if req.Operation.Method == "" {
 		respondBadRequest(c, "operation.method is required")
+		return
+	}
+	req.OrgID = strings.TrimSpace(req.OrgID)
+	if req.OrgID != "" && !s.crossOrgAuthorizationOracleOrgAllowed(req.OrgID) {
+		respondForbidden(c, "organization is outside the oracle allowlist")
 		return
 	}
 	operation := req.Operation.rpcBlock()
@@ -278,6 +277,15 @@ func (s *Server) handlePolicyCheck(c *gin.Context) {
 		respondInternalError(c, "internal error")
 		return
 	}
+	if result.OrgID != "" && !s.crossOrgAuthorizationOracleOrgAllowed(result.OrgID) {
+		if logErr := s.recordPolicyCheck(ctx, authMethod, did, req.Subject.Address, result.OrgID, operation, false, "organization_not_authorized", correlationID); logErr != nil {
+			slog.Error("policy-check: audit log write failed; refusing response", "err", logErr)
+			respondInternalError(c, "internal error")
+			return
+		}
+		respondForbidden(c, "organization is outside the oracle allowlist")
+		return
+	}
 
 	allowed := result.Allowed
 	auditReason, wireReason := "", ""
@@ -291,6 +299,11 @@ func (s *Server) handlePolicyCheck(c *gin.Context) {
 			// error, not a denial and not an infrastructure failure.
 			var clientErr *simulationClientError
 			if errors.As(err, &clientErr) {
+				if logErr := s.recordPolicyCheck(ctx, authMethod, did, req.Subject.Address, result.OrgID, operation, false, "decode_error", correlationID); logErr != nil {
+					slog.Error("policy-check: audit log write failed; refusing response", "err", logErr)
+					respondInternalError(c, "internal error")
+					return
+				}
 				respondBadRequest(c, "invalid operation")
 				return
 			}
@@ -328,13 +341,13 @@ func (s *Server) handlePolicyCheck(c *gin.Context) {
 func (s *Server) simulatePolicyCheck(
 	ctx context.Context,
 	subjectDID string,
-	op dryRunRPCBlock,
+	op apimodels.DryRunRPCBlock,
 	accessReq *rbac.AccessCheckRequest,
 	accessResult *rbac.AccessCheckResult,
 ) (wireReason, auditReason string, err error) {
 	effectiveMethod := rbac.ResolveMethodAlias(op.Method)
 	switch effectiveMethod {
-	case "eth_call", "eth_estimateGas", "eth_sendTransaction", "eth_sendRawTransaction":
+	case "eth_call", "eth_estimateGas", "eth_createAccessList", "eth_sendTransaction", "eth_sendRawTransaction":
 	default:
 		return "", "", nil
 	}
@@ -390,7 +403,7 @@ func (s *Server) simulatePolicyCheck(
 		apiKeyHeader = s.jsonrpcProcessor.resolveAPIKeyHeader()
 	}
 	if !s.policyCheckEOATransfer(traceCtx, op, apiKey, apiKeyHeader) {
-		traceResult, traceErr := s.forwardSimulationTraceWithAPIKey(traceCtx, op, apiKey, apiKeyHeader)
+		traceResult, traceErr := s.forwardDryRunTraceWithAPIKey(traceCtx, op, apiKey, apiKeyHeader)
 		if traceErr != nil {
 			// Malformed operation params are a client error, not an upstream failure.
 			var clientErr *simulationClientError
@@ -435,7 +448,7 @@ func (s *Server) simulatePolicyCheck(
 
 // policyCheckEOATransfer mirrors the live simple-transfer fast path. A missing
 // or failed code lookup never skips trace validation.
-func (s *Server) policyCheckEOATransfer(ctx context.Context, op dryRunRPCBlock, apiKey, apiKeyHeader string) bool {
+func (s *Server) policyCheckEOATransfer(ctx context.Context, op apimodels.DryRunRPCBlock, apiKey, apiKeyHeader string) bool {
 	method := rbac.ResolveMethodAlias(op.Method)
 	if method != "eth_sendTransaction" && method != "eth_sendRawTransaction" {
 		return false
@@ -483,9 +496,12 @@ func (s *Server) validatePolicyCheckTrace(
 	}
 	userOrgIDs := make(map[string]bool)
 	for _, membership := range memberships {
-		if membership.Group != nil {
+		if membership.Group != nil && s.crossOrgAuthorizationOracleOrgAllowed(membership.Group.OrgID) {
 			userOrgIDs[membership.Group.OrgID] = true
 		}
+	}
+	if !userOrgIDs[orgID] {
+		return &ProcessError{StatusCode: http.StatusForbidden, Message: "subject organization is outside the oracle allowlist", Reason: ReasonWireGenericDenied}
 	}
 	if len(userOrgIDs) == 0 {
 		return &ProcessError{StatusCode: http.StatusInternalServerError, Message: sendTraceValidatorError, Reason: ReasonTracingUnavailable}
@@ -495,6 +511,18 @@ func (s *Server) validatePolicyCheckTrace(
 		userHasDeploy = s.jsonrpcProcessor.userHasDeployClaim(ctx, memberships)
 	}
 	return s.validateTraceWithOrgIDs(ctx, user, perms, orgID, targetAddr, traceResult, userOrgIDs, userHasDeploy)
+}
+
+func (s *Server) crossOrgAuthorizationOracleOrgAllowed(orgID string) bool {
+	if s == nil || s.config == nil || strings.TrimSpace(orgID) == "" {
+		return false
+	}
+	for _, allowedOrgID := range s.config.CrossOrgAuthorizationOracleOrgIDs {
+		if strings.TrimSpace(allowedOrgID) == orgID {
+			return true
+		}
+	}
+	return false
 }
 
 func policyCheckUnsupportedTraceMethod(method string) bool {
@@ -508,7 +536,7 @@ func policyCheckUnsupportedTraceMethod(method string) bool {
 
 // validatePolicyCheckVisibleTo applies the write-path visibleTo shape checks
 // without resolving recipients or writing transaction visibility rows.
-func validatePolicyCheckVisibleTo(op dryRunRPCBlock) (string, error) {
+func validatePolicyCheckVisibleTo(op apimodels.DryRunRPCBlock) (string, error) {
 	method := rbac.ResolveMethodAlias(op.Method)
 	if method != "eth_sendTransaction" && method != "eth_sendRawTransaction" {
 		return "", nil
@@ -597,7 +625,7 @@ func policyCheckRawVisibleToEntries(raw any) []string {
 	return entries
 }
 
-func (s *Server) validatePolicyCheckSender(ctx context.Context, subjectDID string, op dryRunRPCBlock) (string, error) {
+func (s *Server) validatePolicyCheckSender(ctx context.Context, subjectDID string, op apimodels.DryRunRPCBlock) (string, error) {
 	from, _, _, _, err := policyCheckTransactionFields(op)
 	if err != nil {
 		return "", err
@@ -620,7 +648,7 @@ func (s *Server) validatePolicyCheckSender(ctx context.Context, subjectDID strin
 	return ReasonSenderNotLinked, nil
 }
 
-func policyCheckTransactionFields(op dryRunRPCBlock) (from, to, data, value string, err error) {
+func policyCheckTransactionFields(op apimodels.DryRunRPCBlock) (from, to, data, value string, err error) {
 	if rbac.ResolveMethodAlias(op.Method) == "eth_sendRawTransaction" {
 		rawHex, rawErr := extractRawTxHex(op.Params)
 		if rawErr != nil {
@@ -638,7 +666,7 @@ func policyCheckTransactionFields(op dryRunRPCBlock) (from, to, data, value stri
 func (s *Server) recordPolicyCheck(
 	ctx context.Context,
 	callerAuthMethod, subjectDID, subjectAddress, orgID string,
-	op dryRunRPCBlock,
+	op apimodels.DryRunRPCBlock,
 	allowed bool,
 	reason, correlationID string,
 ) error {

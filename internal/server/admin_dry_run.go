@@ -488,11 +488,11 @@ func (s *Server) forwardDryRunTraceWithAPIKey(ctx context.Context, rpc apimodels
 	blockParam := any("latest")
 	effectiveMethod := rbac.ResolveMethodAlias(rpc.Method)
 	switch effectiveMethod {
-	case "eth_call", "eth_estimateGas", "eth_sendTransaction":
+	case "eth_call", "eth_estimateGas", "eth_createAccessList", "eth_sendTransaction":
 		if len(rpc.Params) == 0 {
 			return nil, &simulationClientError{msg: fmt.Sprintf("%s requires a transaction object", rpc.Method)}
 		}
-		if (effectiveMethod == "eth_call" || effectiveMethod == "eth_estimateGas") && len(rpc.Params) > 2 {
+		if (effectiveMethod == "eth_call" || effectiveMethod == "eth_estimateGas" || effectiveMethod == "eth_createAccessList") && len(rpc.Params) > 2 {
 			return nil, &simulationClientError{msg: fmt.Sprintf("%s state and block overrides are not supported", rpc.Method)}
 		}
 		if effectiveMethod == "eth_sendTransaction" && len(rpc.Params) != 1 {
@@ -506,7 +506,7 @@ func (s *Server) forwardDryRunTraceWithAPIKey(ctx context.Context, rpc apimodels
 		if effectiveMethod == "eth_sendTransaction" {
 			txObj = policyCheckTraceTransaction(txObj)
 		}
-		if (effectiveMethod == "eth_call" || effectiveMethod == "eth_estimateGas") && len(rpc.Params) > 1 {
+		if (effectiveMethod == "eth_call" || effectiveMethod == "eth_estimateGas" || effectiveMethod == "eth_createAccessList") && len(rpc.Params) > 1 {
 			blockParam = rpc.Params[1]
 		}
 	case "eth_sendRawTransaction":
