@@ -72,12 +72,13 @@ func TestPolicyCheckMatchesLiveEnforcement(t *testing.T) {
 		subject  map[string]any
 		liveDID  string
 		contract string
+		orgID    string
 		want     bool
 	}{
-		{"participant on granted contract, by DID", map[string]any{"did": participantDID}, participantDID, grantedContract, true},
-		{"participant on granted contract, by address", map[string]any{"address": subjectAddr}, participantDID, grantedContract, true},
-		{"participant on ungranted contract", map[string]any{"did": participantDID}, participantDID, ungrantedContract, false},
-		{"third party on the granted contract", map[string]any{"did": thirdPartyDID}, thirdPartyDID, grantedContract, false},
+		{"participant on granted contract, by DID", map[string]any{"did": participantDID}, participantDID, grantedContract, orgID, true},
+		{"participant on granted contract, by address", map[string]any{"address": subjectAddr}, participantDID, grantedContract, orgID, true},
+		{"participant on ungranted contract", map[string]any{"did": participantDID}, participantDID, ungrantedContract, orgID, false},
+		{"third party on the granted contract", map[string]any{"did": thirdPartyDID}, thirdPartyDID, grantedContract, otherOrgID, false},
 	}
 
 	for _, tc := range tests {
@@ -92,7 +93,7 @@ func TestPolicyCheckMatchesLiveEnforcement(t *testing.T) {
 			// here, since no upstream node is reachable in this environment).
 			jwt := getJWTToken(t, serverURL, tc.liveDID)
 			rpcBody, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": op["method"], "params": op["params"]})
-			rpcReq, _ := http.NewRequest(http.MethodPost, serverURL+"/rpc/"+orgID, bytes.NewReader(rpcBody))
+			rpcReq, _ := http.NewRequest(http.MethodPost, serverURL+"/rpc/"+tc.orgID, bytes.NewReader(rpcBody))
 			rpcReq.Header.Set("Authorization", "Bearer "+jwt)
 			rpcReq.Header.Set("Content-Type", "application/json")
 			rpcResp, err := (&http.Client{Timeout: 5 * time.Second}).Do(rpcReq)
@@ -108,7 +109,7 @@ func TestPolicyCheckMatchesLiveEnforcement(t *testing.T) {
 				"fixture no longer produces the intended live outcome (status %d)", rpcResp.StatusCode)
 
 			allowed, _ := policyCheckVerdict(t, serverURL, adminToken+"-oracle", map[string]any{
-				"subject": tc.subject, "operation": op, "org_id": orgID,
+				"subject": tc.subject, "operation": op, "org_id": tc.orgID,
 			})
 			require.Equal(t, liveAllowed, allowed, "policy-check disagrees with live enforcement")
 		})
@@ -130,7 +131,7 @@ func TestPolicyCheckMatchesLiveEnforcement(t *testing.T) {
 		resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
 		require.NoError(t, err)
 		defer resp.Body.Close()
-		require.Equal(t, http.StatusForbidden, resp.StatusCode)
+		require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	})
 }
 
@@ -184,7 +185,7 @@ func TestPolicyCheckRejectsRealJWTAdmin(t *testing.T) {
 	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	require.Equal(t, http.StatusForbidden, resp.StatusCode)
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }
 
 func TestPolicyCheckRejectsRealNoCredential(t *testing.T) {
