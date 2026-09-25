@@ -145,6 +145,7 @@ func createGrantWithFunctionRule(t *testing.T, database *db.DB, contractID, grou
 
 func postRawPolicyCheck(t *testing.T, serverURL, token, rawBody string) (bool, string) {
 	t.Helper()
+	waitOracleE2ERateLimit()
 	req, err := http.NewRequest(http.MethodPost, serverURL+"/api/v1/admin/cross-org-authorization-oracle", bytes.NewReader([]byte(rawBody)))
 	require.NoError(t, err)
 	req.Header.Set("X-Cross-Org-Authorization-Oracle-Token", token)

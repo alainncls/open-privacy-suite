@@ -139,6 +139,7 @@ func TestPolicyCheckMatchesLiveEnforcement(t *testing.T) {
 // the verdict, failing the test on any non-200.
 func policyCheckVerdict(t *testing.T, serverURL, token string, body map[string]any) (bool, string) {
 	t.Helper()
+	waitOracleE2ERateLimit()
 	raw, err := json.Marshal(body)
 	require.NoError(t, err)
 	req, err := http.NewRequest(http.MethodPost, serverURL+"/api/v1/admin/cross-org-authorization-oracle", bytes.NewReader(raw))
