@@ -273,7 +273,18 @@ func (s *Server) handlePolicyCheck(c *gin.Context) {
 		c.JSON(http.StatusOK, policyCheckResponse{Allowed: false, Reason: "method_not_allowed"})
 		return
 	}
-	if authorized, authorityErr := s.policyCheckSubjectAuthorized(ctx, did, req.OrgID); authorityErr != nil {
+	authorityAccessReq, authorityErr := dryRunAccessRequest(did, "", operation)
+	if authorityErr != nil {
+		if logErr := s.recordPolicyCheck(ctx, authMethod, did, req.Subject.Address, req.OrgID, operation, false, "decode_error", correlationID); logErr != nil {
+			slog.Error("policy-check: audit log write failed; refusing response", "err", logErr)
+			respondInternalError(c, "internal error")
+			return
+		}
+		respondBadRequest(c, "invalid operation")
+		return
+	}
+	authorizedOrgID, authorized, authorityErr := s.policyCheckAuthorizedOrg(ctx, did, req.OrgID, authorityAccessReq.TargetAddress)
+	if authorityErr != nil {
 		slog.Error("policy-check: subject authority resolution failed", "err", authorityErr)
 		respondInternalError(c, "internal error")
 		return
@@ -287,7 +298,10 @@ func (s *Server) handlePolicyCheck(c *gin.Context) {
 		return
 	}
 
-	evaluation, err := s.evaluateOperation(ctx, did, operation, authorizationScopeAllActiveMemberships, req.OrgID)
+	// Pin CheckAccess to the pre-authorized organization. Leaving OrgID empty
+	// would let its global context inspect memberships outside the deployment
+	// allowlist before the post-check guard below can run.
+	evaluation, err := s.evaluateOperation(ctx, did, operation, authorizationScopeAllActiveMemberships, authorizedOrgID)
 	if err != nil {
 		var accessErr *operationAccessError
 		if errors.As(err, &accessErr) {
@@ -372,34 +386,57 @@ func (s *Server) handlePolicyCheck(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-// policyCheckSubjectAuthorized enforces service-to-subject authority before
-// RBAC, contract, compliance, or trace policy is loaded. With an explicit org,
-// the subject must have an active membership in that allowlisted org. Without
-// one, at least one active membership must intersect the configured allowlist.
-func (s *Server) policyCheckSubjectAuthorized(ctx context.Context, subjectDID, requestedOrgID string) (bool, error) {
+// policyCheckAuthorizedOrg resolves and authorizes the one organization that
+// CheckAccess may evaluate. It runs before RBAC policy loading and considers
+// only active memberships intersecting the deployment allowlist.
+func (s *Server) policyCheckAuthorizedOrg(
+	ctx context.Context,
+	subjectDID, requestedOrgID, targetAddress string,
+) (string, bool, error) {
 	if s.db == nil || s.rbacAccessCtrl == nil {
-		return false, errors.New("policy authority store is unavailable")
+		return "", false, errors.New("policy authority store is unavailable")
 	}
 	user, err := s.db.GetUserByExternalID(ctx, subjectDID)
 	if err != nil {
-		return false, err
+		return "", false, err
 	}
 	if user == nil {
-		return false, nil
+		return "", false, nil
 	}
 	memberships, err := s.rbacAccessCtrl.Store().ListActiveUserMembershipsWithDetails(ctx, user.ID)
 	if err != nil {
-		return false, err
+		return "", false, err
 	}
+	allowedMemberships := make(map[string]struct{})
 	for _, membership := range memberships {
 		if membership.Group == nil || !s.crossOrgAuthorizationOracleOrgAllowed(membership.Group.OrgID) {
 			continue
 		}
-		if requestedOrgID == "" || membership.Group.OrgID == requestedOrgID {
-			return true, nil
+		allowedMemberships[membership.Group.OrgID] = struct{}{}
+	}
+	if requestedOrgID != "" {
+		_, ok := allowedMemberships[requestedOrgID]
+		return requestedOrgID, ok, nil
+	}
+
+	if targetAddress != "" {
+		contract, err := s.rbacAccessCtrl.Store().GetContractByAddressGlobal(ctx, targetAddress)
+		if err != nil {
+			return "", false, err
+		}
+		if contract != nil {
+			_, ok := allowedMemberships[contract.OrgID]
+			return contract.OrgID, ok, nil
 		}
 	}
-	return false, nil
+	if len(allowedMemberships) == 1 {
+		for orgID := range allowedMemberships {
+			return orgID, true, nil
+		}
+	}
+	// As on the live path, an unregistered/no target is ambiguous for a
+	// multi-org subject. Do not pass the full membership set to CheckAccess.
+	return "", false, nil
 }
 
 // simulatePolicyCheck traces methods that can execute EVM code. It returns an

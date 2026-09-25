@@ -570,9 +570,8 @@ func TestPolicyCheck_OrgOmittedDerivedFromRegisteredTarget(t *testing.T) {
 
 // TestPolicyCheck_OrgOmittedMultiOrgSubjectDenied: the subject belongs to two
 // orgs and the operation targets an unregistered address, so nothing
-// disambiguates which org's rules to evaluate. CheckAccess denies with the
-// RD-877 org-cardinality message; this pins that the wire response collapses
-// it to "denied" rather than leaking that a subject has multiple memberships.
+// disambiguates which org's rules to evaluate. The authority gate must stop
+// before CheckAccess can load policy from the subject's full membership set.
 func TestPolicyCheck_OrgOmittedMultiOrgSubjectDenied(t *testing.T) {
 	f := setupPCFixture(t)
 	ctx := context.Background()
@@ -592,10 +591,8 @@ func TestPolicyCheck_OrgOmittedMultiOrgSubjectDenied(t *testing.T) {
 		},
 	}
 	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", body)
-	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
-	resp := decodePolicyCheckResponse(t, w)
-	assert.False(t, resp.Allowed)
-	assert.Equal(t, "denied", resp.Reason, "org cardinality must not leak verbatim onto the wire")
+	require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+	assert.Contains(t, w.Body.String(), "outside the oracle allowlist")
 
 	// The audit row keeps the informative reason: it is operator-only.
 	var auditReason string
@@ -604,7 +601,33 @@ func TestPolicyCheck_OrgOmittedMultiOrgSubjectDenied(t *testing.T) {
 		 WHERE subject_did = $1 AND allowed = false ORDER BY created_at DESC LIMIT 1`,
 		f.userDID,
 	).Scan(&auditReason))
-	assert.Contains(t, auditReason, "multiple organizations")
+	assert.Equal(t, "organization_not_authorized", auditReason)
+}
+
+func TestPolicyCheck_OrgOmittedUnallowlistedTargetStopsBeforeRBAC(t *testing.T) {
+	f := setupPCFixture(t)
+	ctx := context.Background()
+	orgD := uuid.New().String()
+	require.NoError(t, f.srv.db.CreateOrganization(ctx, &rbac.Organization{
+		ID: orgD, Slug: "pc-unallowlisted", Name: "PC Unallowlisted", Settings: map[string]any{},
+	}))
+	groupD := drCreateGroup(t, f.srv.db, orgD, "pc-unallowlisted", nil, false)
+	require.NoError(t, f.srv.db.CreateMembership(ctx, &rbac.UserMembership{
+		ID: uuid.New().String(), UserID: mustUserIDByDID(t, f.srv.db, f.userDID), GroupID: groupD,
+		Source: rbac.MembershipSourceAdmin,
+	}))
+	target := "0x0000000000000000000000000000000000feed04"
+	drCreateContract(t, f.srv.db, orgD, target, "Unallowlisted")
+
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", map[string]any{
+		"subject": map[string]any{"did": f.userDID},
+		"operation": map[string]any{
+			"method": "eth_call",
+			"params": []any{map[string]any{"to": target, "data": "0x"}, "latest"},
+		},
+	})
+	require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+	assert.Contains(t, w.Body.String(), "outside the oracle allowlist")
 }
 
 func TestPolicyCheck_ExplicitOrgIDCrossOrgTargetDenied(t *testing.T) {
@@ -665,8 +688,8 @@ func TestPolicyCheck_ThirdPartyNoGrantAnywhereDenied(t *testing.T) {
 		"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr),
 	}
 	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", body)
-	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
-	assert.False(t, decodePolicyCheckResponse(t, w).Allowed)
+	require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+	assert.Contains(t, w.Body.String(), "outside the oracle allowlist")
 }
 
 // ------------------------------------------------------------ operation ---

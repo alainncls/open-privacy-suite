@@ -215,7 +215,7 @@ func TestPolicyCheckRejectsRealWrongToken(t *testing.T) {
 		"operation": map[string]any{"method": "eth_call", "params": []any{}},
 	})
 	req, _ := http.NewRequest(http.MethodPost, serverURL+"/api/v1/admin/cross-org-authorization-oracle", bytes.NewReader(body))
-	req.Header.Set("X-Admin-Token", "not-the-configured-token")
+	req.Header.Set("X-Cross-Org-Authorization-Oracle-Token", "not-the-configured-token")
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
 	require.NoError(t, err)
