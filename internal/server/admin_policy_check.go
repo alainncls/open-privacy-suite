@@ -43,7 +43,8 @@ type policyCheckSubjectAddress struct {
 	Address string `json:"address"`
 }
 
-// policyCheckRequest is the JSON body of POST /api/v1/admin/policy-check.
+// policyCheckRequest is the JSON body of
+// POST /api/v1/admin/cross-org-authorization-oracle.
 type policyCheckRequest struct {
 	Subject   policyCheckSubject  `json:"subject" binding:"required"`
 	Operation policyCheckRPCBlock `json:"operation" binding:"required"`
@@ -174,12 +175,12 @@ func (s *Server) resolvePolicyCheckSubject(ctx context.Context, subj policyCheck
 // @Produce      json
 // @Param        request body policyCheckRequest true "subject, operation, and optional org_id"
 // @Success      200 {object} policyCheckResponse
-// @Failure      400 {object} map[string]string "invalid body, missing operation.method, an invalid subject address, or subject has neither/both of did and address"
-// @Failure      401 {object} map[string]string "missing or invalid X-Cross-Org-Authorization-Oracle-Token"
-// @Failure      403 {object} map[string]string "source address not on the private network, or the credential cannot read tenant policy"
-// @Failure      429 {object} map[string]string "concurrency or rate budget exhausted; operational, not a policy verdict"
-// @Failure      500 {object} map[string]string "internal error (includes audit-log write failure, response withheld)"
-// @Failure      503 {object} map[string]string "policy simulation unavailable (upstream trace failure); operational, not a policy verdict"
+// @Failure      400 {object} apimodels.APIError "invalid body, missing operation.method, an invalid subject address, or subject has neither/both of did and address"
+// @Failure      401 {object} apimodels.APIError "missing or invalid X-Cross-Org-Authorization-Oracle-Token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, or the credential cannot read tenant policy"
+// @Failure      429 {object} apimodels.APIError "concurrency or rate budget exhausted; operational, not a policy verdict"
+// @Failure      500 {object} apimodels.APIError "internal error (includes audit-log write failure, response withheld)"
+// @Failure      503 {object} apimodels.APIError "policy simulation unavailable (upstream trace failure); operational, not a policy verdict"
 // @Param        X-Cross-Org-Authorization-Oracle-Token header string true "Dedicated cross-org oracle token"
 // @Router       /api/v1/admin/cross-org-authorization-oracle [post]
 func (s *Server) handlePolicyCheck(c *gin.Context) {
@@ -226,8 +227,17 @@ func (s *Server) handlePolicyCheck(c *gin.Context) {
 		return
 	}
 	operation := req.Operation.rpcBlock()
-
 	correlationID := middleware.GetCorrelationID(c)
+	if _, err := dryRunAccessRequest("", "", operation); err != nil {
+		if logErr := s.recordPolicyCheck(ctx, authMethod, req.Subject.DID, req.Subject.Address, req.OrgID, operation, false, "decode_error", correlationID); logErr != nil {
+			slog.Error("policy-check: audit log write failed; refusing response", "err", logErr)
+			respondInternalError(c, "internal error")
+			return
+		}
+		respondBadRequest(c, "invalid operation")
+		return
+	}
+
 	did, denyReason, err := s.resolvePolicyCheckSubject(ctx, req.Subject)
 	if err != nil {
 		if errors.Is(err, errPolicyCheckSubjectMalformed) {
@@ -464,24 +474,6 @@ func (s *Server) simulatePolicyCheck(
 	perms, err := s.rbacAccessCtrl.GetEffectivePermissionsByIDs(ctx, user.ID, accessResult.OrgID)
 	if err != nil || perms == nil {
 		return "", "", errors.New("resolved policy permissions are unavailable")
-	}
-	var limiter *middleware.ConcurrencyLimiter
-	if s.jsonrpcProcessor != nil {
-		limiter = s.jsonrpcProcessor.concurrencyLimiter
-	}
-	if limiter != nil && !limiter.TryAcquire(policyCheckLimiterKey) {
-		return "", "", errSimConcurrencyLimited
-	}
-	if limiter != nil {
-		defer limiter.Release(policyCheckLimiterKey)
-	}
-	// Reuse the operator-configured per-caller trace budget (nil limits fall
-	// back to the deployment defaults inside CheckAndIncrement). No
-	// policy-check-specific hardcoded quota.
-	if s.jsonrpcProcessor != nil && s.jsonrpcProcessor.rateLimiter != nil {
-		if allowed, _ := s.jsonrpcProcessor.rateLimiter.CheckAndIncrement(policyCheckLimiterKey, nil, nil); !allowed {
-			return "", "", errSimRateLimited
-		}
 	}
 	traceCtx, cancel := context.WithTimeout(ctx, policyCheckTraceTimeout)
 	defer cancel()

@@ -4313,53 +4313,41 @@ paths:
           content:
             application/json:
               schema:
-                additionalProperties:
-                  type: string
-                type: object
+                $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
           description: invalid body, missing operation.method, an invalid subject
             address, or subject has neither/both of did and address
         "401":
           content:
             application/json:
               schema:
-                additionalProperties:
-                  type: string
-                type: object
+                $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
           description: missing or invalid X-Cross-Org-Authorization-Oracle-Token
         "403":
           content:
             application/json:
               schema:
-                additionalProperties:
-                  type: string
-                type: object
+                $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
           description: source address not on the private network, or the credential
             cannot read tenant policy
         "429":
           content:
             application/json:
               schema:
-                additionalProperties:
-                  type: string
-                type: object
+                $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
           description: concurrency or rate budget exhausted; operational, not a policy
             verdict
         "500":
           content:
             application/json:
               schema:
-                additionalProperties:
-                  type: string
-                type: object
+                $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
           description: internal error (includes audit-log write failure, response
             withheld)
         "503":
           content:
             application/json:
               schema:
-                additionalProperties:
-                  type: string
-                type: object
+                $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
           description: policy simulation unavailable (upstream trace failure); operational,
             not a policy verdict
       summary: Check whether a subject would be allowed to make an RPC call

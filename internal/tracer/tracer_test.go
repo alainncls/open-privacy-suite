@@ -129,6 +129,27 @@ func TestExtractCallTargets_CreateOperations(t *testing.T) {
 	}
 }
 
+func TestParseCallTraceResult_RejectsMissingCallTarget(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{name: "root", raw: `{"type":"CALL"}`},
+		{
+			name: "nested",
+			raw:  `{"type":"CALL","to":"0xroot","calls":[{"type":"STATICCALL"}]}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := ParseCallTraceResult(json.RawMessage(tt.raw)); err == nil {
+				t.Fatal("expected missing call target to fail closed")
+			}
+		})
+	}
+}
+
 func TestTraceCall_MockServer(t *testing.T) {
 	// Create a mock server that returns a valid trace result
 	mockResponse := map[string]any{

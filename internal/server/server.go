@@ -701,11 +701,6 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	// mints to the viewer left them unable to see their own tx.
 	wireExplorerRedactor(s.explorerRedactor, database, s.rbacAccessCtrl, explorerBackend, cfg.ExplorerPseudonymKey)
 
-	// Start background explorer DB reconnection if initial connection failed
-	if cfg.ExplorerDatabaseURL != "" && explorerSQL == nil {
-		go s.explorerReconnectLoop(cfg.ExplorerDatabaseURL, database, cfg.IndexerURL)
-	}
-
 	// The JSON-RPC processor is constructed AFTER the compliance / audit /
 	// visibility blocks below, once every dependency exists, so it is fully
 	// wired at construction — no post-construction Set* step to forget
@@ -724,7 +719,6 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		if !cfg.DisableCoinGecko {
 			priceSvc := pricing.NewService(database, database, cfg.PriceFetchInterval)
 			priceSvc.SetMetrics(m.PricingFetchesTotal, m.PricingFetchDuration, m.PricingConsecutiveFailures)
-			priceSvc.Start()
 			s.priceService = priceSvc
 		} else {
 			slog.Info("CoinGecko price fetching is DISABLED")
@@ -773,8 +767,18 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 				"allowed_org_ids":   cfg.CrossOrgAuthorizationOracleOrgIDs,
 			},
 		}); err != nil {
+			s.Stop()
 			return nil, fmt.Errorf("audit enabled cross-org authorization oracle configuration: %w", err)
 		}
+	}
+
+	// Start workers only after the mandatory oracle audit succeeds. The
+	// explorer reconnect loop has no construction-time cancellation handle.
+	if cfg.ExplorerDatabaseURL != "" && explorerSQL == nil {
+		go s.explorerReconnectLoop(cfg.ExplorerDatabaseURL, database, cfg.IndexerURL)
+	}
+	if s.priceService != nil {
+		s.priceService.Start()
 	}
 
 	// Initialize SIEM forwarder if webhook URL is configured.

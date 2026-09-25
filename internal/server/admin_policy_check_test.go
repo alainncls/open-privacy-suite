@@ -62,7 +62,7 @@ func setupPolicyCheckTestServer(t *testing.T) *policyCheckTestServer {
 		}
 		c.Next()
 	})
-	api.POST("/policy-check", ts.handlePolicyCheck)
+	api.POST("/policy-check", ts.crossOrgAuthorizationOracleLimitMiddleware(), ts.handlePolicyCheck)
 
 	ts.router = router
 	node := newPolicyTraceNode(t, "")

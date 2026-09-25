@@ -6206,10 +6206,7 @@
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "additionalProperties": {
-                                        "type": "string"
-                                    },
-                                    "type": "object"
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
                                 }
                             }
                         },
@@ -6219,10 +6216,7 @@
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "additionalProperties": {
-                                        "type": "string"
-                                    },
-                                    "type": "object"
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
                                 }
                             }
                         },
@@ -6232,10 +6226,7 @@
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "additionalProperties": {
-                                        "type": "string"
-                                    },
-                                    "type": "object"
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
                                 }
                             }
                         },
@@ -6245,10 +6236,7 @@
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "additionalProperties": {
-                                        "type": "string"
-                                    },
-                                    "type": "object"
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
                                 }
                             }
                         },
@@ -6258,10 +6246,7 @@
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "additionalProperties": {
-                                        "type": "string"
-                                    },
-                                    "type": "object"
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
                                 }
                             }
                         },
@@ -6271,10 +6256,7 @@
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "additionalProperties": {
-                                        "type": "string"
-                                    },
-                                    "type": "object"
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
                                 }
                             }
                         },

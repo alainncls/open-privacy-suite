@@ -245,6 +245,9 @@ func (t *Tracer) extractCallTargets(frame *callFrame, result *TraceResult, depth
 	if !validCallFrameType(frame.Type) {
 		return fmt.Errorf("invalid nested call frame type %q at depth %d", frame.Type, depth)
 	}
+	if callFrameRequiresTarget(frame.Type) && strings.TrimSpace(frame.To) == "" {
+		return fmt.Errorf("invalid %s call frame at depth %d: missing target address", frame.Type, depth)
+	}
 	// Check the type and add to result
 	switch frame.Type {
 	case "CALL", "CALLCODE", "DELEGATECALL", "STATICCALL":
@@ -279,6 +282,15 @@ func (t *Tracer) extractCallTargets(frame *callFrame, result *TraceResult, depth
 		}
 	}
 	return nil
+}
+
+func callFrameRequiresTarget(frameType string) bool {
+	switch frameType {
+	case "CALL", "CALLCODE", "DELEGATECALL", "STATICCALL":
+		return true
+	default:
+		return false
+	}
 }
 
 // TraceTransaction traces an already-mined transaction by hash using debug_traceTransaction.
