@@ -219,7 +219,7 @@ func (s *Server) handleDryRun(c *gin.Context) {
 	if err != nil {
 		var accessErr *operationAccessError
 		if errors.As(err, &accessErr) {
-			if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", sanitizeDryRunReason(err), c.GetString("correlation_id")); logErr != nil {
+			if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", sanitizeDryRunReason(err), c.GetString("correlation_id"), ""); logErr != nil {
 				slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 				return
@@ -228,7 +228,7 @@ func (s *Server) handleDryRun(c *gin.Context) {
 			return
 		}
 		slog.Warn("dry-run: could not build access check", "method", req.RPC.Method, "err", err)
-		if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", "decode_error", c.GetString("correlation_id")); logErr != nil {
+		if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", "decode_error", c.GetString("correlation_id"), ""); logErr != nil {
 			slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 			return
@@ -239,7 +239,7 @@ func (s *Server) handleDryRun(c *gin.Context) {
 	accessReq, accessResult := evaluation.AccessRequest, evaluation.AccessResult
 
 	if !accessResult.Allowed {
-		if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "deny", sanitizeDryRunReason(accessResult.Reason), c.GetString("correlation_id")); logErr != nil {
+		if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "deny", sanitizeDryRunReason(accessResult.Reason), c.GetString("correlation_id"), ""); logErr != nil {
 			slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 			return
@@ -252,14 +252,14 @@ func (s *Server) handleDryRun(c *gin.Context) {
 	}
 
 	if reason, validationErr := s.validatePolicyCheckSender(ctx, req.UserDID, req.RPC); validationErr != nil {
-		if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", "sender_validation_unavailable", c.GetString("correlation_id")); logErr != nil {
+		if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", "sender_validation_unavailable", c.GetString("correlation_id"), ""); logErr != nil {
 			slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	} else if reason != "" {
 		if reason == ReasonInvalidRequestShape {
-			if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", "decode_error", c.GetString("correlation_id")); logErr != nil {
+			if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", "decode_error", c.GetString("correlation_id"), ""); logErr != nil {
 				slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 				return
@@ -267,7 +267,7 @@ func (s *Server) handleDryRun(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid operation"})
 			return
 		}
-		if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "deny", reason, c.GetString("correlation_id")); logErr != nil {
+		if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "deny", reason, c.GetString("correlation_id"), ""); logErr != nil {
 			slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 			return
@@ -297,8 +297,8 @@ func (s *Server) handleDryRun(c *gin.Context) {
 			}
 		}
 		if validationErr := s.validateDryRunTrace(ctx, user, userPerms, orgID, accessReq.TargetAddress, traceResp.Parsed); validationErr != nil {
-			decision, wireDecision, wireReason, auditReason := dryRunTraceProcessOutcome(validationErr)
-			if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, decision, auditReason, c.GetString("correlation_id")); logErr != nil {
+			decision, wireDecision, wireReason, auditReason, responseDecision := dryRunTraceProcessOutcome(validationErr)
+			if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, decision, auditReason, c.GetString("correlation_id"), responseDecision); logErr != nil {
 				slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 				return
@@ -318,7 +318,7 @@ func (s *Server) handleDryRun(c *gin.Context) {
 		if traceErr != nil {
 			var clientErr *simulationClientError
 			if errors.As(traceErr, &clientErr) {
-				if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", "decode_error", c.GetString("correlation_id")); logErr != nil {
+				if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", "decode_error", c.GetString("correlation_id"), ""); logErr != nil {
 					slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 					return
@@ -326,7 +326,7 @@ func (s *Server) handleDryRun(c *gin.Context) {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid operation"})
 				return
 			}
-			if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", sanitizeDryRunReason(traceErr), c.GetString("correlation_id")); logErr != nil {
+			if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", sanitizeDryRunReason(traceErr), c.GetString("correlation_id"), ""); logErr != nil {
 				slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 				return
@@ -335,8 +335,8 @@ func (s *Server) handleDryRun(c *gin.Context) {
 			return
 		}
 		if validationErr := s.validateDryRunTrace(ctx, user, userPerms, orgID, accessReq.TargetAddress, traceResp.Parsed); validationErr != nil {
-			decision, wireDecision, wireReason, auditReason := dryRunTraceProcessOutcome(validationErr)
-			if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, decision, auditReason, c.GetString("correlation_id")); logErr != nil {
+			decision, wireDecision, wireReason, auditReason, responseDecision := dryRunTraceProcessOutcome(validationErr)
+			if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, decision, auditReason, c.GetString("correlation_id"), responseDecision); logErr != nil {
 				slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 				return
@@ -351,7 +351,7 @@ func (s *Server) handleDryRun(c *gin.Context) {
 		if s.dryRunWriteComplianceBlocked(c, ctx, adminDID, req.UserDID, orgID, user, req.RPC) {
 			return
 		}
-		if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "allow", "", c.GetString("correlation_id")); logErr != nil {
+		if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "allow", "", c.GetString("correlation_id"), ""); logErr != nil {
 			slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 			return
@@ -374,7 +374,7 @@ func (s *Server) handleDryRun(c *gin.Context) {
 	// what the impersonated user would actually see.
 	rawResp, err := s.forwardDryRunRead(ctx, req.RPC, c.ClientIP())
 	if err != nil {
-		if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", sanitizeDryRunReason(err), c.GetString("correlation_id")); logErr != nil {
+		if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", sanitizeDryRunReason(err), c.GetString("correlation_id"), ""); logErr != nil {
 			slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 			return
@@ -427,7 +427,7 @@ func (s *Server) handleDryRun(c *gin.Context) {
 		}
 	}
 
-	if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "allow", "", c.GetString("correlation_id")); logErr != nil {
+	if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "allow", "", c.GetString("correlation_id"), ""); logErr != nil {
 		slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
@@ -540,7 +540,7 @@ func (s *Server) dryRunWriteComplianceBlocked(
 		OrgID: orgID, UserID: user.ID, From: from, To: to, Data: data, Value: value,
 	})
 	if compErr != nil {
-		if logErr := s.recordImpersonation(ctx, adminDID, userDID, orgID, rpc, "error", "compliance_unavailable", c.GetString("correlation_id")); logErr != nil {
+		if logErr := s.recordImpersonation(ctx, adminDID, userDID, orgID, rpc, "error", "compliance_unavailable", c.GetString("correlation_id"), ""); logErr != nil {
 			slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 			return true
@@ -551,7 +551,7 @@ func (s *Server) dryRunWriteComplianceBlocked(
 	if compResult.Allowed {
 		return false
 	}
-	if logErr := s.recordImpersonation(ctx, adminDID, userDID, orgID, rpc, "deny", ReasonComplianceBlocked, c.GetString("correlation_id")); logErr != nil {
+	if logErr := s.recordImpersonation(ctx, adminDID, userDID, orgID, rpc, "deny", ReasonComplianceBlocked, c.GetString("correlation_id"), ""); logErr != nil {
 		slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return true
@@ -569,7 +569,7 @@ func (s *Server) respondDryRunTraceError(
 ) bool {
 	var clientErr *simulationClientError
 	if errors.As(traceErr, &clientErr) {
-		if logErr := s.recordImpersonation(ctx, adminDID, userDID, orgID, rpc, "error", "decode_error", c.GetString("correlation_id")); logErr != nil {
+		if logErr := s.recordImpersonation(ctx, adminDID, userDID, orgID, rpc, "error", "decode_error", c.GetString("correlation_id"), ""); logErr != nil {
 			slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 			return true
@@ -577,7 +577,7 @@ func (s *Server) respondDryRunTraceError(
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid operation"})
 		return true
 	}
-	if logErr := s.recordImpersonation(ctx, adminDID, userDID, orgID, rpc, "error", ReasonTracingUnavailable, c.GetString("correlation_id")); logErr != nil {
+	if logErr := s.recordImpersonation(ctx, adminDID, userDID, orgID, rpc, "error", ReasonTracingUnavailable, c.GetString("correlation_id"), ""); logErr != nil {
 		slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
 	}
 	c.JSON(http.StatusServiceUnavailable, gin.H{"error": "policy simulation unavailable"})
@@ -733,22 +733,23 @@ func policyCheckTraceTransaction(txObj map[string]any) map[string]any {
 // payload returned by forwardDryRunTrace. Validation is deliberately pinned to
 // orgID rather than all of the impersonated user's memberships: an Org A admin
 // must not receive nested Org B calls merely because the user belongs to both.
-func dryRunTraceProcessOutcome(validationErr *ProcessError) (decision, wireDecision, wireReason, auditReason string) {
+func dryRunTraceProcessOutcome(validationErr *ProcessError) (decision, wireDecision, wireReason, auditReason, responseDecision string) {
 	decision = "deny"
 	wireDecision = "deny"
 	wireReason = validationErr.Message
 	auditReason = sanitizeDryRunReason(validationErr.Reason)
 	if validationErr.TraceDenialKind == rbac.DenialKindForeignOrg ||
 		validationErr.TraceDenialKind == rbac.DenialKindCreateForeign {
-		decision = "indeterminate"
 		wireDecision = "indeterminate"
 		wireReason = "external_scope_required"
 		auditReason = "external_scope_required"
+		responseDecision = "indeterminate"
 	}
 	if validationErr.StatusCode >= http.StatusInternalServerError {
 		decision = "error"
+		responseDecision = ""
 	}
-	return decision, wireDecision, wireReason, auditReason
+	return decision, wireDecision, wireReason, auditReason, responseDecision
 }
 
 func (s *Server) validateDryRunTrace(
@@ -981,7 +982,7 @@ func (s *Server) recordImpersonation(
 	ctx context.Context,
 	actorDID, impersonatedDID, orgID string,
 	rpc apimodels.DryRunRPCBlock,
-	decision, reason, correlationID string,
+	decision, reason, correlationID, responseDecision string,
 ) error {
 	if s.db == nil {
 		return nil
@@ -997,9 +998,9 @@ func (s *Server) recordImpersonation(
 		corr.Valid = true
 	}
 	_, err := conn.ExecContext(ctx, `
-		INSERT INTO impersonation_log (actor_did, impersonated_did, org_id, method, params_hash, decision, reason, correlation_id)
-		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), $8)`,
-		actorDID, impersonatedDID, orgID, rpc.Method, paramsHash, decision, reason, corr,
+		INSERT INTO impersonation_log (actor_did, impersonated_did, org_id, method, params_hash, decision, reason, correlation_id, response_decision)
+		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), $8, NULLIF($9, ''))`,
+		actorDID, impersonatedDID, orgID, rpc.Method, paramsHash, decision, reason, corr, responseDecision,
 	)
 	return err
 }

@@ -310,15 +310,25 @@ func TestPolicyCheck_RejectsUnlinkedSender(t *testing.T) {
 
 func TestPolicyCheck_UsesConcurrencyLimit(t *testing.T) {
 	f := setupPCFixture(t)
+	const callerIP = "203.0.113.7"
 	limiter := middleware.NewConcurrencyLimiter(1, 1)
-	require.True(t, limiter.TryAcquire(policyCheckLimiterKey))
-	defer limiter.Release(policyCheckLimiterKey)
+	limitKey := crossOrgOracleLimitKey(callerIP)
+	require.True(t, limiter.TryAcquire(limitKey))
+	defer limiter.Release(limitKey)
 	f.srv.jsonrpcProcessor = &JSONRPCProcessor{concurrencyLimiter: limiter}
 
-	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", map[string]any{
+	body := map[string]any{
 		"subject":   map[string]any{"did": f.userDID},
 		"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr),
-	})
+	}
+	jb, err := json.Marshal(body)
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/api/policy-check", bytes.NewReader(jb))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Test-Auth-Method", "cross_org_authorization_oracle_token")
+	req.RemoteAddr = callerIP + ":1234"
+	w := httptest.NewRecorder()
+	f.srv.router.ServeHTTP(w, req)
 	// Concurrency exhaustion is operational unavailability, not a policy deny.
 	require.Equal(t, http.StatusTooManyRequests, w.Code, "body: %s", w.Body.String())
 }

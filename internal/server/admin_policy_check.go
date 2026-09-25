@@ -97,6 +97,16 @@ type policyCheckArtifacts struct {
 // categories; anything else maps to "denied" (RD-877).
 const policyCheckLimiterKey = "admin_policy_check"
 
+// crossOrgOracleLimitKey scopes oracle concurrency/rate budgets per caller IP,
+// matching live debug_traceCall (per-user) without sharing one global bucket.
+func crossOrgOracleLimitKey(clientIP string) string {
+	ip := strings.TrimSpace(clientIP)
+	if ip == "" {
+		ip = "unknown"
+	}
+	return policyCheckLimiterKey + ":" + ip
+}
+
 const policyCheckTraceTimeout = 5 * time.Second
 
 // errSimRateLimited and errSimConcurrencyLimited mark operational unavailability

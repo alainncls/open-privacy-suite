@@ -477,13 +477,14 @@ func TestDryRun_FunctionRuleTraceStaysInPathOrg(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "indeterminate", resp.Decision)
 	assert.Equal(t, "external_scope_required", resp.Reason)
-	var auditDecision, auditReason string
+	var auditDecision, auditResponseDecision, auditReason string
 	require.NoError(t, f.srv.db.Conn().QueryRowContext(ctx, `
-		SELECT decision, reason FROM impersonation_log
+		SELECT decision, COALESCE(response_decision, ''), reason FROM impersonation_log
 		 WHERE impersonated_did = $1 AND method = 'eth_sendTransaction' ORDER BY created_at DESC LIMIT 1`,
 		userDID,
-	).Scan(&auditDecision, &auditReason))
-	assert.Equal(t, "indeterminate", auditDecision)
+	).Scan(&auditDecision, &auditResponseDecision, &auditReason))
+	assert.Equal(t, "deny", auditDecision)
+	assert.Equal(t, "indeterminate", auditResponseDecision)
 	assert.Equal(t, "external_scope_required", auditReason)
 	assert.Empty(t, resp.Trace, "a denied nested call must not expose its trace")
 	assert.Empty(t, resp.LogsEmitted, "a denied nested call must not expose its logs")
