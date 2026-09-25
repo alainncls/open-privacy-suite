@@ -469,11 +469,17 @@ func (s *Server) simulatePolicyCheck(
 	if reason, senderErr := s.validatePolicyCheckSender(ctx, subjectDID, op); senderErr != nil {
 		return "", "", senderErr
 	} else if reason != "" {
+		if reason == ReasonInvalidRequestShape {
+			return "", "", &simulationClientError{msg: reason}
+		}
 		return sanitizePolicyCheckReason(reason), reason, nil
 	}
 	if reason, visibleToErr := validatePolicyCheckVisibleTo(op); visibleToErr != nil {
 		return "", "", visibleToErr
 	} else if reason != "" {
+		if reason == ReasonInvalidRequestShape {
+			return "", "", &simulationClientError{msg: reason}
+		}
 		return sanitizePolicyCheckReason(reason), reason, nil
 	}
 	perms, err := s.rbacAccessCtrl.GetEffectivePermissionsByIDs(ctx, user.ID, accessResult.OrgID)

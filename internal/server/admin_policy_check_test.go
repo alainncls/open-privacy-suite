@@ -284,6 +284,17 @@ func TestPolicyCheck_AcceptsOracleToken(t *testing.T) {
 	assert.True(t, decodePolicyCheckResponse(t, w).Allowed)
 }
 
+func TestPolicyCheck_MalformedSenderBadRequest(t *testing.T) {
+	f := setupPCFixture(t)
+	op := pcBalanceOfCallOp(f.contractAddr, f.userAddr)
+	op["params"].([]any)[0].(map[string]any)["from"] = "not-an-address"
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", map[string]any{
+		"subject": map[string]any{"did": f.userDID}, "operation": op,
+	})
+	require.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
+	assert.Contains(t, w.Body.String(), "invalid operation")
+}
+
 func TestPolicyCheck_RejectsUnlinkedSender(t *testing.T) {
 	f := setupPCFixture(t)
 	op := pcBalanceOfCallOp(f.contractAddr, f.userAddr)

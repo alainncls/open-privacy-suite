@@ -258,6 +258,15 @@ func (s *Server) handleDryRun(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	} else if reason != "" {
+		if reason == ReasonInvalidRequestShape {
+			if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", "decode_error", c.GetString("correlation_id")); logErr != nil {
+				slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+				return
+			}
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid operation"})
+			return
+		}
 		if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "deny", reason, c.GetString("correlation_id")); logErr != nil {
 			slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
@@ -288,16 +297,8 @@ func (s *Server) handleDryRun(c *gin.Context) {
 			}
 		}
 		if validationErr := s.validateDryRunTrace(ctx, user, userPerms, orgID, accessReq.TargetAddress, traceResp.Parsed); validationErr != nil {
-			wireDecision, wireReason := "deny", validationErr.Message
-			decision := "deny"
-			if validationErr.TraceDenialKind == rbac.DenialKindForeignOrg ||
-				validationErr.TraceDenialKind == rbac.DenialKindCreateForeign {
-				wireDecision, wireReason = "indeterminate", "external_scope_required"
-			}
-			if validationErr.StatusCode >= http.StatusInternalServerError {
-				decision = "error"
-			}
-			if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, decision, sanitizeDryRunReason(validationErr.Reason), c.GetString("correlation_id")); logErr != nil {
+			decision, wireDecision, wireReason, auditReason := dryRunTraceProcessOutcome(validationErr)
+			if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, decision, auditReason, c.GetString("correlation_id")); logErr != nil {
 				slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 				return
@@ -334,18 +335,8 @@ func (s *Server) handleDryRun(c *gin.Context) {
 			return
 		}
 		if validationErr := s.validateDryRunTrace(ctx, user, userPerms, orgID, accessReq.TargetAddress, traceResp.Parsed); validationErr != nil {
-			decision := "deny"
-			wireDecision := "deny"
-			wireReason := validationErr.Message
-			if validationErr.TraceDenialKind == rbac.DenialKindForeignOrg ||
-				validationErr.TraceDenialKind == rbac.DenialKindCreateForeign {
-				wireDecision = "indeterminate"
-				wireReason = "external_scope_required"
-			}
-			if validationErr.StatusCode >= http.StatusInternalServerError {
-				decision = "error"
-			}
-			if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, decision, sanitizeDryRunReason(validationErr.Reason), c.GetString("correlation_id")); logErr != nil {
+			decision, wireDecision, wireReason, auditReason := dryRunTraceProcessOutcome(validationErr)
+			if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, decision, auditReason, c.GetString("correlation_id")); logErr != nil {
 				slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 				return
@@ -742,6 +733,24 @@ func policyCheckTraceTransaction(txObj map[string]any) map[string]any {
 // payload returned by forwardDryRunTrace. Validation is deliberately pinned to
 // orgID rather than all of the impersonated user's memberships: an Org A admin
 // must not receive nested Org B calls merely because the user belongs to both.
+func dryRunTraceProcessOutcome(validationErr *ProcessError) (decision, wireDecision, wireReason, auditReason string) {
+	decision = "deny"
+	wireDecision = "deny"
+	wireReason = validationErr.Message
+	auditReason = sanitizeDryRunReason(validationErr.Reason)
+	if validationErr.TraceDenialKind == rbac.DenialKindForeignOrg ||
+		validationErr.TraceDenialKind == rbac.DenialKindCreateForeign {
+		decision = "indeterminate"
+		wireDecision = "indeterminate"
+		wireReason = "external_scope_required"
+		auditReason = "external_scope_required"
+	}
+	if validationErr.StatusCode >= http.StatusInternalServerError {
+		decision = "error"
+	}
+	return decision, wireDecision, wireReason, auditReason
+}
+
 func (s *Server) validateDryRunTrace(
 	ctx context.Context,
 	user *rbac.User,
