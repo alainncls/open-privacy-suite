@@ -412,6 +412,16 @@ func TestParseCallTraceResultRejectsStructurallyEmptyRoot(t *testing.T) {
 	}
 }
 
+func TestParseCallTraceResultRejectsUnknownNestedFrame(t *testing.T) {
+	raw := json.RawMessage(`{
+		"type":"CALL","from":"0x1","to":"0x2",
+		"calls":[{"type":"BOGUS","from":"0x2","to":"0x3"}]
+	}`)
+	if _, err := ParseCallTraceResult(raw); err == nil {
+		t.Fatal("expected unknown nested frame to fail closed")
+	}
+}
+
 // buildNestedFrameChain constructs a single-child chain of depth `chainDepth`
 // frames (root at depth 0, one nested CALL per level). The resulting root can
 // be handed to extractCallTargets(frame, result, 0) and the deepest frame will

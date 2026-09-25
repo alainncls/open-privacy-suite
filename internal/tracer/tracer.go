@@ -242,6 +242,9 @@ func (t *Tracer) extractCallTargets(frame *callFrame, result *TraceResult, depth
 	if depth > maxTraceDepth {
 		return ErrTraceDepthExceeded
 	}
+	if !validCallFrameType(frame.Type) {
+		return fmt.Errorf("invalid nested call frame type %q at depth %d", frame.Type, depth)
+	}
 	// Check the type and add to result
 	switch frame.Type {
 	case "CALL", "CALLCODE", "DELEGATECALL", "STATICCALL":

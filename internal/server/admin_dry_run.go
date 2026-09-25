@@ -105,6 +105,7 @@ var dryRunTraceMethods = map[string]bool{
 // @Failure      404 {object} apimodels.APIError "impersonated user not found or not a member of the path org (opaque)"
 // @Failure      500 {object} apimodels.APIError "internal error (includes audit-log write failure — response withheld)"
 // @Failure      502 {object} apimodels.APIError "upstream node error or trace failure"
+// @Failure      503 {object} apimodels.APIError "trace or compliance preview unavailable"
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/dry-run [post]
 func (s *Server) handleDryRun(c *gin.Context) {
@@ -277,6 +278,11 @@ func (s *Server) handleDryRun(c *gin.Context) {
 				OrgID: orgID, UserID: user.ID, From: from, To: to, Data: data, Value: value,
 			})
 			if compErr != nil {
+				if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", "compliance_unavailable", c.GetString("correlation_id")); logErr != nil {
+					slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+					return
+				}
 				c.JSON(http.StatusServiceUnavailable, gin.H{"error": "compliance preview unavailable"})
 				return
 			}
@@ -296,8 +302,16 @@ func (s *Server) handleDryRun(c *gin.Context) {
 	// runtime tracing is disabled. Trace directly and stop at the first foreign
 	// boundary before forwarding the read response.
 	if req.RPC.Method == "eth_call" {
+		apiKey := accessResult.RPCAPIKey
+		apiKeyHeader := proxy.DefaultAPIKeyHeader
+		if s.jsonrpcProcessor != nil {
+			if apiKey == "" {
+				apiKey = s.jsonrpcProcessor.defaultRPCAPIKey
+			}
+			apiKeyHeader = s.jsonrpcProcessor.resolveAPIKeyHeader()
+		}
 		traceCtx, cancel := context.WithTimeout(ctx, policyCheckTraceTimeout)
-		traceResp, traceErr := s.forwardDryRunTraceWithAPIKey(traceCtx, req.RPC, accessResult.RPCAPIKey, proxy.DefaultAPIKeyHeader)
+		traceResp, traceErr := s.forwardDryRunTraceWithAPIKey(traceCtx, req.RPC, apiKey, apiKeyHeader)
 		cancel()
 		if traceErr != nil {
 			if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", ReasonTracingUnavailable, c.GetString("correlation_id")); logErr != nil {

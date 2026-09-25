@@ -1230,7 +1230,12 @@ func (s *Server) setupRouter() *gin.Engine {
 	apiV1 := router.Group("/api/v1")
 	{
 		oracle := apiV1.Group("/admin")
-		oracle.Use(middleware.BodyLimit(MaxRequestBodySize), s.localhostOnlyMiddleware(), s.crossOrgAuthorizationOracleAuthMiddleware())
+		oracle.Use(
+			middleware.BodyLimit(MaxRequestBodySize),
+			s.localhostOnlyMiddleware(),
+			s.crossOrgAuthorizationOracleAuthMiddleware(),
+			s.crossOrgAuthorizationOracleLimitMiddleware(),
+		)
 		oracle.POST("/cross-org-authorization-oracle", s.handlePolicyCheck)
 
 		// Admin endpoints - private network + token auth + org scoping
@@ -1781,6 +1786,35 @@ func (s *Server) crossOrgAuthorizationOracleAuthMiddleware() gin.HandlerFunc {
 			return
 		}
 		c.Set("auth_method", "cross_org_authorization_oracle_token")
+		c.Next()
+	}
+}
+
+// crossOrgAuthorizationOracleLimitMiddleware covers the entire authenticated
+// oracle request, including subject/RBAC denials and non-EVM methods. The
+// simulation path has additional trace-specific controls.
+func (s *Server) crossOrgAuthorizationOracleLimitMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if s.jsonrpcProcessor == nil {
+			c.Next()
+			return
+		}
+		limiter := s.jsonrpcProcessor.concurrencyLimiter
+		if limiter != nil && !limiter.TryAcquire(policyCheckLimiterKey) {
+			respondTooManyRequests(c, "policy-check capacity exhausted; retry later")
+			c.Abort()
+			return
+		}
+		if limiter != nil {
+			defer limiter.Release(policyCheckLimiterKey)
+		}
+		if rateLimiter := s.jsonrpcProcessor.rateLimiter; rateLimiter != nil {
+			if allowed, _ := rateLimiter.CheckAndIncrement(policyCheckLimiterKey, nil, nil); !allowed {
+				respondTooManyRequests(c, "policy-check rate limit exhausted; retry later")
+				c.Abort()
+				return
+			}
+		}
 		c.Next()
 	}
 }

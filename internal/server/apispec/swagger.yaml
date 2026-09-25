@@ -7567,6 +7567,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
           description: upstream node error or trace failure
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
+          description: trace or compliance preview unavailable
       security:
       - AdminToken: []
       summary: Dry-run an RPC call as a user
