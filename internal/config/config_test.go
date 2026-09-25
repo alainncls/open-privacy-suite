@@ -522,6 +522,12 @@ func TestCrossOrgAuthorizationOracleValidation(t *testing.T) {
 		cfg.CrossOrgAuthorizationOracleOrgIDs = []string{"not-an-org"}
 		require.ErrorContains(t, cfg.Validate(), "invalid organization ID")
 	})
+	t.Run("allowlist UUIDs are canonicalized", func(t *testing.T) {
+		cfg := base()
+		cfg.CrossOrgAuthorizationOracleOrgIDs = []string{"AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"}
+		require.NoError(t, cfg.Validate())
+		require.Equal(t, []string{"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}, cfg.CrossOrgAuthorizationOracleOrgIDs)
+	})
 	t.Run("valid full simulation", func(t *testing.T) {
 		cfg := base()
 		cfg.CrossOrgAuthorizationOracleMode = "full_simulation"

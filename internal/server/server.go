@@ -755,6 +755,22 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	rbacAuditChain := audit.NewHashChain(rbacAuditSeed)
 	database.SetRBACAuditChain(rbacAuditChain)
 
+	// This audit is mandatory when the cross-tenant oracle is enabled. Perform
+	// it before starting any background worker so a failed write can abort
+	// construction without leaking goroutines or other live resources.
+	if s.crossOrgAuthorizationOracleEnabled() {
+		slog.Warn("CROSS-ORG AUTHORIZATION ORACLE ENABLED: the dedicated caller can query policy across the configured organization allowlist",
+			"mode", cfg.CrossOrgAuthorizationOracleMode,
+			"allowed_org_count", len(cfg.CrossOrgAuthorizationOracleOrgIDs))
+		if err := database.LogAuditAction(context.Background(), "cross_org_oracle.enabled", map[string]any{
+			"mode":              cfg.CrossOrgAuthorizationOracleMode,
+			"allowed_org_count": len(cfg.CrossOrgAuthorizationOracleOrgIDs),
+			"allowed_org_ids":   cfg.CrossOrgAuthorizationOracleOrgIDs,
+		}); err != nil {
+			return nil, fmt.Errorf("audit enabled cross-org authorization oracle configuration: %w", err)
+		}
+	}
+
 	// Initialize SIEM forwarder if webhook URL is configured.
 	// RD-950: NewSIEMForwarder now applies the SSRF guard at construction
 	// time and returns an error on a malformed/private URL. In production
@@ -1021,19 +1037,6 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	if cfg.AdminAPIToken == "" {
 		slog.Warn("ADMIN_API_TOKEN is not set - admin API is unprotected, any request from the private network will be accepted without authentication")
 	}
-	if s.crossOrgAuthorizationOracleEnabled() {
-		slog.Warn("CROSS-ORG AUTHORIZATION ORACLE ENABLED: the dedicated caller can query policy across the configured organization allowlist",
-			"mode", cfg.CrossOrgAuthorizationOracleMode,
-			"allowed_org_count", len(cfg.CrossOrgAuthorizationOracleOrgIDs))
-		if err := database.LogAuditAction(context.Background(), "cross_org_oracle.enabled", map[string]any{
-			"mode":              cfg.CrossOrgAuthorizationOracleMode,
-			"allowed_org_count": len(cfg.CrossOrgAuthorizationOracleOrgIDs),
-			"allowed_org_ids":   cfg.CrossOrgAuthorizationOracleOrgIDs,
-		}); err != nil {
-			return nil, fmt.Errorf("audit enabled cross-org authorization oracle configuration: %w", err)
-		}
-	}
-
 	// Startup registration is done: from here on the registries are read
 	// lock-free by request handlers, so any further RegisterExtraNamespaces
 	// call is a data race and panics (RD-1262). Armed only on the success

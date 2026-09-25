@@ -1050,16 +1050,20 @@ func (c *Config) validateCrossOrgAuthorizationOracle() error {
 		return errors.New("CROSS_ORG_AUTHORIZATION_ORACLE_ORG_IDS must contain at least one organization when the oracle is enabled")
 	}
 	seen := make(map[string]struct{}, len(c.CrossOrgAuthorizationOracleOrgIDs))
+	canonicalOrgIDs := make([]string, 0, len(c.CrossOrgAuthorizationOracleOrgIDs))
 	for _, rawID := range c.CrossOrgAuthorizationOracleOrgIDs {
-		id := strings.TrimSpace(rawID)
-		if _, err := uuid.Parse(id); err != nil {
+		parsedID, err := uuid.Parse(strings.TrimSpace(rawID))
+		if err != nil {
 			return fmt.Errorf("CROSS_ORG_AUTHORIZATION_ORACLE_ORG_IDS contains invalid organization ID %q", rawID)
 		}
+		id := parsedID.String()
 		if _, ok := seen[id]; ok {
 			return fmt.Errorf("CROSS_ORG_AUTHORIZATION_ORACLE_ORG_IDS contains duplicate organization ID %q", id)
 		}
 		seen[id] = struct{}{}
+		canonicalOrgIDs = append(canonicalOrgIDs, id)
 	}
+	c.CrossOrgAuthorizationOracleOrgIDs = canonicalOrgIDs
 	return nil
 }
 

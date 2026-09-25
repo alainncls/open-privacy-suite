@@ -243,9 +243,9 @@ func pcBalanceOfCallOp(contract, argAddr string) map[string]any {
 	}
 }
 
-func decodePolicyCheckResponse(t *testing.T, w *httptest.ResponseRecorder) policyCheckResponse {
+func decodePolicyCheckResponse(t *testing.T, w *httptest.ResponseRecorder) policyCheckWireResponse {
 	t.Helper()
-	var resp policyCheckResponse
+	var resp policyCheckWireResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp), "body: %s", w.Body.String())
 	return resp
 }

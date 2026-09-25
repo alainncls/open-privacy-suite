@@ -206,6 +206,9 @@ type ProcessError struct {
 	// admin view, and — for opt-in verbose callers (Part A) — surfaced on the
 	// wire. Empty for non-denial or unclassified errors. Never raw error text.
 	Reason string
+	// TraceDenialKind preserves the validator's internal classification for
+	// projections such as org-local dry-run. It is never serialized directly.
+	TraceDenialKind rbac.DenialKind
 }
 
 func (e *ProcessError) Error() string {

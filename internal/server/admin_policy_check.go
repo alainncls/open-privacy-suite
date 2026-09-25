@@ -67,16 +67,29 @@ func (op policyCheckRPCBlock) rpcBlock() apimodels.DryRunRPCBlock {
 
 // policyCheckResponse is projected according to the configured server mode.
 // verdict_only omits Artifacts; full_simulation includes the authorized trace.
-type policyCheckResponse struct {
-	Allowed   bool                  `json:"allowed"`
-	Artifacts *policyCheckArtifacts `json:"artifacts,omitempty"`
+type policyCheckWireResponse struct {
+	Allowed   bool                      `json:"allowed"`
+	Artifacts *policyCheckWireArtifacts `json:"artifacts,omitempty"`
 	// Reason is set only on deny, sanitized to a coarse category (RD-934).
 	Reason string `json:"reason,omitempty"`
 }
 
-type policyCheckArtifacts struct {
+type policyCheckWireArtifacts struct {
 	Trace json.RawMessage   `json:"trace"`
 	Logs  []json.RawMessage `json:"logs,omitempty"`
+}
+
+// Spec-only mirrors keep RawMessage fields documented as JSON values rather
+// than byte arrays while retaining the published component schema names.
+type policyCheckResponse struct {
+	Allowed   bool                  `json:"allowed"`
+	Artifacts *policyCheckArtifacts `json:"artifacts,omitempty"`
+	Reason    string                `json:"reason,omitempty"`
+}
+
+type policyCheckArtifacts struct {
+	Trace any   `json:"trace"`
+	Logs  []any `json:"logs,omitempty"`
 }
 
 // policyCheckKnownReasonCategories is the wire-facing allowlist of deny
@@ -307,7 +320,7 @@ func (s *Server) handlePolicyCheck(c *gin.Context) {
 
 	allowed := result.Allowed
 	auditReason, wireReason := "", ""
-	var artifacts policyCheckArtifacts
+	var artifacts policyCheckWireArtifacts
 	if !allowed {
 		auditReason = sanitizeDryRunReason(result.Reason)
 		wireReason = sanitizePolicyCheckReason(result.Reason)
@@ -352,7 +365,7 @@ func (s *Server) handlePolicyCheck(c *gin.Context) {
 		respondInternalError(c, "internal error")
 		return
 	}
-	response := policyCheckResponse{Allowed: allowed, Reason: wireReason}
+	response := policyCheckWireResponse{Allowed: allowed, Reason: wireReason}
 	if allowed && s.config != nil && strings.EqualFold(strings.TrimSpace(s.config.CrossOrgAuthorizationOracleMode), "full_simulation") {
 		response.Artifacts = &artifacts
 	}
@@ -397,7 +410,7 @@ func (s *Server) simulatePolicyCheck(
 	op apimodels.DryRunRPCBlock,
 	accessReq *rbac.AccessCheckRequest,
 	accessResult *rbac.AccessCheckResult,
-	artifacts *policyCheckArtifacts,
+	artifacts *policyCheckWireArtifacts,
 ) (wireReason, auditReason string, err error) {
 	effectiveMethod := rbac.ResolveMethodAlias(op.Method)
 	switch effectiveMethod {

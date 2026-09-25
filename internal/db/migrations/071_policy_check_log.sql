@@ -1,4 +1,4 @@
--- Audit log for POST /api/v1/admin/policy-check, which answers "would this
+-- Audit log for POST /api/v1/admin/cross-org-authorization-oracle, which answers "would this
 -- subject be allowed to make this call?" for a service credential. Separate
 -- from access_logs (calls that actually happened) and impersonation_log (which
 -- requires the target to be a known org member).
