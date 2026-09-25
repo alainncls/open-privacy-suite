@@ -200,7 +200,7 @@ func ParseCallTraceResult(raw json.RawMessage) (*TraceResult, error) {
 	if err := json.Unmarshal(raw, &frame); err != nil {
 		return nil, fmt.Errorf("failed to parse trace result: %w", err)
 	}
-	if !validCallFrameType(frame.Type) {
+	if !validRootCallFrameType(frame.Type) {
 		return nil, fmt.Errorf("failed to parse trace result: invalid root call frame type %q", frame.Type)
 	}
 
@@ -219,13 +219,20 @@ func ParseCallTraceResult(raw json.RawMessage) (*TraceResult, error) {
 	return result, nil
 }
 
-func validCallFrameType(frameType string) bool {
+func validRootCallFrameType(frameType string) bool {
 	switch frameType {
 	case "CALL", "CALLCODE", "DELEGATECALL", "STATICCALL", "CREATE", "CREATE2":
 		return true
 	default:
 		return false
 	}
+}
+
+func validNestedCallFrameType(frameType string) bool {
+	if validRootCallFrameType(frameType) {
+		return true
+	}
+	return frameType == "SELFDESTRUCT"
 }
 
 // extractCallTargets recursively extracts all call targets from a call frame.
@@ -242,7 +249,11 @@ func (t *Tracer) extractCallTargets(frame *callFrame, result *TraceResult, depth
 	if depth > maxTraceDepth {
 		return ErrTraceDepthExceeded
 	}
-	if !validCallFrameType(frame.Type) {
+	if depth == 0 {
+		if !validRootCallFrameType(frame.Type) {
+			return fmt.Errorf("invalid root call frame type %q at depth %d", frame.Type, depth)
+		}
+	} else if !validNestedCallFrameType(frame.Type) {
 		return fmt.Errorf("invalid nested call frame type %q at depth %d", frame.Type, depth)
 	}
 	if callFrameRequiresTarget(frame.Type) && strings.TrimSpace(frame.To) == "" {

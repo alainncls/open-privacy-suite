@@ -129,6 +129,23 @@ func TestExtractCallTargets_CreateOperations(t *testing.T) {
 	}
 }
 
+func TestParseCallTraceResult_AcceptsNestedSelfdestruct(t *testing.T) {
+	raw := `{"type":"CALL","from":"0x1","to":"0x2","calls":[{"type":"SELFDESTRUCT","from":"0x2","to":"0x2"}]}`
+	result, err := ParseCallTraceResult(json.RawMessage(raw))
+	if err != nil {
+		t.Fatalf("expected nested SELFDESTRUCT to parse: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+}
+
+func TestParseCallTraceResult_RejectsRootSelfdestruct(t *testing.T) {
+	if _, err := ParseCallTraceResult(json.RawMessage(`{"type":"SELFDESTRUCT","from":"0x1","to":"0x1"}`)); err == nil {
+		t.Fatal("expected root SELFDESTRUCT to fail closed")
+	}
+}
+
 func TestParseCallTraceResult_RejectsMissingCallTarget(t *testing.T) {
 	tests := []struct {
 		name string

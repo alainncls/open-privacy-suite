@@ -335,6 +335,40 @@ func TestDryRun_FunctionLevelRules(t *testing.T) {
 	}
 }
 
+func TestDryRun_EthCallStateOverrideBadRequest(t *testing.T) {
+	f := setupDryRunFixture(t)
+	ctx := context.Background()
+	contractAddr := "0x2222222222222222222222222222222222222222"
+	contractID := drCreateContract(t, f.srv.db, f.orgID, contractAddr, "DRStateOverride")
+	require.NoError(t, f.srv.db.UpdateContractABI(ctx, contractID, dryRunBalanceOfABI))
+	selfAddr := "0x00000000000000000000000000000000000000a1"
+	require.NoError(t, f.srv.db.SystemLinkEthAddress(ctx, f.userDID, selfAddr))
+	require.NoError(t, f.srv.db.CreateContractGrant(ctx, &rbac.ContractGrant{
+		ID: uuid.New().String(), ContractID: contractID, GroupID: f.userGroupID,
+		Functions: []rbac.FunctionRule{{
+			Selector:   dryRunBalanceOfSelector,
+			ParamRules: []rbac.ParamRule{{Index: 0, MustBe: "self"}},
+		}},
+	}))
+	rpc := apimodels.DryRunRPCBlock{
+		Method: "eth_call",
+		Params: []any{
+			map[string]any{
+				"to":   contractAddr,
+				"data": dryRunBalanceOfSelector + "000000000000000000000000" + strings.TrimPrefix(selfAddr, "0x"),
+			},
+			"latest",
+			map[string]any{contractAddr: map[string]any{"balance": "0x0"}},
+		},
+	}
+	w := dryRunPost(t, f.srv, f.orgID, "jwt_admin", f.adminDID, map[string]any{
+		"user_did": f.userDID,
+		"rpc":      rpc,
+	})
+	require.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
+	assert.Contains(t, w.Body.String(), "invalid operation")
+}
+
 // TestDryRunAccessRequest_MatchesEnforcementDerivation pins the fields the
 // builder derives to the values JSONRPCProcessor derives for the same call,
 // computed here from the params the way the enforcement path does rather than

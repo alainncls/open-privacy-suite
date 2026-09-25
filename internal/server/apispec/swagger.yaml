@@ -4295,11 +4295,7 @@ paths:
         content:
           application/json:
             schema:
-              oneOf:
-              - type: object
-              - $ref: '#/components/schemas/internal_server.policyCheckRequest'
-                description: subject, operation, and optional org_id
-                summary: request
+              $ref: '#/components/schemas/internal_server.policyCheckRequest'
         description: subject, operation, and optional org_id
         required: true
       responses:

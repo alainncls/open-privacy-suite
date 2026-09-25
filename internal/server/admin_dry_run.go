@@ -314,11 +314,9 @@ func (s *Server) handleDryRun(c *gin.Context) {
 		traceResp, traceErr := s.forwardDryRunTraceWithAPIKey(traceCtx, req.RPC, apiKey, apiKeyHeader)
 		cancel()
 		if traceErr != nil {
-			if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", ReasonTracingUnavailable, c.GetString("correlation_id")); logErr != nil {
-				slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
+			if s.respondDryRunTraceError(c, ctx, adminDID, req.UserDID, orgID, req.RPC, traceErr) {
+				return
 			}
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "policy simulation unavailable"})
-			return
 		}
 		if validationErr := s.validateDryRunTrace(ctx, user, userPerms, orgID, accessReq.TargetAddress, traceResp.Parsed); validationErr != nil {
 			wireDecision, wireReason := "deny", validationErr.Message
@@ -340,6 +338,16 @@ func (s *Server) handleDryRun(c *gin.Context) {
 	if isTrace {
 		traceResp, traceErr := s.forwardDryRunTrace(ctx, req.RPC)
 		if traceErr != nil {
+			var clientErr *simulationClientError
+			if errors.As(traceErr, &clientErr) {
+				if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", "decode_error", c.GetString("correlation_id")); logErr != nil {
+					slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+					return
+				}
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid operation"})
+				return
+			}
 			if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", sanitizeDryRunReason(traceErr), c.GetString("correlation_id")); logErr != nil {
 				slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
@@ -532,6 +540,34 @@ type simulationClientError struct{ msg string }
 
 func (e *simulationClientError) Error() string { return e.msg }
 
+// respondDryRunTraceError maps trace simulation failures to HTTP responses.
+// Caller-controlled operation shapes are audited client errors (400); upstream
+// trace unavailability is operational (503). Returns true when a response was
+// written.
+func (s *Server) respondDryRunTraceError(
+	c *gin.Context,
+	ctx context.Context,
+	adminDID, userDID, orgID string,
+	rpc apimodels.DryRunRPCBlock,
+	traceErr error,
+) bool {
+	var clientErr *simulationClientError
+	if errors.As(traceErr, &clientErr) {
+		if logErr := s.recordImpersonation(ctx, adminDID, userDID, orgID, rpc, "error", "decode_error", c.GetString("correlation_id")); logErr != nil {
+			slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			return true
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid operation"})
+		return true
+	}
+	if logErr := s.recordImpersonation(ctx, adminDID, userDID, orgID, rpc, "error", ReasonTracingUnavailable, c.GetString("correlation_id")); logErr != nil {
+		slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
+	}
+	c.JSON(http.StatusServiceUnavailable, gin.H{"error": "policy simulation unavailable"})
+	return true
+}
+
 // forwardDryRunTraceWithAPIKey evaluates an EVM call with debug_traceCall
 // using the same upstream credential as the matching live request.
 //
@@ -542,10 +578,6 @@ func (e *simulationClientError) Error() string { return e.msg }
 // signer; signature must be valid (a malformed signed blob gets a clear
 // decode error, not a silent pass).
 func (s *Server) forwardDryRunTraceWithAPIKey(ctx context.Context, rpc apimodels.DryRunRPCBlock, apiKey, apiKeyHeader string) (*dryRunTraceResult, error) {
-	if s.proxy == nil {
-		return nil, fmt.Errorf("proxy not configured")
-	}
-
 	var txObj map[string]any
 	blockParam := any("latest")
 	effectiveMethod := rbac.ResolveMethodAlias(rpc.Method)
@@ -594,6 +626,9 @@ func (s *Server) forwardDryRunTraceWithAPIKey(ctx context.Context, rpc apimodels
 		txObj = obj
 	default:
 		return nil, fmt.Errorf("unsupported trace method: %s", rpc.Method)
+	}
+	if s.proxy == nil {
+		return nil, fmt.Errorf("proxy not configured")
 	}
 
 	// Build the debug_traceCall request. callTracer + withLog gives us

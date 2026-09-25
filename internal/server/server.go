@@ -1813,7 +1813,10 @@ func (s *Server) crossOrgAuthorizationOracleLimitMiddleware() gin.HandlerFunc {
 			defer limiter.Release(policyCheckLimiterKey)
 		}
 		if rateLimiter := s.jsonrpcProcessor.rateLimiter; rateLimiter != nil {
-			if allowed, _ := rateLimiter.CheckAndIncrement(policyCheckLimiterKey, nil, nil); !allowed {
+			// Match the live debug-trace budget (jsonrpc_trace.go): nil limits are
+			// treated as unlimited and would make this endpoint unrategated.
+			rps, daily := 1, 100
+			if allowed, _ := rateLimiter.CheckAndIncrement(policyCheckLimiterKey, &rps, &daily); !allowed {
 				respondTooManyRequests(c, "policy-check rate limit exhausted; retry later")
 				c.Abort()
 				return

@@ -41,6 +41,8 @@ var nullableProperties = map[string][]string{
 // express the either/or runtime contract from the two optional Go fields, so
 // generated clients otherwise see both as optional and combinable.
 const subjectSchema = "internal_server.policyCheckSubject"
+const policyCheckRequestSchema = "internal_server.policyCheckRequest"
+const crossOrgOraclePath = "/api/v1/admin/cross-org-authorization-oracle"
 
 var subjectOneOf = []any{
 	map[string]any{
@@ -121,6 +123,9 @@ func patchJSON(path string) error {
 		delete(subject, "type")
 		subject["oneOf"] = subjectOneOf
 	}
+	if err := patchCrossOrgOracleRequestBody(doc); err != nil {
+		return err
+	}
 
 	// Canonical serialization: sorted keys, 4-space indent, HTML-escaped —
 	// the same shape swag's own marshaling produces for nested objects.
@@ -156,7 +161,111 @@ func patchYAML(path string) error {
 	if err != nil {
 		return err
 	}
+	lines, err = patchYAMLCrossOrgOracleRequestBody(lines)
+	if err != nil {
+		return err
+	}
 	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
+}
+
+// patchCrossOrgOracleRequestBody replaces swag's broken requestBody oneOf
+// (unconstrained object + policyCheckRequest) with a direct schema ref.
+func patchCrossOrgOracleRequestBody(doc map[string]any) error {
+	paths, err := dig[map[string]any](doc, "paths")
+	if err != nil {
+		return err
+	}
+	post, err := dig[map[string]any](paths, crossOrgOraclePath, "post")
+	if err != nil {
+		return err
+	}
+	requestBody, err := dig[map[string]any](post, "requestBody")
+	if err != nil {
+		return err
+	}
+	content, err := dig[map[string]any](requestBody, "content")
+	if err != nil {
+		return err
+	}
+	jsonContent, err := dig[map[string]any](content, "application/json")
+	if err != nil {
+		return err
+	}
+	schema, err := dig[map[string]any](jsonContent, "schema")
+	if err != nil {
+		return err
+	}
+	if ref, ok := schema["$ref"].(string); ok && strings.HasSuffix(ref, policyCheckRequestSchema) {
+		return nil
+	}
+	oneOf, ok := schema["oneOf"].([]any)
+	if !ok || len(oneOf) != 2 {
+		return fmt.Errorf("path %q post requestBody: expected swag oneOf wrapper", crossOrgOraclePath)
+	}
+	for _, branch := range oneOf {
+		asMap, ok := branch.(map[string]any)
+		if !ok {
+			continue
+		}
+		ref, ok := asMap["$ref"].(string)
+		if ok && strings.HasSuffix(ref, policyCheckRequestSchema) {
+			jsonContent["schema"] = map[string]any{
+				"$ref": "#/components/schemas/" + policyCheckRequestSchema,
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("path %q post requestBody: policyCheckRequest branch not found", crossOrgOraclePath)
+}
+
+func patchYAMLCrossOrgOracleRequestBody(lines []string) ([]string, error) {
+	anchor := "  " + crossOrgOraclePath + ":"
+	at := -1
+	for i, line := range lines {
+		if line == anchor {
+			at = i
+			break
+		}
+	}
+	if at == -1 {
+		return nil, fmt.Errorf("yaml: path %q not found", crossOrgOraclePath)
+	}
+	want := []string{
+		"            schema:",
+		"              oneOf:",
+		"              - type: object",
+		"              - $ref: '#/components/schemas/" + policyCheckRequestSchema + "'",
+		"                description: subject, operation, and optional org_id",
+		"                summary: request",
+	}
+	replacement := []string{
+		"            schema:",
+		"              $ref: '#/components/schemas/" + policyCheckRequestSchema + "'",
+	}
+	// Idempotent re-run.
+	for i := at; i < len(lines)-1; i++ {
+		if lines[i] == replacement[0] && lines[i+1] == replacement[1] {
+			return lines, nil
+		}
+	}
+	for i := at; i < len(lines)-len(want); i++ {
+		match := true
+		for j, w := range want {
+			if lines[i+j] != w {
+				match = false
+				break
+			}
+		}
+		if !match {
+			continue
+		}
+		out := make([]string, 0, len(lines)-len(want)+len(replacement))
+		out = append(out, lines[:i]...)
+		out = append(out, replacement...)
+		out = append(out, lines[i+len(want):]...)
+		return out, nil
+	}
+	return nil, fmt.Errorf("yaml: path %q: cross-org oracle requestBody oneOf block not found", crossOrgOraclePath)
 }
 
 // patchYAMLSubjectOneOf replaces the policyCheckSubject object body with its
