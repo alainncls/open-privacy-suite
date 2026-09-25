@@ -572,6 +572,33 @@ func TestPolicyCheck_OrgOmittedDerivedFromRegisteredTarget(t *testing.T) {
 // orgs and the operation targets an unregistered address, so nothing
 // disambiguates which org's rules to evaluate. The authority gate must stop
 // before CheckAccess can load policy from the subject's full membership set.
+func TestPolicyCheck_ExplicitUnallowlistedOrgAudited(t *testing.T) {
+	f := setupPCFixture(t)
+	ctx := context.Background()
+	forbiddenOrg := uuid.New().String()
+	require.NoError(t, f.srv.db.CreateOrganization(ctx, &rbac.Organization{
+		ID: forbiddenOrg, Slug: "pc-forbidden", Name: "PC Forbidden", Settings: map[string]any{},
+	}))
+	body := map[string]any{
+		"subject": map[string]any{"did": f.userDID},
+		"org_id":  forbiddenOrg,
+		"operation": map[string]any{
+			"method": "eth_call",
+			"params": []any{map[string]any{"to": f.contractAddr, "data": "0x"}, "latest"},
+		},
+	}
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", body)
+	require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+
+	var auditReason string
+	require.NoError(t, f.srv.db.Conn().QueryRowContext(ctx, `
+		SELECT reason FROM policy_check_log
+		 WHERE subject_did = $1 AND org_id = $2 ORDER BY created_at DESC LIMIT 1`,
+		f.userDID, forbiddenOrg,
+	).Scan(&auditReason))
+	assert.Equal(t, "organization_not_authorized", auditReason)
+}
+
 func TestPolicyCheck_OrgOmittedMultiOrgSubjectDenied(t *testing.T) {
 	f := setupPCFixture(t)
 	ctx := context.Background()

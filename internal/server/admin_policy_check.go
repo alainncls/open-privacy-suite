@@ -222,12 +222,17 @@ func (s *Server) handlePolicyCheck(c *gin.Context) {
 		return
 	}
 	req.OrgID = strings.TrimSpace(req.OrgID)
+	correlationID := middleware.GetCorrelationID(c)
+	operation := req.Operation.rpcBlock()
 	if req.OrgID != "" && !s.crossOrgAuthorizationOracleOrgAllowed(req.OrgID) {
+		if logErr := s.recordPolicyCheck(ctx, authMethod, req.Subject.DID, req.Subject.Address, req.OrgID, operation, false, "organization_not_authorized", correlationID); logErr != nil {
+			slog.Error("policy-check: audit log write failed; refusing response", "err", logErr)
+			respondInternalError(c, "internal error")
+			return
+		}
 		respondForbidden(c, "organization is outside the oracle allowlist")
 		return
 	}
-	operation := req.Operation.rpcBlock()
-	correlationID := middleware.GetCorrelationID(c)
 	if _, err := dryRunAccessRequest("", "", operation); err != nil {
 		if logErr := s.recordPolicyCheck(ctx, authMethod, req.Subject.DID, req.Subject.Address, req.OrgID, operation, false, "decode_error", correlationID); logErr != nil {
 			slog.Error("policy-check: audit log write failed; refusing response", "err", logErr)

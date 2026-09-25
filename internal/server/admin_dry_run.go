@@ -267,37 +267,6 @@ func (s *Server) handleDryRun(c *gin.Context) {
 		return
 	}
 
-	if req.RPC.Method == "eth_sendTransaction" || req.RPC.Method == "eth_sendRawTransaction" {
-		from, to, data, value, extractErr := policyCheckTransactionFields(req.RPC)
-		if extractErr != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid operation"})
-			return
-		}
-		if s.complianceChecker != nil {
-			compResult, compErr := s.complianceChecker.CheckPreview(ctx, &compliance.CheckRequest{
-				OrgID: orgID, UserID: user.ID, From: from, To: to, Data: data, Value: value,
-			})
-			if compErr != nil {
-				if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", "compliance_unavailable", c.GetString("correlation_id")); logErr != nil {
-					slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-					return
-				}
-				c.JSON(http.StatusServiceUnavailable, gin.H{"error": "compliance preview unavailable"})
-				return
-			}
-			if !compResult.Allowed {
-				if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "deny", ReasonComplianceBlocked, c.GetString("correlation_id")); logErr != nil {
-					slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-					return
-				}
-				c.JSON(http.StatusOK, dryRunResponse{Decision: "deny", Reason: "compliance"})
-				return
-			}
-		}
-	}
-
 	// Org-local reads must prove their nested execution scope even when live
 	// runtime tracing is disabled. Trace directly and stop at the first foreign
 	// boundary before forwarding the read response.
@@ -320,12 +289,20 @@ func (s *Server) handleDryRun(c *gin.Context) {
 		}
 		if validationErr := s.validateDryRunTrace(ctx, user, userPerms, orgID, accessReq.TargetAddress, traceResp.Parsed); validationErr != nil {
 			wireDecision, wireReason := "deny", validationErr.Message
+			decision := "deny"
 			if validationErr.TraceDenialKind == rbac.DenialKindForeignOrg ||
 				validationErr.TraceDenialKind == rbac.DenialKindCreateForeign {
 				wireDecision, wireReason = "indeterminate", "external_scope_required"
 			}
-			if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "deny", sanitizeDryRunReason(validationErr.Reason), c.GetString("correlation_id")); logErr != nil {
+			if validationErr.StatusCode >= http.StatusInternalServerError {
+				decision = "error"
+			}
+			if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, decision, sanitizeDryRunReason(validationErr.Reason), c.GetString("correlation_id")); logErr != nil {
 				slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+				return
+			}
+			if decision == "error" {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 				return
 			}
@@ -378,6 +355,9 @@ func (s *Server) handleDryRun(c *gin.Context) {
 				return
 			}
 			c.JSON(http.StatusOK, dryRunResponse{Decision: wireDecision, Reason: wireReason})
+			return
+		}
+		if s.dryRunWriteComplianceBlocked(c, ctx, adminDID, req.UserDID, orgID, user, req.RPC) {
 			return
 		}
 		if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "allow", "", c.GetString("correlation_id")); logErr != nil {
@@ -544,6 +524,51 @@ func (e *simulationClientError) Error() string { return e.msg }
 // Caller-controlled operation shapes are audited client errors (400); upstream
 // trace unavailability is operational (503). Returns true when a response was
 // written.
+// dryRunWriteComplianceBlocked runs the side-effect-free compliance preview for
+// write-shaped RPC methods after trace validation succeeds. Returns true when
+// the handler response has been written.
+func (s *Server) dryRunWriteComplianceBlocked(
+	c *gin.Context,
+	ctx context.Context,
+	adminDID, userDID, orgID string,
+	user *rbac.User,
+	rpc apimodels.DryRunRPCBlock,
+) bool {
+	if s.complianceChecker == nil {
+		return false
+	}
+	if rpc.Method != "eth_sendTransaction" && rpc.Method != "eth_sendRawTransaction" {
+		return false
+	}
+	from, to, data, value, extractErr := policyCheckTransactionFields(rpc)
+	if extractErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid operation"})
+		return true
+	}
+	compResult, compErr := s.complianceChecker.CheckPreview(ctx, &compliance.CheckRequest{
+		OrgID: orgID, UserID: user.ID, From: from, To: to, Data: data, Value: value,
+	})
+	if compErr != nil {
+		if logErr := s.recordImpersonation(ctx, adminDID, userDID, orgID, rpc, "error", "compliance_unavailable", c.GetString("correlation_id")); logErr != nil {
+			slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			return true
+		}
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "compliance preview unavailable"})
+		return true
+	}
+	if compResult.Allowed {
+		return false
+	}
+	if logErr := s.recordImpersonation(ctx, adminDID, userDID, orgID, rpc, "deny", ReasonComplianceBlocked, c.GetString("correlation_id")); logErr != nil {
+		slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return true
+	}
+	c.JSON(http.StatusOK, dryRunResponse{Decision: "deny", Reason: "compliance"})
+	return true
+}
+
 func (s *Server) respondDryRunTraceError(
 	c *gin.Context,
 	ctx context.Context,
