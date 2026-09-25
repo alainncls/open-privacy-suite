@@ -294,7 +294,7 @@ func TestDryRun_FunctionLevelRules(t *testing.T) {
 
 	// The allow case forwards upstream, so the fixture needs a node to answer.
 	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":"0x1"}`))
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"type":"CALL","from":"0x0000000000000000000000000000000000000000","to":"` + contractAddr + `"}}`))
 	}))
 	t.Cleanup(stub.Close)
 	f.srv.proxy = proxy.New(stub.URL)
@@ -508,11 +508,15 @@ func TestDryRun_RawTransactionChecksDecodedTarget(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			to := common.HexToAddress(tc.to)
+			rawTx := drSignedRawTx(t, &to, []byte{0xab, 0xcd, 0xab, 0xcd})
+			from, _, _, _, _, err := decodeRawTransaction(rawTx)
+			require.NoError(t, err)
+			require.NoError(t, f.srv.db.SystemLinkEthAddress(ctx, senderDID, from))
 			w := dryRunPost(t, f.srv, f.orgID, "jwt_admin", f.adminDID, map[string]any{
 				"user_did": senderDID,
 				"rpc": apimodels.DryRunRPCBlock{
 					Method: "eth_sendRawTransaction",
-					Params: []any{drSignedRawTx(t, &to, []byte{0xab, 0xcd, 0xab, 0xcd})},
+					Params: []any{rawTx},
 				},
 			})
 			require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())

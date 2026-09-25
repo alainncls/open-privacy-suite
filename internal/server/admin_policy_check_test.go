@@ -294,7 +294,7 @@ func TestPolicyCheck_RejectsUnlinkedSender(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 	resp := decodePolicyCheckResponse(t, w)
 	assert.False(t, resp.Allowed)
-	assert.Equal(t, ReasonSenderNotLinked, resp.Reason)
+	assert.Equal(t, "denied", resp.Reason)
 }
 
 func TestPolicyCheck_UsesConcurrencyLimit(t *testing.T) {
@@ -387,7 +387,7 @@ func TestPolicyCheck_RejectsDebugTraceMethods(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 	resp := decodePolicyCheckResponse(t, w)
 	assert.False(t, resp.Allowed)
-	assert.Equal(t, "method_not_allowed", resp.Reason)
+	assert.Equal(t, "denied", resp.Reason)
 
 	var subjectDID string
 	require.NoError(t, f.db.Conn().QueryRowContext(context.Background(), `
@@ -830,7 +830,7 @@ func TestPolicyCheck_WriteRunsCompliancePreview(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 	resp := decodePolicyCheckResponse(t, w)
 	assert.False(t, resp.Allowed)
-	assert.Equal(t, "compliance", resp.Reason)
+	assert.Equal(t, "denied", resp.Reason)
 
 	var logs int
 	require.NoError(t, f.db.Conn().QueryRowContext(ctx, `SELECT COUNT(*) FROM compliance_logs WHERE org_id = $1`, f.orgA).Scan(&logs))
@@ -1197,25 +1197,19 @@ func TestSanitizePolicyCheckReason_CollapsesUnknownReasons(t *testing.T) {
 	}
 }
 
-func TestSanitizePolicyCheckReason_PassesKnownCategoriesThrough(t *testing.T) {
-	// NOTE: "method not allowed" as a literal substring is the pattern
-	// sanitizeDryRunReason itself checks for, but access.go's actual reason
-	// strings interpolate the method name in the middle ("method %s not
-	// allowed"), so that literal substring is never produced by real
-	// deny reasons today. This test proves the mapping logic itself is
-	// correct, independent of whether access.go currently reaches it.
-	known := map[string]string{
-		"method not allowed for this account":         "method_not_allowed",
-		"no access to this resource":                  "denied",
-		"rate limit exceeded":                         "rate_limited",
-		"compliance check failed":                     "compliance",
-		"upstream error contacting node":              "upstream_error",
-		"failed to decode raw transaction: malformed": "decode_error",
-		"user is banned":                              "user_banned",
-	}
-	for input, want := range known {
+func TestSanitizePolicyCheckReason_CollapsesSensitiveCategories(t *testing.T) {
+	for _, input := range []string{
+		"method not allowed for this account",
+		"no access to this resource",
+		"rate limit exceeded",
+		"compliance check failed",
+		"upstream error contacting node",
+		"failed to decode raw transaction: malformed",
+		"user is banned",
+		"sender_not_linked",
+	} {
 		t.Run(input, func(t *testing.T) {
-			assert.Equal(t, want, sanitizePolicyCheckReason(input))
+			assert.Equal(t, "denied", sanitizePolicyCheckReason(input))
 		})
 	}
 }

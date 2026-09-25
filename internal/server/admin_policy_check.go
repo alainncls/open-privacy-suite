@@ -94,18 +94,6 @@ type policyCheckArtifacts struct {
 
 // policyCheckKnownReasonCategories is the wire-facing allowlist of deny
 // categories; anything else maps to "denied" (RD-877).
-var policyCheckKnownReasonCategories = map[string]bool{
-	"method_not_allowed":  true,
-	"denied":              true,
-	"rate_limited":        true,
-	"compliance":          true,
-	"upstream_error":      true,
-	"decode_error":        true,
-	"user_banned":         true,
-	"sender_not_linked":   true,
-	"concurrency_limited": true,
-}
-
 const policyCheckLimiterKey = "admin_policy_check"
 
 const policyCheckTraceTimeout = 5 * time.Second
@@ -124,10 +112,10 @@ var (
 // sanitizePolicyCheckReason is the client-facing sanitizer: one of
 // policyCheckKnownReasonCategories, else "denied".
 func sanitizePolicyCheckReason(reason any) string {
-	mapped := sanitizeDryRunReason(reason)
-	if policyCheckKnownReasonCategories[mapped] {
-		return mapped
-	}
+	// The dedicated credential is still an oracle. Do not let callers
+	// distinguish subject state (ban, sender linkage, compliance, grant
+	// shape) from the response; precise categories remain in chained audit.
+	_ = reason
 	return "denied"
 }
 
@@ -270,7 +258,7 @@ func (s *Server) handlePolicyCheck(c *gin.Context) {
 			respondInternalError(c, "internal error")
 			return
 		}
-		c.JSON(http.StatusOK, policyCheckResponse{Allowed: false, Reason: "method_not_allowed"})
+		c.JSON(http.StatusOK, policyCheckResponse{Allowed: false, Reason: "denied"})
 		return
 	}
 	authorityAccessReq, authorityErr := dryRunAccessRequest(did, "", operation)
@@ -547,7 +535,7 @@ func (s *Server) simulatePolicyCheck(
 				return "", "", compErr
 			}
 			if !compResult.Allowed {
-				return "compliance", ReasonComplianceBlocked, nil
+				return "denied", ReasonComplianceBlocked, nil
 			}
 		}
 	}
@@ -806,5 +794,26 @@ func (s *Server) recordPolicyCheck(
 		VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, ''), $9)`,
 		callerAuthMethod, didVal, addrVal, orgVal, op.Method, paramsHash, allowed, reason, corr,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	var auditOrgID *string
+	if orgID != "" {
+		auditOrgID = &orgID
+	}
+	return s.db.CreateAuditLog(ctx, &rbac.AuditLogEntry{
+		ActorExternalID: "cross-org-authorization-oracle",
+		Action:          "oracle.policy_check",
+		ResourceType:    "policy_check",
+		ResourceName:    op.Method,
+		OrgID:           auditOrgID,
+		NewValue: map[string]any{
+			"params_hash":     paramsHash,
+			"subject_did":     subjectDID,
+			"subject_address": addrVal,
+			"allowed":         allowed,
+			"internal_reason": reason,
+			"correlation_id":  correlationID,
+		},
+	})
 }

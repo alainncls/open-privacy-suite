@@ -200,6 +200,9 @@ func ParseCallTraceResult(raw json.RawMessage) (*TraceResult, error) {
 	if err := json.Unmarshal(raw, &frame); err != nil {
 		return nil, fmt.Errorf("failed to parse trace result: %w", err)
 	}
+	if !validCallFrameType(frame.Type) {
+		return nil, fmt.Errorf("failed to parse trace result: invalid root call frame type %q", frame.Type)
+	}
 
 	result := &TraceResult{
 		CallTargets: make([]CallTarget, 0),
@@ -214,6 +217,15 @@ func ParseCallTraceResult(raw json.RawMessage) (*TraceResult, error) {
 		return nil, err
 	}
 	return result, nil
+}
+
+func validCallFrameType(frameType string) bool {
+	switch frameType {
+	case "CALL", "CALLCODE", "DELEGATECALL", "STATICCALL", "CREATE", "CREATE2":
+		return true
+	default:
+		return false
+	}
 }
 
 // extractCallTargets recursively extracts all call targets from a call frame.
@@ -232,7 +244,7 @@ func (t *Tracer) extractCallTargets(frame *callFrame, result *TraceResult, depth
 	}
 	// Check the type and add to result
 	switch frame.Type {
-	case "CALL", "DELEGATECALL", "STATICCALL":
+	case "CALL", "CALLCODE", "DELEGATECALL", "STATICCALL":
 		result.CallTargets = append(result.CallTargets, CallTarget{
 			Type:  frame.Type,
 			From:  frame.From,

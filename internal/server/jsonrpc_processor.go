@@ -667,7 +667,7 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	}
 
 	// Check RBAC access
-	result, err := p.rbacAccessCtrl.CheckAccess(ctx, accessReq)
+	evaluation, err := evaluateAccessRequest(ctx, p.rbacAccessCtrl, accessReq)
 	if err != nil {
 		slog.Error("RBAC access check failed", "method", req.Method, "error", err)
 		p.recordRPCOutcome(req.Method, "error", start)
@@ -679,6 +679,7 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 			},
 		}
 	}
+	result := evaluation.AccessResult
 
 	// RD-1135: stamp the resolved org onto subsequent access-log rows (RBAC
 	// denial, concurrency/rate-limit, trace denials, success). Write-once.
@@ -1435,7 +1436,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	}
 
 	// Check RBAC access
-	result, err := p.rbacAccessCtrl.CheckAccess(ctx, accessReq)
+	evaluation, err := evaluateAccessRequest(ctx, p.rbacAccessCtrl, accessReq)
 	if err != nil {
 		slog.Error("RBAC access check failed", "method", req.Method, "error", err)
 		p.recordRPCOutcome(req.Method, "error", start)
@@ -1447,6 +1448,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 			},
 		}
 	}
+	result := evaluation.AccessResult
 
 	// RD-1135: stamp the resolved org onto subsequent access-log rows (RBAC
 	// denial, concurrency/rate-limit, trace denials, success). Write-once.

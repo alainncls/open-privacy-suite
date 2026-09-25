@@ -395,6 +395,23 @@ func TestTraceCall_RPCError(t *testing.T) {
 	}
 }
 
+func TestParseCallTraceResultRejectsStructurallyEmptyRoot(t *testing.T) {
+	for _, raw := range []string{
+		`null`,
+		`{}`,
+		`{ }`,
+		`{"foo":"bar"}`,
+		`{"type":"BOGUS","from":"0x1","to":"0x2"}`,
+	} {
+		t.Run(raw, func(t *testing.T) {
+			_, err := ParseCallTraceResult(json.RawMessage(raw))
+			if err == nil {
+				t.Fatalf("ParseCallTraceResult(%s) unexpectedly succeeded", raw)
+			}
+		})
+	}
+}
+
 // buildNestedFrameChain constructs a single-child chain of depth `chainDepth`
 // frames (root at depth 0, one nested CALL per level). The resulting root can
 // be handed to extractCallTargets(frame, result, 0) and the deepest frame will
