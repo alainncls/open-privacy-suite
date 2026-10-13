@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 	"privacy-proxy/internal/compliance"
 	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/metrics"
+	"privacy-proxy/internal/nodeapproval"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
 	"privacy-proxy/internal/server/middleware"
@@ -38,6 +40,7 @@ type AuditBuffer interface {
 // It separates concerns from HTTP handling, making the logic testable
 // and reusable.
 type JSONRPCProcessor struct {
+	nodeApprovals     *nodeapproval.Service
 	rbacAccessCtrl    *rbac.AccessController
 	rateLimiter       RateLimiterInterface
 	proxy             *proxy.Proxy
@@ -75,6 +78,7 @@ type JSONRPCProcessor struct {
 	// Circuit breaker + concurrency limiter (replaces rate limiter for authenticated users)
 	circuitBreaker         *middleware.CircuitBreaker
 	concurrencyLimiter     *middleware.ConcurrencyLimiter
+	preflightLimiter       preflightLimiter // missing budget refuses signed preflight
 	defaultRPCAPIKey       string
 	defaultRPCAPIKeyHeader string // operator-wide header name from RPC_API_KEY_HEADER; empty => proxy.DefaultAPIKeyHeader
 
@@ -163,7 +167,7 @@ type ProcessRequest struct {
 	OrgID         string // Optional: specify which org to use (for users with multiple memberships)
 	Method        string
 	Params        []any
-	Body          []byte
+	Body          []byte // canonical envelope from ParseAndValidateBody, forwarded upstream
 	ClientIP      string
 	CorrelationID string // Request correlation ID for audit trail
 	// BypassPermsCache, when true, forces AccessController.CheckAccess to
@@ -241,6 +245,10 @@ type JSONRPCProcessorConfig struct {
 	RuntimeTracer  *tracer.RuntimeTracer
 	TraceValidator *rbac.TraceValidator
 
+	// Signed approvals are opt-in; an enabled service without a budget fails closed.
+	NodeApprovals            *nodeapproval.Service
+	ApprovalPreflightLimiter preflightLimiter
+
 	// Optional wiring. Zero values reproduce the unwired behavior exactly:
 	// nil Metrics = no metrics; nil TxVisibilityStore = visibleTo resolution
 	// skipped; nil AddressVisibilityResolver = RPC log field-redaction no-op
@@ -275,6 +283,8 @@ func NewJSONRPCProcessor(cfg JSONRPCProcessorConfig) *JSONRPCProcessor {
 		proxy:                  cfg.Proxy,
 		accessLogger:           cfg.AccessLogger,
 		runtimeTracer:          cfg.RuntimeTracer,
+		nodeApprovals:          cfg.NodeApprovals,
+		preflightLimiter:       cfg.ApprovalPreflightLimiter,
 		traceValidator:         cfg.TraceValidator,
 		circuitBreaker:         cfg.CircuitBreaker,
 		concurrencyLimiter:     cfg.ConcurrencyLimiter,
@@ -568,11 +578,10 @@ func (p *JSONRPCProcessor) logAccess(ctx context.Context, req *ProcessRequest, s
 				SourceIP:      req.ClientIP,
 				EntryHash:     hash,
 			}
-			// Tag wildcard-resolved methods so SIEM consumers can filter on the
-			// passthrough surface independently from explicitly-listed methods.
-			if w := rbac.MatchWildcard(req.Method); w != nil {
-				event.MatchedVia = "wildcard"
-				event.MatchedPrefix = w.Prefix
+			// Tag operator passthrough methods so SIEM consumers can filter on
+			// the unfiltered surface independently from modelled methods.
+			if rbac.IsPassthroughMethod(req.Method) {
+				event.MatchedVia = "passthrough"
 			}
 			p.siemForwarder.Send(event)
 		}
@@ -584,33 +593,77 @@ func (p *JSONRPCProcessor) logAccess(ctx context.Context, req *ProcessRequest, s
 }
 
 // ParseAndValidateBody parses and validates the JSON-RPC request body.
-// Returns the method, params, and any validation error.
-func ParseAndValidateBody(body []byte) (string, []any, *ProcessError) {
+// Returns the method, params, the canonical body to forward upstream, and any
+// validation error.
+//
+// The canonical body (proxy.Envelope.Canonical) holds exactly the members the
+// access decision is made on; it is what ProcessRequest.Body must carry, never
+// the client's bytes. An envelope whose member names can be read more than one
+// way (duplicate or case-variant names, RD-1303) is refused here, before any
+// access decision, with the same opaque message as malformed JSON.
+func ParseAndValidateBody(body []byte) (string, []any, []byte, *ProcessError) {
 	if len(body) > MaxRequestBodySize {
-		return "", nil, &ProcessError{
+		return "", nil, nil, &ProcessError{
 			StatusCode: http.StatusRequestEntityTooLarge,
 			Message:    "request body too large",
 		}
 	}
 
-	method, params, err := proxy.ParseRequest(body)
+	env, err := proxy.ParseEnvelope(body)
 	if err != nil {
-		if err == proxy.ErrBatchRequest {
-			return "", nil, &ProcessError{
+		if errors.Is(err, proxy.ErrBatchRequest) {
+			return "", nil, nil, &ProcessError{
 				StatusCode: http.StatusBadRequest,
 				Message:    "batch JSON-RPC requests are not supported for security reasons",
 			}
 		}
 		// Opaque client message; raw parse error (echoes offsets / body shape)
 		// stays in slog. (RD-1178 / RD-934)
-		slog.Warn("invalid JSON-RPC request", slog.Any("err", err))
-		return "", nil, &ProcessError{
+		if errors.Is(err, proxy.ErrAmbiguousRequest) {
+			slog.Warn("ambiguous JSON-RPC request refused", slog.Any("err", err))
+		} else {
+			slog.Warn("invalid JSON-RPC request", slog.Any("err", err))
+		}
+		return "", nil, nil, &ProcessError{
+			StatusCode: http.StatusBadRequest,
+			Message:    "invalid JSON-RPC request",
+		}
+	}
+	// Access is decided on the built-in spelling of a catalog method
+	// (CanonicalizeMethod, as Process dispatches), so the forwarded body
+	// carries that spelling rather than the caller's. Operator methods are
+	// matched by exact name and are left unchanged.
+	env.SetMethod(rbac.CanonicalizeMethod(env.Method))
+	if reason := ambiguousParams(env); reason != "" {
+		slog.Warn("ambiguous JSON-RPC request refused", slog.String("reason", reason), slog.String("method", env.Method))
+		return "", nil, nil, &ProcessError{
 			StatusCode: http.StatusBadRequest,
 			Message:    "invalid JSON-RPC request",
 		}
 	}
 
-	return method, params, nil
+	// visibleTo/privateFor are the proxy's own metadata. The two send paths
+	// read them from the body and strip them before forwarding (RD-1163);
+	// for every other method they are dropped here, so they never reach the
+	// node.
+	forward := env.Canonical
+	switch env.Method {
+	case "eth_sendTransaction", "eth_sendRawTransaction":
+	default:
+		forward = env.CanonicalWithoutMetadata()
+	}
+	return env.Method, env.Params, forward, nil
+}
+
+// ambiguousParams returns env.ParamsAmbiguity() for methods whose params the
+// proxy's checks read, and "" for named passthrough methods, whose payloads it
+// never inspects. Aliased chain methods resolve to the standard method they
+// inherit checks from, so they stay covered. RD-1303.
+func ambiguousParams(env *proxy.Envelope) string {
+	if rbac.IsPassthroughMethod(rbac.CanonicalizeMethod(env.Method)) {
+		return ""
+	}
+	return env.ParamsAmbiguity()
 }
 
 // Process handles the core business logic for a JSON-RPC request:
@@ -621,11 +674,10 @@ func ParseAndValidateBody(body []byte) (string, []any, *ProcessError) {
 func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *ProcessResult {
 	start := time.Now()
 
-	// RD-1180: canonicalize the method name ONCE at ingress so the special
-	// validation dispatch below (and target/selector extraction + RBAC gates
-	// downstream) can't be skipped by mixed-case method names. The upstream
-	// node still receives req.Body verbatim; only the internal method string is
-	// normalized. Unknown methods (linea_*, wildcard passthrough) pass through.
+	// Normalize built-in method names for internal dispatch and access checks;
+	// ParseAndValidateBody already wrote the same spelling into the forwarded
+	// body. Operator methods require an explicit registered alias or
+	// passthrough entry.
 	req.Method = rbac.CanonicalizeMethod(req.Method)
 
 	// Handle eth_sendRawTransaction specially - requires runtime tracing
@@ -633,14 +685,39 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 		return p.processRawTransaction(ctx, req)
 	}
 
-	// Handle debug traces specially - requires strict deep tree validation
+	// Handle debug traces specially - requires strict deep tree validation.
+	// Route any registry-resolved trace name through the guarded trace path.
+	// Dedicated trace aliases are rejected by exact catalog admission before
+	// trace-specific work.
 	if req.Method == "debug_traceTransaction" || req.Method == "debug_traceCall" {
 		return p.processDebugTrace(ctx, req)
+	}
+	if aliased := rbac.ResolveMethodAlias(req.Method); aliased == "debug_traceTransaction" || aliased == "debug_traceCall" {
+		return p.processDebugTrace(ctx, req)
+	}
+
+	// RD-1305: refuse unsupported simulation options before RBAC, tracing and
+	// forwarding. Use an opaque response and retain the reason in the access log.
+	// Org resolution has not run yet, so this audit row has no resolved org.
+	if denied, kind := rbac.DetectStateOverride(req.Method, req.Params); denied {
+		req.denialReason = ReasonStateOverrideNotAllowed
+		slog.Info("state/block override denied", "method", req.Method, "user", req.UserID, "ip", req.ClientIP, "kind", kind)
+		p.recordRPCOutcome(req.Method, "override_denied", start)
+		p.recordRBACDecision("denied")
+		p.logAccess(ctx, req, http.StatusForbidden, http.StatusNotFound)
+		return &ProcessResult{
+			Error: &ProcessError{
+				StatusCode: http.StatusNotFound,
+				Message:    "method not found",
+			},
+		}
 	}
 
 	// Resolve method alias for access control (e.g. linea_estimateGas → eth_estimateGas).
 	// The alias determines which access control rules apply (contract checks, storage tiering, etc.)
-	// while the original method name is kept for the RBAC allowlist check and node forwarding.
+	// while the requested method name (an alias or passthrough name as configured, or a
+	// catalog method in its built-in spelling) is kept for the RBAC allowlist check and node
+	// forwarding.
 	accessMethod := rbac.ResolveMethodAlias(req.Method)
 
 	// Build RBAC access check request using the alias for target/selector extraction
@@ -1007,6 +1084,9 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	// This filters responses to prevent cross-participant data leakage
 	// within the same organization.
 	responseBody = p.applyResponseFilter(ctx, req, result, responseBody)
+	// RD-1308: under a View-as scope, another org's transactions stay out
+	// even when the target took part in them. No-op for a user's own call.
+	responseBody = p.applyViewerOrgScopeEnvelope(ctx, req.Method, responseBody)
 
 	// Log successful access
 	p.recordRPCOutcome(req.Method, "success", start)
@@ -1093,10 +1173,13 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		// Pass the internal user UUID (result.UserID), not the JWT DID.
 		// viewerUUID() guards against nil result (visibleTo-only path).
 		adminMap := p.viewerAdminContracts(ctx, viewerUUID(result), extractContractAddressesFromResponse(responseBody))
-		filtered := FilterReceiptLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx), visCtx, adminMap)
-		// RD-1214: field-redact embedded addresses in the admitted receipt logs
-		// (same resolver + primitive as the explorer, so both hide the same set).
-		return p.redactReceiptResponseFields(ctx, req.UserID, filtered)
+		// Admission and rendering in one pass: each admitted receipt log is
+		// rendered with the payload policy decided for it — RD-1214 masking
+		// (same resolver + primitive as the explorer) or, for an RD-874
+		// visibleTo unlock of this exact (viewer, contract, tx), the full
+		// payload (RD-1300).
+		abiProv := p.contractABIProvider(ctx)
+		return filterReceiptLogsWithEventRules(responseBody, addrs, perms, abiProv, visCtx, adminMap, p.logFieldRenderer(ctx, req.UserID, abiProv))
 
 	case strings.EqualFold(m, rbac.MethodGetLogs):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
@@ -1126,10 +1209,10 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		// the JWT DID — viewerAdminContracts queries user_memberships
 		// by UUID FK. viewerUUID() guards against nil result.
 		adminMap := p.viewerAdminContracts(ctx, viewerUUID(result), extractContractAddressesFromResponse(responseBody))
-		filtered := FilterLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx), visCtx, adminMap)
-		// RD-1214: field-redact embedded addresses in the admitted logs (same
-		// resolver + primitive as the explorer, so both hide the same set).
-		return p.redactLogsArrayResponseFields(ctx, req.UserID, filtered)
+		// Admission and rendering in one pass (see the receipt case above):
+		// masked per RD-1214 unless the log is an RD-874 unlock (RD-1300).
+		abiProv := p.contractABIProvider(ctx)
+		return filterLogsWithEventRules(responseBody, addrs, perms, abiProv, visCtx, adminMap, p.logFieldRenderer(ctx, req.UserID, abiProv))
 
 	case strings.EqualFold(m, rbac.MethodGetTransactionByBlockHashAndIndex),
 		strings.EqualFold(m, rbac.MethodGetTransactionByBlockNumberAndIndex):
@@ -1502,8 +1585,39 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	// The bytecode analyzer keeps running as a thinner fallback for
 	// operators without debug_* on the upstream node, but the
 	// authoritative gate is the trace.
+	var prepared *nodeapproval.Prepared
+	if p.nodeApprovals != nil {
+		// No producer can take an approval: refuse before the node spends a preflight on it.
+		if !p.nodeApprovals.Accepting() {
+			return p.refuseApprovalDelivery(ctx, req, start)
+		}
+		if limited := p.limitPreflight(ctx, req, start); limited != nil {
+			return limited
+		}
+		prepared, err = p.nodeApprovals.Prepare(ctx, rawTxHex)
+		if err != nil {
+			slog.Warn("signed preflight failed", "error", err)
+			p.recordRPCOutcome(req.Method, "preflight_unavailable", start)
+			req.denialReason = ReasonTracingUnavailable
+			p.logAccess(ctx, req, http.StatusForbidden)
+			return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusForbidden, Message: "signed preflight unavailable or unsupported transaction", Reason: ReasonTracingUnavailable}}
+		}
+	}
 	var runtimeCreateTargets []rbac.CreateTarget
-	if to != "" {
+	if prepared != nil {
+		// Root EOA transfers keep the existing RBAC/compliance policy. The pinned
+		// trace proves no contract or nested call is being skipped.
+		if !prepared.PlainValueTransfer {
+			targets, traceErr := p.validateRawTxWithPreparedTrace(ctx, req, from, to, data, value, prepared)
+			if traceErr != nil {
+				p.recordRPCOutcome(req.Method, "send_trace_denied", start)
+				req.denialReason = traceErr.Reason
+				p.logAccess(ctx, req, traceErr.StatusCode)
+				return &ProcessResult{Error: traceErr}
+			}
+			runtimeCreateTargets = targets
+		}
+	} else if to != "" {
 		skipTrace := false
 		if isSimpleValueTransfer(data) {
 			// Only skip tracing for simple value transfers to EOAs.
@@ -1633,7 +1747,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 
 	// Pre-register plain CREATE for raw transactions (nonce is embedded in the signed tx).
 	var rawTxPlainCreateAddr string
-	if isDeployment {
+	if isDeployment && (prepared == nil || prepared.SurvivingCreations[strings.ToLower(gethcrypto.CreateAddress(gethcommon.HexToAddress(from), txNonce).Hex())]) {
 		fromAddr := gethcommon.HexToAddress(from)
 		contractAddr := gethcrypto.CreateAddress(fromAddr, txNonce)
 		addrStr := strings.ToLower(contractAddr.Hex())
@@ -1651,6 +1765,24 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 		runtimeCreateAddrs = p.preRegisterRuntimeCreates(ctx, result.OrgID, runtimeCreateTargets)
 	}
 
+	// Queue only after every OPS gate has passed. Delivery has process lifetime,
+	// runs independently of forwarding, and does not wait for a Reth ACK.
+	if prepared != nil {
+		if err := p.nodeApprovals.Enqueue(prepared); err != nil {
+			// No transaction was forwarded. Release the registrations made above.
+			for _, addr := range append(runtimeCreateAddrs, rawTxPlainCreateAddr) {
+				if addr != "" {
+					if cleanupErr := p.rbacAccessCtrl.Store().DeletePreregisteredAddressByAddress(context.Background(), addr); cleanupErr != nil {
+						slog.Warn("failed to clean up creation after approval queue failure", "address", addr, "error", cleanupErr)
+					}
+				}
+			}
+			return p.refuseApprovalDelivery(ctx, req, start)
+		}
+	}
+	if prepared != nil {
+		p.nodeApprovals.TraceForward(prepared)
+	}
 	// Forward the original raw transaction to node
 	forwardStart := time.Now()
 	responseBody, statusCode, err := p.proxy.ForwardWithAPIKeyHeader(req.Body, apiKeyHeader, apiKey, req.ClientIP)
@@ -1738,7 +1870,11 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 			rpcResp2.Result != ""
 
 		if nodeAccepted {
-			go p.pollAndFinalizeRuntimeCreates(rpcResp2.Result, runtimeCreateAddrs, result.OrgID, result.UserID)
+			if prepared != nil {
+				go p.pollAndFinalizeRuntimeCreates(rpcResp2.Result, runtimeCreateAddrs, result.OrgID, result.UserID, prepared.SurvivingCreations)
+			} else {
+				go p.pollAndFinalizeRuntimeCreates(rpcResp2.Result, runtimeCreateAddrs, result.OrgID, result.UserID)
+			}
 		} else {
 			// Node rejected — clean up pre-registrations
 			for _, addr := range runtimeCreateAddrs {
@@ -2214,7 +2350,7 @@ func (p *JSONRPCProcessor) preRegisterRuntimeCreates(ctx context.Context, orgID 
 // pollAndFinalizeRuntimeCreates polls for the receipt of a transaction that contains
 // runtime CREATE/CREATE2 operations, then reconciles pre-registered addresses with
 // the actual addresses from the mined trace.
-func (p *JSONRPCProcessor) pollAndFinalizeRuntimeCreates(txHash string, preRegAddrs []string, orgID, userID string) {
+func (p *JSONRPCProcessor) pollAndFinalizeRuntimeCreates(txHash string, preRegAddrs []string, orgID, userID string, approved ...map[string]bool) {
 	ctx := context.Background()
 	const maxAttempts = 12
 	const baseDelay = 2 * time.Second
@@ -2245,7 +2381,13 @@ func (p *JSONRPCProcessor) pollAndFinalizeRuntimeCreates(txHash string, preRegAd
 
 		// Transaction succeeded — trace to get actual created addresses
 		actualAddrs := make(map[string]bool)
-		if p.runtimeTracer != nil {
+		if len(approved) != 0 {
+			// Reth has enforced these exact surviving creations. Do not register
+			// caught/reverted/temporary creations from a broader mined call trace.
+			for addr := range approved[0] {
+				actualAddrs[addr] = true
+			}
+		} else if p.runtimeTracer != nil {
 			traceResult, traceErr := p.runtimeTracer.TraceMinedTransaction(ctx, txHash)
 			if traceErr == nil && traceResult != nil {
 				for _, target := range traceResult.CallTargets {
