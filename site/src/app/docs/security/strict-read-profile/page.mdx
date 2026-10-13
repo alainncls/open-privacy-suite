@@ -74,7 +74,7 @@ Addresses of other users embedded in an admitted event stay masked, as under `st
 | Contract / org admin reading other users' transactions and receipts | Allowed | Off |
 | Admin reading all events of the admin's contracts | Allowed | Off. Events that index the admin's own address remain visible |
 | `ORG_ADMIN_VIEW_USER_TXS` audit view | As configured | No effect. A startup warning is logged when it is set |
-| `visibleTo` sharing of a transaction and its receipt | On | Off. A send that carries a `visibleTo` (or `privateFor`) field is rejected with HTTP 400, whatever the field lists, before it is traced or forwarded, and nothing is stored |
+| `visibleTo` sharing of a transaction and its receipt | On | Off. A JSON-RPC send that carries a `visibleTo` (or `privateFor`) field is rejected with HTTP 400, whatever the field lists, before it is traced or forwarded, and nothing is stored |
 | `visibleTo` event fallback and the per-contract `visibleTo` unlock | On | Off |
 | A participant's own address-less events | Visible | Hidden (see the warning above) |
 | Receipt for a viewer entitled to one of its events | Returned | `null` |
@@ -94,7 +94,7 @@ The read profile covers transactions, receipts, events and traces. It does not c
 
 - **Address state.** `eth_getBalance`, `eth_getTransactionCount` (an account's nonce), `eth_getStorageAt`, `eth_getProof` and `eth_call` are governed by the method allowlist and the per-address checks. Org admins also keep access to historical-state queries.
 - **`debug_traceCall`.** This simulates a call the caller composes and is governed by the method allowlist and trace validation.
-- **Operator-added RPC namespaces.** Methods enabled through `EXTRA_RPC_NAMESPACES_FILE` are not covered by the profile's response filters. Do not enable methods that return transactions, receipts, logs or traces (for example `trace_*`, `ots_*` or `eth_getRawTransactionByHash`) on a deployment that must run `strict`.
+- **Operator-added RPC namespaces.** Methods enabled through `EXTRA_RPC_NAMESPACES_FILE` are not covered by the profile's response filters. Do not enable methods that return transactions, receipts, logs or traces (for example `trace_*` or `ots_*`) on a deployment that must run `strict`.
 - **Block position of a receipt.** A participant's receipt carries `transactionIndex` and `cumulativeGasUsed`, which reflect how many transactions, and how much gas, precede it in the block.
 - **Compliance records.** Compliance decision logs and travel-rule records in the admin API remain readable by org admins.
 - **Access-log parameters.** With `AUDIT_LOG_PARAMS=true`, the access log records redacted request parameters, which can include transaction hashes and addresses.

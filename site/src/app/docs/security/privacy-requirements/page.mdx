@@ -216,7 +216,7 @@ Under `PRIVACY_READ_PROFILE=strict` the flag has no effect: an org admin
 sees only transactions they participate in (see
 [Strict Read Profile](/docs/security/strict-read-profile)).
 
-| Row class | Strict (flag off) | `ORG_ADMIN_VIEW_USER_TXS` on (admin viewer) |
+| Row class | Flag off | `ORG_ADMIN_VIEW_USER_TXS` on (admin viewer) |
 |---|---|---|
 | `bothHidden` tx (both `from` and `to` Hidden/Redacted to admin) | drop | keep + `[PRIVATE]` / `[PRIVATE]`, value preserved, timing visible |
 | `bothHidden` token transfer | drop | keep + `[PRIVATE]` / `[PRIVATE]`, amount preserved |

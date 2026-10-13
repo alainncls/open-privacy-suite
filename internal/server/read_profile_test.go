@@ -1,7 +1,10 @@
 package server
 
 import (
+	"bytes"
+	"context"
 	"net/http"
+	"strings"
 	"testing"
 
 	"privacy-proxy/internal/config"
@@ -77,4 +80,34 @@ func TestNewExplorerRedactor_UsesServerReadProfile(t *testing.T) {
 		assert.Equal(t, p, s.newExplorerRedactor(nil, nil).ReadProfile())
 	}
 	assert.True(t, (&Server{}).newExplorerRedactor(nil, nil).ReadProfile().Strict())
+}
+
+// readProfileGovernsResponse names exactly the methods whose /rpc response the
+// read profile governs: every catalog method the response filter rewrites, and
+// no other. A method added to applyResponseFilter without being added to the
+// test-request refusal (or the reverse) fails here. The probe is an upstream
+// answer of an unexpected shape, which every governed filter withholds (fail
+// closed) and every ungoverned method passes through unchanged.
+func TestReadProfileGovernsResponse_MatchesResponseFilter(t *testing.T) {
+	ts := setupTestServerForRBAC(t)
+	p := NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		ReadProfile:    rbac.ReadProfileStandard,
+		RBACAccessCtrl: ts.rbacAccessCtrl,
+		RateLimiter:    &noopRateLimiter{},
+	})
+	probe := []byte(`{"jsonrpc":"2.0","id":1,"result":"0xparity"}`)
+	methods := rbac.SupportedMethods()
+	require.NotEmpty(t, methods)
+	governed := 0
+	for _, m := range methods {
+		got := p.applyResponseFilter(context.Background(), &ProcessRequest{Method: m, UserID: "did:test:parity"}, &rbac.AccessCheckResult{Allowed: true}, probe)
+		filtered := !bytes.Equal(got, probe)
+		assert.Equal(t, filtered, readProfileGovernsResponse(m), "%s: response filtered=%v", m, filtered)
+		if readProfileGovernsResponse(m) {
+			governed++
+		}
+		// Case variants resolve the same way.
+		assert.Equal(t, readProfileGovernsResponse(m), readProfileGovernsResponse(strings.ToUpper(m)), "%s upper-case", m)
+	}
+	assert.Equal(t, 10, governed, "the governed set covers the ten filtered methods")
 }

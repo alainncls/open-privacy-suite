@@ -160,10 +160,13 @@ func TestReadProfile_Strict_TestRequestRefusesGovernedReads(t *testing.T) {
 		params []any
 	}{
 		{"eth_getTransactionByHash", []any{"0x" + strings.Repeat("11", 32)}},
+		{"eth_getTransactionByBlockHashAndIndex", []any{"0x" + strings.Repeat("22", 32), "0x0"}},
 		{"eth_getTransactionByBlockNumberAndIndex", []any{"latest", "0x0"}},
 		{"eth_getTransactionReceipt", []any{"0x" + strings.Repeat("11", 32)}},
 		{"eth_getLogs", nil}, // params set below (needs the contract)
+		{"eth_getBlockByHash", []any{"0x" + strings.Repeat("22", 32), false}},
 		{"eth_getBlockByNumber", []any{"latest", false}},
+		{"eth_getBlockTransactionCountByHash", []any{"0x" + strings.Repeat("22", 32)}},
 		{"eth_getBlockTransactionCountByNumber", []any{"latest"}},
 		{"eth_getBlockReceipts", []any{"latest"}},
 	}
@@ -211,11 +214,15 @@ func TestReadProfile_Strict_TestRequestRefusesGovernedReads(t *testing.T) {
 				w := post(g.method, params)
 				if profile.Strict() {
 					assert.Equal(t, http.StatusForbidden, w.Code, "%s: %s", g.method, w.Body.String())
+					assert.Contains(t, w.Body.String(), "strict read privacy profile", "%s: the refusal names the profile, not an RBAC denial", g.method)
 				} else {
 					assert.Equal(t, http.StatusOK, w.Code, "%s: %s", g.method, w.Body.String())
 				}
 			}
 			if profile.Strict() {
+				// A case variant of a governed method is refused the same way.
+				w := post("ETH_GETTRANSACTIONRECEIPT", []any{"0x" + strings.Repeat("11", 32)})
+				assert.Equal(t, http.StatusForbidden, w.Code, "case variant: %s", w.Body.String())
 				assert.Zero(t, forwarded.Load(), "a refused read must not reach the node")
 			} else {
 				assert.Equal(t, int32(len(governed)), forwarded.Load())

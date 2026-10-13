@@ -293,6 +293,7 @@ func TestReadProfile_Strict_DebugTraceTransactionParticipantOnly(t *testing.T) {
 				require.Len(t, fwd.Params, 2)
 				assert.Equal(t, map[string]any{"tracer": "callTracer", "tracerConfig": map[string]any{"onlyTopCall": false}}, fwd.Params[1])
 				assert.Contains(t, string(res.ResponseBody), `"calls"`, "standard returns the call tree")
+				assert.Contains(t, string(res.ResponseBody), `"redacted"`, "the sender may not read the contract's storage")
 				return
 			}
 			assert.Equal(t, "1", string(fwd.ID), "the node request uses the proxy id")
