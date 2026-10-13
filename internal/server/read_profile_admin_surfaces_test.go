@@ -1,10 +1,12 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -12,6 +14,7 @@ import (
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -141,6 +144,88 @@ func TestReadProfile_Strict_ViewAsRefused(t *testing.T) {
 			// The RPC mount is refused too.
 			w = impersonationGET(t, f.srv, impersonatePath(f.userDID, f.orgID, "/rpc"), "jwt_admin", f.adminDID, []string{f.orgID})
 			assert.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+		})
+	}
+}
+
+// The admin test-request diagnostic forwards a method as a chosen identity
+// (the subject of a supplied JWT) and returns the node's answer without the
+// /rpc response filter. Under the strict read profile it refuses, before
+// anything is forwarded, every method whose response the read profile governs
+// (transactions, receipts, logs and blocks); address-state reads, which the
+// profile does not govern, are still served. Standard is unchanged.
+func TestReadProfile_Strict_TestRequestRefusesGovernedReads(t *testing.T) {
+	governed := []struct {
+		method string
+		params []any
+	}{
+		{"eth_getTransactionByHash", []any{"0x" + strings.Repeat("11", 32)}},
+		{"eth_getTransactionByBlockNumberAndIndex", []any{"latest", "0x0"}},
+		{"eth_getTransactionReceipt", []any{"0x" + strings.Repeat("11", 32)}},
+		{"eth_getLogs", nil}, // params set below (needs the contract)
+		{"eth_getBlockByNumber", []any{"latest", false}},
+		{"eth_getBlockTransactionCountByNumber", []any{"latest"}},
+		{"eth_getBlockReceipts", []any{"latest"}},
+	}
+	for _, profile := range []rbac.ReadProfile{rbac.ReadProfileStandard, rbac.ReadProfileStrict} {
+		t.Run(profile.String(), func(t *testing.T) {
+			f := setupDryRunFixture(t)
+			f.srv.config.ReadProfile = profile
+			ctx := context.Background()
+			methods := []string{"eth_getBalance"}
+			for _, g := range governed {
+				methods = append(methods, g.method)
+			}
+			gid := uuid.New().String()
+			require.NoError(t, f.srv.db.CreateGroup(ctx, &rbac.Group{ID: gid, OrgID: f.orgID, Slug: "tr-reader", Name: "tr-reader", Path: "tr-reader"}))
+			require.NoError(t, f.srv.db.CreateGroupAccess(ctx, &rbac.GroupAccess{ID: uuid.New().String(), GroupID: gid, AllowedMethods: methods}))
+			readerDID := "did:tr:reader-" + profile.String()
+			drCreateUserInGroup(t, f.srv.db, readerDID, gid)
+			contract := "0x7777777777777777777777777777777777777777"
+			drCreateGrant(t, f.srv.db, drCreateContract(t, f.srv.db, f.orgID, contract, "TRReadTarget"), gid)
+			token, err := f.srv.jwtService.IssueAccessToken(readerDID, true)
+			require.NoError(t, err)
+
+			var forwarded atomic.Int32
+			stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				forwarded.Add(1)
+				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":null}`))
+			}))
+			t.Cleanup(stub.Close)
+			f.srv.proxy = proxy.New(stub.URL)
+			router := gin.New()
+			router.POST("/test-request", f.srv.handleTestRequest)
+			post := func(method string, params []any) *httptest.ResponseRecorder {
+				body, err := json.Marshal(map[string]any{"method": method, "params": params, "jwt_token": token, "org_id": f.orgID})
+				require.NoError(t, err)
+				w := httptest.NewRecorder()
+				router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/test-request", bytes.NewReader(body)))
+				return w
+			}
+
+			for _, g := range governed {
+				params := g.params
+				if g.method == "eth_getLogs" {
+					params = []any{map[string]any{"address": contract}}
+				}
+				w := post(g.method, params)
+				if profile.Strict() {
+					assert.Equal(t, http.StatusForbidden, w.Code, "%s: %s", g.method, w.Body.String())
+				} else {
+					assert.Equal(t, http.StatusOK, w.Code, "%s: %s", g.method, w.Body.String())
+				}
+			}
+			if profile.Strict() {
+				assert.Zero(t, forwarded.Load(), "a refused read must not reach the node")
+			} else {
+				assert.Equal(t, int32(len(governed)), forwarded.Load())
+			}
+
+			// An address-state read is not governed by the read profile.
+			before := forwarded.Load()
+			w := post("eth_getBalance", []any{contract, "latest"})
+			assert.Equal(t, http.StatusOK, w.Code, "eth_getBalance: %s", w.Body.String())
+			assert.Equal(t, before+1, forwarded.Load())
 		})
 	}
 }

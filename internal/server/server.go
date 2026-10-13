@@ -2058,7 +2058,7 @@ func (s *Server) getStatus(c *gin.Context) {
 // result plus latency.
 //
 // @Summary      Test a JSON-RPC request
-// @Description  Dashboard diagnostic: runs one method through RBAC, the same nested-call trace as /rpc (eth_call, eth_estimateGas, and eth_createAccessList without `to`), travel-rule compliance, and upstream forwarding, using a synthetic identity ("test:dashboard") or the subject of a supplied jwt_token. On an upstream JSON-RPC-level error the call still returns HTTP 200 with the error in the response body. Requires the private-network source gate (403 otherwise).
+// @Description  Dashboard diagnostic: runs one method through RBAC, the same nested-call trace as /rpc (eth_call, eth_estimateGas, and eth_createAccessList without `to`), travel-rule compliance, and upstream forwarding, using a synthetic identity ("test:dashboard") or the subject of a supplied jwt_token. Under the strict read privacy profile (PRIVACY_READ_PROFILE=strict) transaction, receipt, log and block reads are refused with 403 before anything is forwarded. On an upstream JSON-RPC-level error the call still returns HTTP 200 with the error in the response body. Requires the private-network source gate (403 otherwise).
 // @Description  Client state/block override options follow the RPC policy for every caller, including admins.
 // @Tags         Admin: ops
 // @Accept       json
@@ -2067,7 +2067,7 @@ func (s *Server) getStatus(c *gin.Context) {
 // @Success      200 {object} apimodels.TestRequestResponse "forwarded result (or an upstream JSON-RPC error message) plus latency"
 // @Failure      400 {object} apimodels.APIError "invalid request body, invalid JWT, or a trace method (debug_traceCall / debug_traceTransaction are not supported here; send them to /rpc or /rpc/{org_id}); an invalid call shape refused by the nested-call trace returns a TestRequestResponse"
 // @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
-// @Failure      403 {object} apimodels.TestRequestResponse "RBAC, nested-call trace or compliance denied (network-gate rejections return the generic error envelope)"
+// @Failure      403 {object} apimodels.TestRequestResponse "RBAC, nested-call trace or compliance denied, or a transaction, receipt, log or block read under the strict read profile (network-gate rejections return the generic error envelope)"
 // @Failure      500 {object} apimodels.TestRequestResponse "access-check or trace-validation error"
 // @Failure      502 {object} apimodels.TestRequestResponse "failed to reach the upstream node"
 // @Security     AdminToken
@@ -2120,6 +2120,19 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 			return
 		}
 		testIdentity = claims.Subject
+	}
+
+	// RD-1299: test-request returns the node's answer without the /rpc
+	// response filter. Under the strict read profile an administrator's
+	// authority never becomes read access to chain data, so the methods whose
+	// response the profile governs are refused before anything is forwarded.
+	if s.readProfile().Strict() && readProfileGovernsResponse(input.Method) {
+		auditDB.LogAccess(c.Request.Context(), testIdentity, input.Method, http.StatusForbidden, c.ClientIP())
+		c.JSON(http.StatusForbidden, apimodels.TestRequestResponse{
+			Error:    "transaction, receipt, log and block reads are not available via test-request under the strict read privacy profile",
+			Identity: testIdentity,
+		})
+		return
 	}
 
 	// Resolve the access-control alias exactly as the live /rpc path does

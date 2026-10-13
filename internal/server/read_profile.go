@@ -3,6 +3,7 @@ package server
 import (
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -20,6 +21,31 @@ func (s *Server) readProfile() rbac.ReadProfile {
 		return rbac.ReadProfileUnset
 	}
 	return s.config.ReadProfile
+}
+
+// readProfileGovernsResponse reports whether the read profile governs the
+// response of method (after alias resolution): the transaction, receipt, log
+// and block methods the /rpc response filter rewrites (applyResponseFilter).
+// Address-state reads are not governed.
+func readProfileGovernsResponse(method string) bool {
+	m := rbac.ResolveMethodAlias(method)
+	for _, governed := range []string{
+		rbac.MethodGetTransactionByHash,
+		rbac.MethodGetTransactionByBlockHashAndIndex,
+		rbac.MethodGetTransactionByBlockNumberAndIndex,
+		rbac.MethodGetTransactionReceipt,
+		rbac.MethodGetLogs,
+		rbac.MethodGetBlockByHash,
+		rbac.MethodGetBlockByNumber,
+		"eth_getBlockTransactionCountByHash",
+		"eth_getBlockTransactionCountByNumber",
+		rbac.MethodGetBlockReceipts,
+	} {
+		if strings.EqualFold(m, governed) {
+			return true
+		}
+	}
+	return false
 }
 
 // orgAdminViewUserTxsEffective reports whether the explorer's elevated org-admin
