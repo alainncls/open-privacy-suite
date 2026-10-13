@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -89,7 +90,7 @@ var dryRunTraceMethods = map[string]bool{
 // handleDryRun handles POST /api/orgs/:org_id/dry-run.
 //
 // @Summary      Dry-run an RPC call as a user
-// @Description  Evaluates "what would this user see if they made this RPC call?" in the path org, without mutating chain state. Read methods are forwarded and redacted as the impersonated user; write methods (eth_sendTransaction / eth_sendRawTransaction) are translated to debug_traceCall so the RBAC verdict and the events the tx would emit (and the subset visible to the user) can be inspected. Requires a tier-2 org-admin JWT of the path org: X-Admin-Token credentials (both the full super-admin token and the operator token) are explicitly rejected, since impersonation reads tenant data as the user. The impersonated user must exist and be a member of the path org, else an opaque 404 (no cross-org existence leak). Every evaluation is written to the impersonation audit log fail-closed. Under the strict read privacy profile (PRIVACY_READ_PROFILE=strict) read methods are refused with 403 before anything is forwarded (the refusal is audited), and a simulated send returns only the allow/deny verdict, without the trace or its logs. Supported methods: eth_call, eth_getLogs, eth_getTransactionReceipt, eth_getTransactionByHash, eth_getBalance, eth_getCode, eth_getStorageAt, eth_blockNumber, eth_chainId, eth_sendTransaction, eth_sendRawTransaction.
+// @Description  Evaluates "what would this user see if they made this RPC call?" in the path org, without mutating chain state. Read methods are forwarded, and the response goes through the same privacy filter as the user's own call, evaluated in the path org only: the user's contract grants, admin role and visibleTo shares from other organizations do not apply, and the user's disclosure grants never apply (a grant discloses to the grantee alone); a transaction or receipt the user may not read, or one sent to or deploying another organization's contract, comes back null; logs are filtered, and embedded addresses the user cannot see are redacted. Write methods (eth_sendTransaction / eth_sendRawTransaction) are translated to debug_traceCall so the RBAC verdict, the events the tx would emit, and the subset the user would see in its receipt can be inspected. If the user's view cannot be produced, nothing from the node is returned (500). Requires a tier-2 org-admin JWT of the path org: X-Admin-Token credentials (both the full super-admin token and the operator token) are explicitly rejected, since impersonation reads tenant data as the user. The impersonated user must exist and be a member of the path org, else an opaque 404. Every evaluation is written to the impersonation audit log fail-closed. Under the strict read privacy profile (PRIVACY_READ_PROFILE=strict) read methods are refused with 403 before anything is forwarded (the refusal is audited), and a simulated send returns only the allow/deny verdict, without the trace or its logs. Supported methods: eth_call, eth_getLogs, eth_getTransactionReceipt, eth_getTransactionByHash, eth_getBalance, eth_getCode, eth_getStorageAt, eth_blockNumber, eth_chainId, eth_sendTransaction, eth_sendRawTransaction.
 // @Description  Client state/block override options are unsupported regardless of the selected user's role, including admins.
 // @Tags         Admin: RBAC
 // @Accept       json
@@ -101,7 +102,7 @@ var dryRunTraceMethods = map[string]bool{
 // @Failure      401 {object} apimodels.APIError "missing admin authentication (no admin_subject)"
 // @Failure      403 {object} apimodels.APIError "source address not on the private network, X-Admin-Token/operator credentials used (dry-run requires a tier-2 admin JWT), or a read method under the strict read profile"
 // @Failure      404 {object} apimodels.APIError "impersonated user not found or not a member of the path org (opaque)"
-// @Failure      500 {object} apimodels.APIError "internal error (includes audit-log write failure — response withheld)"
+// @Failure      500 {object} apimodels.APIError "internal error (includes audit-log write failure, or the user's view could not be produced — response withheld)"
 // @Failure      502 {object} apimodels.APIError "upstream node error or trace failure"
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/dry-run [post]
@@ -337,22 +338,33 @@ func (s *Server) handleDryRun(c *gin.Context) {
 			c.JSON(http.StatusOK, dryRunResponse{Decision: "deny", Reason: validationErr.Message})
 			return
 		}
+		if s.readProfile().Strict() {
+			// RD-1299: strict keeps the permission verdict, not the
+			// simulated trace or its logs, so the user's view of those logs
+			// is neither built nor returned.
+			if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "allow", "", c.GetString("correlation_id")); logErr != nil {
+				slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+				return
+			}
+			c.JSON(http.StatusOK, dryRunResponse{Decision: "allow"})
+			return
+		}
+		visibleLogs, viewErr := s.dryRunTraceLogsVisibleToUser(ctx, traceResp, req.UserDID, orgID, accessResult)
+		if viewErr != nil {
+			s.refuseDryRunWithoutUserView(ctx, c, adminDID, req, orgID, viewErr)
+			return
+		}
 		if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "allow", "", c.GetString("correlation_id")); logErr != nil {
 			slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-			return
-		}
-		if s.readProfile().Strict() {
-			// RD-1299: strict keeps the permission verdict, not the
-			// simulated trace or its logs.
-			c.JSON(http.StatusOK, dryRunResponse{Decision: "allow"})
 			return
 		}
 		c.JSON(http.StatusOK, dryRunResponse{
 			Decision:          "allow",
 			Trace:             traceResp.Trace,
 			LogsEmitted:       traceResp.Logs,
-			LogsVisibleToUser: s.dryRunTraceLogsVisibleToUser(ctx, traceResp, req.UserDID, orgID, accessResult),
+			LogsVisibleToUser: visibleLogs,
 		})
 		return
 	}
@@ -372,8 +384,10 @@ func (s *Server) handleDryRun(c *gin.Context) {
 
 	// RD-1308: use the production response filter as the impersonated user,
 	// with permissions and visibility inputs scoped to the path organization.
-	if rawResp != nil {
-		rawResp = s.filterDryRunReadResponse(ctx, req.RPC, req.UserDID, orgID, accessResult, rawResp)
+	rawResp, err = s.filterDryRunReadResponse(ctx, req.RPC, req.UserDID, orgID, accessResult, rawResp)
+	if err != nil {
+		s.refuseDryRunWithoutUserView(ctx, c, adminDID, req, orgID, err)
+		return
 	}
 
 	if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "allow", "", c.GetString("correlation_id")); logErr != nil {
@@ -385,6 +399,22 @@ func (s *Server) handleDryRun(c *gin.Context) {
 		Decision: "allow",
 		Response: rawResp,
 	})
+}
+
+// refuseDryRunWithoutUserView answers a dry-run whose user view could not be
+// produced (RD-1308). The node's answer is never returned without the user's
+// response filter, so the evaluation is audited as an error and the admin gets
+// an opaque 500 — not an "allow" for a response that was never served.
+func (s *Server) refuseDryRunWithoutUserView(ctx context.Context, c *gin.Context, adminDID string, req apimodels.DryRunRequest, orgID string, viewErr error) {
+	reason := "internal_error"
+	if errors.Is(viewErr, errDryRunFilterUnavailable) {
+		reason = "response_filter_unavailable"
+	}
+	slog.Error("dry-run: user view unavailable; response withheld", "method", req.RPC.Method, "err", viewErr)
+	if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", reason, c.GetString("correlation_id")); logErr != nil {
+		slog.Error("dry-run: audit log write failed", "err", logErr)
+	}
+	c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 }
 
 // sanitizeDryRunReason maps an error or reason string into a finite
@@ -776,5 +806,9 @@ func dryRunAccessRequest(userDID, orgID string, rpc apimodels.DryRunRPCBlock) (*
 		TargetAddress:    rbac.GetTargetAddress(accessMethod, params),
 		FunctionSelector: rbac.GetFunctionSelector(accessMethod, params),
 		RequiredClaims:   requiredClaims,
+		// Skip the in-memory permission cache, as the View-as RPC mirror does
+		// (ProcessRequest.BypassPermsCache), so both resolve the user's
+		// permissions the same way right after a grant or membership change.
+		BypassCache: true,
 	}, nil
 }

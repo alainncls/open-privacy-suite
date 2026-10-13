@@ -61,13 +61,16 @@ func readProfileOptionEngine(profile rbac.ReadProfile, grantLevel *VisibilityLev
 	return engine
 }
 
+// readProfileShareOpts builds the optional share sets: a genuine visibleTo
+// share (listed) and the RD-1009 transfer-participant union both keep the row
+// through VisibleTxHashes; only a genuine share is also in ListedTxHashes.
 func readProfileShareOpts(listed, union bool) RedactOpts {
-	opts := RedactOpts{VisibleTxHashes: map[string]bool{sbHash(0): true}}
+	var opts RedactOpts
+	if listed || union {
+		opts.VisibleTxHashes = map[string]bool{sbHash(0): true}
+	}
 	if listed {
 		opts.ListedTxHashes = map[string]bool{sbHash(0): true}
-	}
-	if union {
-		opts.ParticipantTxHashes = map[string]bool{sbHash(0): true}
 	}
 	return opts
 }

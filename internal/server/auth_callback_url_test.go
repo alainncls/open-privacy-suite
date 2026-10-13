@@ -302,7 +302,7 @@ func TestCallbackURL(t *testing.T) {
 func TestCallbackURL_TunnelFileEdgeCases(t *testing.T) {
 	t.Run("tunnel file does not exist", func(t *testing.T) {
 		s := newTestServerWithConfig(&config.Config{
-			ReadProfile: rbac.ReadProfileStandard,
+			ReadProfile:   rbac.ReadProfileStandard,
 			TunnelURLFile: "/nonexistent/path/tunnel-url",
 			BaseURL:       "https://fallback.example.com",
 			Port:          "8080",
@@ -316,7 +316,7 @@ func TestCallbackURL_TunnelFileEdgeCases(t *testing.T) {
 	t.Run("tunnel file is empty", func(t *testing.T) {
 		path := writeTunnelFile(t, "")
 		s := newTestServerWithConfig(&config.Config{
-			ReadProfile: rbac.ReadProfileStandard,
+			ReadProfile:   rbac.ReadProfileStandard,
 			TunnelURLFile: path,
 			BaseURL:       "https://fallback.example.com",
 			Port:          "8080",
@@ -330,7 +330,7 @@ func TestCallbackURL_TunnelFileEdgeCases(t *testing.T) {
 	t.Run("tunnel file contains http not https is rejected", func(t *testing.T) {
 		path := writeTunnelFile(t, "http://insecure-tunnel.example.com")
 		s := newTestServerWithConfig(&config.Config{
-			ReadProfile: rbac.ReadProfileStandard,
+			ReadProfile:   rbac.ReadProfileStandard,
 			TunnelURLFile: path,
 			BaseURL:       "https://fallback.example.com",
 			Port:          "8080",
@@ -344,7 +344,7 @@ func TestCallbackURL_TunnelFileEdgeCases(t *testing.T) {
 	t.Run("tunnel file whitespace is trimmed", func(t *testing.T) {
 		path := writeTunnelFile(t, "  https://trimmed.trycloudflare.com  \n")
 		s := newTestServerWithConfig(&config.Config{
-			ReadProfile: rbac.ReadProfileStandard,
+			ReadProfile:   rbac.ReadProfileStandard,
 			TunnelURLFile: path,
 			Port:          "8080",
 		})

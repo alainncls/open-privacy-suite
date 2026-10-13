@@ -16,7 +16,6 @@ import (
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
 	"privacy-proxy/internal/server/middleware"
-	"privacy-proxy/internal/viewscope"
 
 	gethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -152,7 +151,7 @@ func setupDRFFixture(t *testing.T) *drfFixture {
 
 	readMethods := []string{
 		rbac.MethodGetTransactionByHash, rbac.MethodGetTransactionReceipt, rbac.MethodGetLogs,
-		"eth_call", "eth_sendTransaction", rbac.MethodGetCode, rbac.MethodGetBalance,
+		"eth_call", "eth_sendTransaction", rbac.MethodGetCode, rbac.MethodGetBalance, rbac.MethodGetStorageAt,
 		// Outside the View-as method set: granted here so that only the
 		// mirror's own allowlist can be what refuses them.
 		"eth_sendRawTransaction", "eth_getBlockReceipts", "eth_getBlockByNumber", "debug_traceTransaction",
@@ -224,8 +223,8 @@ func drfTransferLog(contract, from, to, txHash, logIndex string) map[string]any 
 	}
 }
 
-// dryRun posts a dry-run as the member in org O and returns the decoded reply.
-func (f *drfFixture) dryRun(t *testing.T, method string, params []any) (dryRunResponse, string) {
+// dryRunRaw posts a dry-run as the member in org O and returns the recorder.
+func (f *drfFixture) dryRunRaw(t *testing.T, method string, params []any) *httptest.ResponseRecorder {
 	t.Helper()
 	body, err := json.Marshal(map[string]any{
 		"user_did": drfMemberDID,
@@ -237,14 +236,22 @@ func (f *drfFixture) dryRun(t *testing.T, method string, params []any) (dryRunRe
 	req.Header.Set("X-Test-Auth-Method", "jwt_admin")
 	w := httptest.NewRecorder()
 	f.router.ServeHTTP(w, req)
+	return w
+}
+
+// dryRun posts a dry-run as the member in org O and returns the decoded reply.
+func (f *drfFixture) dryRun(t *testing.T, method string, params []any) (dryRunResponse, string) {
+	t.Helper()
+	w := f.dryRunRaw(t, method, params)
 	require.Equal(t, http.StatusOK, w.Code, "dry-run body: %s", w.Body.String())
 	var resp dryRunResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	return resp, w.Body.String()
 }
 
-// mirror calls the View-as RPC mirror as the member in org O.
-func (f *drfFixture) mirror(t *testing.T, method string, params []any) string {
+// mirrorRaw calls the View-as RPC mirror as the member in org O and returns
+// the recorder.
+func (f *drfFixture) mirrorRaw(t *testing.T, method string, params []any) *httptest.ResponseRecorder {
 	t.Helper()
 	body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
 	require.NoError(t, err)
@@ -253,8 +260,44 @@ func (f *drfFixture) mirror(t *testing.T, method string, params []any) string {
 	req.Header.Set("X-Test-Auth-Method", "jwt_admin")
 	w := httptest.NewRecorder()
 	f.router.ServeHTTP(w, req)
+	return w
+}
+
+// mirror calls the View-as RPC mirror as the member in org O.
+func (f *drfFixture) mirror(t *testing.T, method string, params []any) string {
+	t.Helper()
+	w := f.mirrorRaw(t, method, params)
 	require.Equal(t, http.StatusOK, w.Code, "mirror body: %s", w.Body.String())
 	return w.Body.String()
+}
+
+// resetReached forgets which methods have reached the node so far.
+func (f *drfFixture) resetReached() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.seen = nil
+}
+
+// dryRunAuditRows returns the decision and reason of every impersonation_log
+// row the dry-run wrote for this fixture's org.
+func (f *drfFixture) dryRunAuditRows(t *testing.T) [][2]string {
+	t.Helper()
+	rows, err := f.ts.db.Conn().QueryContext(context.Background(), `
+		SELECT decision, COALESCE(reason, '')
+		  FROM impersonation_log
+		 WHERE actor_did = $1 AND impersonated_did = $2 AND org_id = $3
+		 ORDER BY created_at`,
+		drfAdminDID, drfMemberDID, f.orgO)
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+	var out [][2]string
+	for rows.Next() {
+		var r [2]string
+		require.NoError(t, rows.Scan(&r[0], &r[1]))
+		out = append(out, r)
+	}
+	require.NoError(t, rows.Err())
+	return out
 }
 
 // production runs the response filter exactly as the member's OWN RPC call
@@ -299,14 +342,20 @@ func TestDryRun_TxByHash_ParticipantSeesOwnTx_RD1308(t *testing.T) {
 	f.serve(rbac.MethodGetTransactionByHash, drfEnvelope(t, drfTx(drfMemberEOA, drfOtherEOA, h)))
 
 	resp, raw := f.dryRun(t, rbac.MethodGetTransactionByHash, []any{h})
-	var tx struct {
-		From, Input, Nonce, Value string
+	mirrored := f.mirror(t, rbac.MethodGetTransactionByHash, []any{h})
+	for surface, result := range map[string]json.RawMessage{
+		"dry-run": drfResult(t, resp.Response),
+		"mirror":  drfResult(t, []byte(mirrored)),
+	} {
+		var tx struct {
+			From, Input, Nonce, Value string
+		}
+		require.NoError(t, json.Unmarshal(result, &tx), "%s: %s %s", surface, raw, mirrored)
+		assert.Equal(t, drfMemberEOA, strings.ToLower(tx.From), surface)
+		assert.Equal(t, drfCalldata, tx.Input, surface)
+		assert.Equal(t, "0x7", tx.Nonce, surface)
+		assert.Equal(t, "0x2a", tx.Value, surface)
 	}
-	require.NoError(t, json.Unmarshal(drfResult(t, resp.Response), &tx), raw)
-	assert.Equal(t, drfMemberEOA, strings.ToLower(tx.From))
-	assert.Equal(t, drfCalldata, tx.Input)
-	assert.Equal(t, "0x7", tx.Nonce)
-	assert.Equal(t, "0x2a", tx.Value)
 }
 
 func TestDryRunAndViewAsRPC_DeployerAccessUsesNamedOrg_RD1308(t *testing.T) {
@@ -344,6 +393,108 @@ func TestDryRunAndViewAsRPC_DeployerAccessUsesNamedOrg_RD1308(t *testing.T) {
 			assert.False(t, f.reached(method), "a read outside the named org is decided before upstream forwarding")
 		})
 	}
+}
+
+// State reads answer as the user's own call in the named org would, on both
+// surfaces: an in-org value comes back unchanged, the tiered storage-slot rule
+// applies, and another org's contract is refused before forwarding although
+// the user's own session in that org may read it.
+func TestDryRunAndViewAsRPC_StateReads_RD1308(t *testing.T) {
+	const (
+		slot            = "0x0" // not an infrastructure slot: admin claim required
+		eip1967ImplSlot = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"
+		value           = "0x00000000000000000000000000000000000000000000000000000000000013a8"
+	)
+	cases := []struct {
+		name      string
+		method    string
+		params    []any
+		wantAllow bool
+		// ownOrg, when set, is an org whose session of the user may make the
+		// same read: the control for a denial that only the path-org pin causes.
+		ownOrg func(f *drfFixture) string
+	}{
+		{name: "eth_getStorageAt, admin claim on an org-O contract", method: rbac.MethodGetStorageAt,
+			params: []any{drfAdminCO, slot, "latest"}, wantAllow: true},
+		{name: "eth_getStorageAt, plain grant, non-infrastructure slot", method: rbac.MethodGetStorageAt,
+			params: []any{drfContractO, slot, "latest"}, wantAllow: false},
+		{name: "eth_getStorageAt, plain grant, EIP-1967 implementation slot", method: rbac.MethodGetStorageAt,
+			params: []any{drfContractO, eip1967ImplSlot, "latest"}, wantAllow: true},
+		{name: "eth_getStorageAt, org-P contract", method: rbac.MethodGetStorageAt,
+			params: []any{drfContractP, slot, "latest"}, wantAllow: false,
+			ownOrg: func(f *drfFixture) string { return f.orgP }},
+		{name: "eth_getBalance, org-O contract", method: rbac.MethodGetBalance,
+			params: []any{drfContractO, "latest"}, wantAllow: true},
+		{name: "eth_getCode, org-O contract", method: rbac.MethodGetCode,
+			params: []any{drfContractO, "latest"}, wantAllow: true},
+		{name: "eth_blockNumber", method: "eth_blockNumber", params: []any{}, wantAllow: true},
+	}
+	f := setupDRFFixture(t)
+	ctx := context.Background()
+	// In P the member is a tier-2 admin (admin claim on drfContractP); this
+	// group also allows the storage read there, so the org-P control holds.
+	pReaders := uuid.New().String()
+	require.NoError(t, f.ts.db.CreateGroup(ctx, &rbac.Group{ID: pReaders, OrgID: f.orgP, Slug: "drf-p-readers", Name: "drf-p-readers", Path: "drf-p-readers"}))
+	require.NoError(t, f.ts.db.CreateGroupAccess(ctx, &rbac.GroupAccess{ID: uuid.New().String(), GroupID: pReaders, AllowedMethods: []string{rbac.MethodGetStorageAt}}))
+	impAddUserToGroup(t, f.ts.db, f.memberID, pReaders)
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f.resetReached()
+			f.serve(c.method, drfEnvelope(t, value))
+			if c.ownOrg != nil {
+				own, err := f.ts.rbacAccessCtrl.CheckAccess(ctx, &rbac.AccessCheckRequest{
+					UserExternalID: drfMemberDID, OrgID: c.ownOrg(f), Method: c.method, Params: c.params,
+					TargetAddress: rbac.GetTargetAddress(c.method, c.params),
+				})
+				require.NoError(t, err)
+				require.True(t, own.Allowed, "control: the user's own session in that org may read it: %s", own.Reason)
+			}
+
+			resp, raw := f.dryRun(t, c.method, c.params)
+			w := f.mirrorRaw(t, c.method, c.params)
+			if c.wantAllow {
+				require.Equal(t, "allow", resp.Decision, raw)
+				assert.JSONEq(t, `"`+value+`"`, string(drfResult(t, resp.Response)), raw)
+				require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+				assert.JSONEq(t, `"`+value+`"`, string(drfResult(t, w.Body.Bytes())))
+				return
+			}
+			assert.Equal(t, "deny", resp.Decision, raw)
+			assert.Empty(t, resp.Response)
+			assert.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
+			assert.NotContains(t, w.Body.String(), value)
+			assert.False(t, f.reached(c.method), "a denied read is decided before upstream forwarding")
+		})
+	}
+}
+
+// Dry-run skips the in-memory permission cache, as the View-as RPC mirror
+// does: a grant revoked after the user's own last call no longer allows the
+// read, although the in-memory cache still holds the user's old permissions.
+func TestDryRunAndViewAsRPC_SkipInMemoryPermissionCache_RD1308(t *testing.T) {
+	f := setupDRFFixture(t)
+	ctx := context.Background()
+	const target = "0x13080000000000000000000000000000000000c3"
+	contractID := wiringCreateContractWithABI(t, f.ts.db, f.orgO, target, "DRF-O-revoked", erc20ABI)
+	grantID := uuid.New().String()
+	require.NoError(t, f.ts.db.CreateContractGrant(ctx, &rbac.ContractGrant{ID: grantID, ContractID: contractID, GroupID: f.memberGroup}))
+	params := []any{target, "latest"}
+
+	own, err := f.ts.rbacAccessCtrl.CheckAccess(ctx, &rbac.AccessCheckRequest{
+		UserExternalID: drfMemberDID, OrgID: f.orgO, Method: rbac.MethodGetBalance, Params: params, TargetAddress: target,
+	})
+	require.NoError(t, err)
+	require.True(t, own.Allowed, "the user's own call is allowed and caches their permissions: %s", own.Reason)
+
+	require.NoError(t, f.ts.db.DeleteContractGrantAndInvalidate(ctx, grantID, f.memberGroup))
+
+	f.serve(rbac.MethodGetBalance, drfEnvelope(t, "0x1234"))
+	resp, raw := f.dryRun(t, rbac.MethodGetBalance, params)
+	assert.Equal(t, "deny", resp.Decision, "dry-run must not answer from permissions cached in memory before the revocation: %s", raw)
+	w := f.mirrorRaw(t, rbac.MethodGetBalance, params)
+	assert.Equal(t, http.StatusNotFound, w.Code, "the View-as mirror gives the same answer: %s", w.Body.String())
+	assert.False(t, f.reached(rbac.MethodGetBalance), "a revoked read is decided before upstream forwarding")
 }
 
 func TestDryRun_TxByHash_AdminExemptionPinnedToPathOrg_RD1308(t *testing.T) {
@@ -493,21 +644,54 @@ func TestDryRun_TraceLogsVisibleToUser_UseReceiptPipeline_RD1308(t *testing.T) {
 	assert.Contains(t, visible[drfContractO], bare(drfMemberEOA), "the member's own address stays")
 }
 
-func TestDryRun_ReadWithoutProcessor_WithholdsUpstreamBody_RD1308(t *testing.T) {
-	f := setupDRFFixture(t)
-	f.ts.jsonrpcProcessor = nil
+// Without the production response filter the dry-run cannot produce the
+// user's view. Nothing from the node is returned, and the audit row records
+// the real outcome (an error), not an "allow" for an answer never served.
+func TestDryRun_WithoutResponseFilter_FailsClosedAndAuditsError_RD1308(t *testing.T) {
 	const h = "0x1308000000000000000000000000000000000000000000000000000000000008"
-	f.serve(rbac.MethodGetTransactionByHash, drfEnvelope(t, drfTx(drfForeignEOA, drfOtherEOA, h)))
-
-	resp, raw := f.dryRun(t, rbac.MethodGetTransactionByHash, []any{h})
-	assert.NotContains(t, strings.ToLower(raw), bare(drfForeignEOA), "an unfiltered upstream body must never be returned")
-	var env struct {
-		Error *struct {
-			Message string `json:"message"`
-		} `json:"error"`
+	cases := []struct {
+		name   string
+		method string
+		params []any
+		node   func(t *testing.T, f *drfFixture)
+	}{
+		{
+			name:   "read",
+			method: rbac.MethodGetTransactionByHash,
+			params: []any{h},
+			node: func(t *testing.T, f *drfFixture) {
+				f.serve(rbac.MethodGetTransactionByHash, drfEnvelope(t, drfTx(drfForeignEOA, drfOtherEOA, h)))
+			},
+		},
+		{
+			name:   "trace",
+			method: "eth_sendTransaction",
+			params: []any{map[string]any{"from": drfMemberEOA, "to": drfContractO, "data": "0x"}},
+			node: func(t *testing.T, f *drfFixture) {
+				f.serve("debug_traceCall", drfEnvelope(t, map[string]any{
+					"type": "CALL", "from": drfMemberEOA, "to": drfContractO, "input": "0x", "value": "0x0",
+					"logs": []any{map[string]any{
+						"address": drfContractO,
+						"topics":  []string{drfTransferT0, zeroPadAddrToTopic(drfMemberEOA), zeroPadAddrToTopic(drfForeignEOA)},
+						"data":    "0x00000000000000000000000000000000000000000000000000000000000003e8",
+					}},
+				}))
+			},
+		},
 	}
-	require.NoError(t, json.Unmarshal(resp.Response, &env), raw)
-	require.NotNil(t, env.Error, "the withheld response must say so: %s", raw)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := setupDRFFixture(t)
+			tc.node(t, f)
+			f.ts.jsonrpcProcessor = nil
+
+			w := f.dryRunRaw(t, tc.method, tc.params)
+			require.Equal(t, http.StatusInternalServerError, w.Code, w.Body.String())
+			assert.JSONEq(t, `{"error":"internal error"}`, w.Body.String())
+			assert.NotContains(t, strings.ToLower(w.Body.String()), bare(drfForeignEOA), "no node data may be returned")
+			assert.Equal(t, [][2]string{{"error", "response_filter_unavailable"}}, f.dryRunAuditRows(t))
+		})
+	}
 }
 
 // The View-as RPC mirror pins the RD-915 nested-call gate to the scope org, as
@@ -536,6 +720,56 @@ func TestEthCallTracing_ViewerOrgScopePinsNestedCalls_RD1308(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, denied.StatusCode)
 	require.NotNil(t, proc.validateEthCallWithTracing(withViewerOrgScope(ctx, ""), ethCallReq(did, wrapperO), wrapperO),
 		"an empty scope denies instead of widening to every org")
+}
+
+// A creation-shaped eth_call (no `to`, RD-1323) is traced against the scope
+// org too: the deploy claim must be held in that org, and the creation code
+// may not reach another org's contract, although the member's own call (they
+// belong to both orgs) may do either.
+func TestEthCallTracing_ViewerOrgScopePinsCreationShapedCalls_RD1308(t *testing.T) {
+	created, foreignP := fixedAddr(0x34), fixedAddr(0x35)
+	creationReq := func(did string) *ProcessRequest {
+		return &ProcessRequest{UserID: did, Method: "eth_call", Params: []any{map[string]any{"data": creationCode}, "latest"}}
+	}
+	for _, tc := range []struct {
+		name               string
+		deployInO, deployP bool
+		frame              traceFrame
+	}{
+		{
+			name:    "deploy claim held only in the other org",
+			deployP: true,
+			frame:   traceFrame{Type: "CREATE", From: fixedAddr(0x36), To: created},
+		},
+		{
+			name:      "creation code reads another org's contract",
+			deployInO: true,
+			frame: traceFrame{Type: "CREATE", From: fixedAddr(0x36), To: created,
+				Calls: []traceFrame{{Type: "STATICCALL", From: created, To: foreignP}}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			proc, ts := setupProcessorWithMockTracer(t, newScriptedTracer(t, tc.frame, tc.frame))
+			ctx := context.Background()
+			orgO := registerForeignOrgContract(t, ctx, ts, fixedAddr(0x37))
+			orgP := registerForeignOrgContract(t, ctx, ts, foreignP)
+			claims := func(deploy bool) []rbac.Claim {
+				if deploy {
+					return []rbac.Claim{rbac.ClaimDeploy}
+				}
+				return nil
+			}
+			did := "did:drf:creation-" + uuid.New().String()
+			uid := drCreateUserInGroup(t, ts.db, did, drCreateGroup(t, ts.db, orgO, "drf-co-"+orgO[:6], claims(tc.deployInO), false))
+			impAddUserToGroup(t, ts.db, uid, drCreateGroup(t, ts.db, orgP, "drf-cp-"+orgP[:6], claims(tc.deployP), false))
+
+			require.Nil(t, proc.validateEthCallWithTracing(ctx, creationReq(did), ""),
+				"control: the member's own creation-shaped call is allowed across their orgs")
+			denied := proc.validateEthCallWithTracing(withViewerOrgScope(ctx, orgO), creationReq(did), "")
+			require.NotNil(t, denied, "an org-O impersonation scope must judge the creation in org O only")
+			assert.Equal(t, http.StatusForbidden, denied.StatusCode)
+		})
+	}
 }
 
 // The participant rule admits the member's own transactions whatever they
@@ -579,14 +813,21 @@ func TestDryRun_OwnTxWithOtherOrgContract_IsNull_RD1308(t *testing.T) {
 
 // The View-as RPC mirror serves only the methods whose read path is pinned:
 // writes, traces and block-level reads are refused before they reach the node.
+// The set is checked on the canonical method spelling (RD-1303), so a case
+// variant of a refused method is refused too.
 func TestImpersonationRPC_RefusesMethodsOutsideTheReadSet_RD1308(t *testing.T) {
 	f := setupDRFFixture(t)
-	for _, method := range []string{
-		"eth_sendTransaction", "eth_sendRawTransaction", "debug_traceTransaction",
-		"eth_getBlockReceipts", "eth_getBlockByNumber", "ETH_GETTRANSACTIONBYHASH",
+	for _, tc := range []struct{ method, canonical string }{
+		{"eth_sendTransaction", "eth_sendTransaction"},
+		{"eth_sendRawTransaction", "eth_sendRawTransaction"},
+		{"debug_traceTransaction", "debug_traceTransaction"},
+		{"eth_getBlockReceipts", "eth_getBlockReceipts"},
+		{"eth_getBlockByNumber", "eth_getBlockByNumber"},
+		{"ETH_SENDTRANSACTION", "eth_sendTransaction"},
+		{"Debug_TraceTransaction", "debug_traceTransaction"},
 	} {
-		t.Run(method, func(t *testing.T) {
-			body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": []any{"0x1"}})
+		t.Run(tc.method, func(t *testing.T) {
+			body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": tc.method, "params": []any{"0x1"}})
 			require.NoError(t, err)
 			req := httptest.NewRequest(http.MethodGet, impersonatePath(drfMemberDID, f.orgO, "/rpc"), bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
@@ -594,12 +835,38 @@ func TestImpersonationRPC_RefusesMethodsOutsideTheReadSet_RD1308(t *testing.T) {
 			w := httptest.NewRecorder()
 			f.router.ServeHTTP(w, req)
 			assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
-			assert.False(t, f.reached(method), "%s reached the node through the read-only mirror", method)
+			assert.JSONEq(t, `{"error":"method not supported under impersonation"}`, w.Body.String(), "refused by the mirror's method set, not a later check")
+			assert.False(t, f.reached(tc.method), "%s reached the node through the read-only mirror", tc.method)
+			assert.False(t, f.reached(tc.canonical), "%s reached the node through the read-only mirror", tc.canonical)
 		})
 	}
 	// The read set still works.
 	f.serve("eth_chainId", []byte(`{"jsonrpc":"2.0","id":1,"result":"0x1"}`))
 	assert.Equal(t, `"0x1"`, string(drfResult(t, []byte(f.mirror(t, "eth_chainId", []any{})))))
+}
+
+// A case variant of a read-set method is that method (RD-1303 canonical
+// envelope): the mirror forwards the canonical spelling and answers through
+// the same pinned filter, so the member's own transaction with an org-P
+// contract stays out of an org-O view while an org-O one is shown.
+func TestImpersonationRPC_CaseVariantUsesThePinnedReadPath_RD1308(t *testing.T) {
+	f := setupDRFFixture(t)
+	const (
+		hP = "0x1308000000000000000000000000000000000000000000000000000000000031"
+		hO = "0x1308000000000000000000000000000000000000000000000000000000000032"
+	)
+
+	f.serve(rbac.MethodGetTransactionByHash, drfEnvelope(t, drfTx(drfMemberEOA, drfContractP, hP)))
+	f.resetReached()
+	raw := f.mirror(t, "ETH_GETTRANSACTIONBYHASH", []any{hP})
+	assert.Equal(t, "null", string(drfResult(t, []byte(raw))), "the member's org-P tx appeared in an org-O view: %s", raw)
+	assert.True(t, f.reached(rbac.MethodGetTransactionByHash), "the canonical spelling must be forwarded")
+	assert.False(t, f.reached("ETH_GETTRANSACTIONBYHASH"), "the caller's spelling must not be forwarded")
+
+	// Positive control: the member's own tx with an org-O contract.
+	f.serve(rbac.MethodGetTransactionByHash, drfEnvelope(t, drfTx(drfMemberEOA, drfContractO, hO)))
+	raw = f.mirror(t, "ETH_GETTRANSACTIONBYHASH", []any{hO})
+	assert.Contains(t, strings.ToLower(raw), bare(drfCalldata)[:40], "own org-O tx must stay visible: %s", raw)
 }
 
 // visibleTo unlock and the ordinary param-rule fallback both follow the pin:
@@ -831,49 +1098,6 @@ func TestDryRun_TraceLogsVisibleToUser_GrantMatrix_RD1308(t *testing.T) {
 	}
 }
 
-// Explorer View-as organization scope is tracked separately in RD-1315.
-// This test preserves the current explorer behavior while RD-1308 changes
-// the dry-run and RPC surfaces.
-func TestExplorerViewAs_ExistingVisibilityScope_RD1315(t *testing.T) {
-	f := setupDRFFixture(t)
-	var gotScoped bool
-	var gotLevel explorer.VisibilityLevel
-	router := gin.New()
-	probe := router.Group("/probe/:target_did/in/:org_id")
-	probe.Use(func(c *gin.Context) {
-		c.Set("auth_method", "jwt_admin")
-		c.Set("admin_subject", drfAdminDID)
-		c.Set("admin_org_ids", []string{f.orgO})
-		c.Next()
-	}, f.ts.impersonationGateMiddleware())
-	probe.GET("/explorer-handler", func(c *gin.Context) {
-		ctx := c.Request.Context()
-		_, gotScoped = viewscope.Org(ctx)
-		gotLevel = f.ts.calculateAddressVisibilityWithDID(ctx, f.ts.getViewerDIDFromRequest(c), drfContractP).Level
-		c.Status(http.StatusOK)
-	})
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/probe/"+drfMemberDID+"/in/"+f.orgO+"/explorer-handler", nil))
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-
-	assert.False(t, gotScoped, "the explorer mirror retains its current context")
-	assert.Equal(t, explorer.VisibilityFull, gotLevel, "the explorer visibility resolver retains its current membership scope")
-}
-
-// filterDryRunLogs is a test-only wrapper that pins the rbac.FilterEventLogs
-// grant states (wildcard / deny / allowlist) without a Server, passing no
-// linked addresses, ABI provider, visibleTo context or admin map. Dry-run
-// itself does NOT use it: logs_visible_to_user comes from the production
-// receipt filter (dryRunTraceLogsVisibleToUser, RD-1308).
-func filterDryRunLogs(profile rbac.ReadProfile, logs []json.RawMessage, perms *rbac.EffectivePermissions, user *rbac.User, viewerDID string) []json.RawMessage {
-	if len(logs) == 0 || perms == nil {
-		return nil
-	}
-	_ = user
-	_ = viewerDID
-	return rbac.FilterEventLogs(profile, logs, perms, []string{}, nil, nil, nil)
-}
-
 // A deployment transaction has no `to`: the envelope pin judges it by the
 // contract it creates (CREATE from sender + nonce).
 func TestDryRun_OwnDeploymentOfOtherOrgContract_IsNull_RD1308(t *testing.T) {
@@ -914,7 +1138,10 @@ func TestDryRun_OwnDeploymentOfOtherOrgContract_IsNull_RD1308(t *testing.T) {
 
 // Embedded-address redaction counts only disclosure grants requested in the
 // path org: a Full grant the member holds through org P does not unzero the
-// disclosed subject in an org-O dry-run.
+// disclosed subject in an org-O dry-run. Since RD-1318 both surfaces also
+// carry the mark that suppresses every disclosure grant, so this end-to-end
+// check holds under either rule; the org clause on its own is pinned at the
+// resolver in TestDisclosureGrants_SuppressedUnderImpersonationMark_RD1318.
 func TestDryRun_DisclosureGrantFromOtherOrg_NotApplied_RD1308(t *testing.T) {
 	f := setupDRFFixture(t)
 	ctx := context.Background()
@@ -942,6 +1169,28 @@ func TestDryRun_DisclosureGrantFromOtherOrg_NotApplied_RD1308(t *testing.T) {
 	resp, raw := f.dryRun(t, rbac.MethodGetLogs, params)
 	assert.Contains(t, strings.ToLower(string(resp.Response)), bare(drfMemberEOA), "the log stays admitted: %s", raw)
 	assert.NotContains(t, strings.ToLower(string(resp.Response)), bare(subjectEOA), "an org-P disclosure grant applied in an org-O dry-run: %s", raw)
+
+	mirrored := strings.ToLower(f.mirror(t, rbac.MethodGetLogs, params))
+	assert.Contains(t, mirrored, bare(drfMemberEOA), "the View-as RPC mirror admits the same log")
+	assert.NotContains(t, mirrored, bare(subjectEOA), "an org-P disclosure grant applied on the org-O View-as RPC mirror")
+}
+
+// The dry-run method set is reviewed explicitly, as the mirror's is.
+func TestDryRunMethods_ExactSet_RD1308(t *testing.T) {
+	collect := func(set map[string]bool) []string {
+		out := make([]string, 0, len(set))
+		for m, ok := range set {
+			if ok {
+				out = append(out, m)
+			}
+		}
+		return out
+	}
+	assert.ElementsMatch(t, []string{
+		"eth_call", "eth_getLogs", "eth_getTransactionReceipt", "eth_getTransactionByHash",
+		"eth_getBalance", "eth_getCode", "eth_getStorageAt", "eth_blockNumber", "eth_chainId",
+	}, collect(dryRunReadMethods))
+	assert.ElementsMatch(t, []string{"eth_sendTransaction", "eth_sendRawTransaction"}, collect(dryRunTraceMethods))
 }
 
 // A trace that reverts yields no visible logs: its receipt would carry none.

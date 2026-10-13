@@ -68,7 +68,7 @@ func TestReadProfile_ExplorerTx_Matrix(t *testing.T) {
 
 				// Counts (block transaction count, stats) use the same SQL
 				// visibility filter: it admits only the participant's rows.
-				filter := f.srv.buildVisibilityFilter(context.Background(), v.did)
+				filter := f.srv.buildVisibilityFilter(context.Background(), v.did, f.srv.isViewerAdmin(context.Background(), v.did))
 				n, err := f.srv.explorerStore.GetBlockTransactionCountFiltered(context.Background(), uint64(f.block), filter)
 				require.NoError(t, err)
 				assert.Equal(t, len(wantHashes), n, "block transaction count")

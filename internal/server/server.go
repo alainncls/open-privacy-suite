@@ -13,11 +13,6 @@ import (
 	"slices"
 	"sort"
 
-	"strconv"
-	"strings"
-	"sync"
-	"time"
-
 	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/audit"
 	"privacy-proxy/internal/audit/buffer"
@@ -39,6 +34,10 @@ import (
 	privacyredis "privacy-proxy/internal/redis"
 	"privacy-proxy/internal/server/middleware"
 	"privacy-proxy/internal/tracer"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/iden3/iden3comm/v2/protocol"
@@ -187,8 +186,11 @@ func (s *Server) DB() *db.DB {
 }
 
 // Stop gracefully stops all background goroutines.
-// Should be called before server shutdown.
+// Call after HTTP shutdown has stopped and drained incoming requests.
 func (s *Server) Stop() {
+	if s.jsonrpcProcessor != nil && s.jsonrpcProcessor.nodeApprovals != nil {
+		s.jsonrpcProcessor.nodeApprovals.Close()
+	}
 	if s.sessionStore != nil {
 		s.sessionStore.Stop()
 	}
@@ -928,6 +930,20 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	if s.auditBuffer != nil {
 		procAuditBuffer = s.auditBuffer
 	}
+	approvals, err := nodeApprovalsFromEnv(cfg.NodeURL, nodeTransport)
+	if err != nil {
+		return nil, err
+	}
+	approvalBudget, err := newApprovalPreflightLimiter(approvals, redisClient)
+	if err == nil {
+		err = registerNodeApprovalMetrics(approvals, m.Registry)
+	}
+	if err != nil {
+		if approvals != nil {
+			approvals.Close()
+		}
+		return nil, err
+	}
 	s.jsonrpcProcessor = NewJSONRPCProcessor(JSONRPCProcessorConfig{
 		RBACAccessCtrl:            rbacAccessCtrl,
 		RateLimiter:               rateLimiter,
@@ -937,6 +953,8 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		ConcurrencyLimiter:        middleware.NewConcurrencyLimiter(cfg.MaxConcurrentRequests, cfg.MaxConcurrentAnonymousRequests),
 		DefaultRPCAPIKey:          cfg.RPCAPIKey,
 		RuntimeTracer:             runtimeTracer,
+		NodeApprovals:             approvals,
+		ApprovalPreflightLimiter:  approvalBudget,
 		TraceValidator:            traceValidator,
 		Metrics:                   m,
 		TxVisibilityStore:         database,
@@ -1331,7 +1349,7 @@ const MaxRequestBodySize = 1 << 20 // 1MB
 // @Description
 // @Description  Ordinary upstream JSON-RPC errors retain their JSON-RPC error member. Transport, access and rate-limit failures use the non-200 statuses below. `POST /` and `POST /rpc` are the same operation.
 // @Description
-// @Description  Client call traces and standard-profile mined traces return validated call-tree frames. The viewer's contract, function and argument permissions apply to returned calls, including delegated storage contexts. Strict-profile mined traces return only a linked transaction participant's top frame, without internal calls or logs, subject to organization ownership checks. Trace or upstream failures return opaque non-200 errors.
+// @Description  Client call traces and standard-profile mined traces return validated call-tree frames. The viewer's contract, function and argument permissions apply to returned calls, including delegated storage contexts. Internal-call values (a nested call's input, value, output and revert reason) are returned only to a viewer who may read the storage of the contract that produced them; otherwise they are omitted and named in the call's `redacted` array. Strict-profile mined traces return only a linked transaction participant's top frame, without internal calls or logs, subject to organization ownership checks. Trace or upstream failures return opaque non-200 errors.
 // @Tags         JSON-RPC
 // @Accept       json
 // @Produce      json
@@ -1340,10 +1358,10 @@ const MaxRequestBodySize = 1 << 20 // 1MB
 // @Success      200 {object} apimodels.JSONRPCResponseEnvelope "JSON-RPC response; may carry a JSON-RPC-level error member"
 // @Failure      400 {object} apimodels.APIError "unreadable body, malformed, ambiguous (duplicate or case-variant members) or batch JSON-RPC, invalid visibleTo, or an unsupported tracer/config (a tracer other than callTracer, withLog or malformed trace params)"
 // @Failure      401 {object} apimodels.APIError "identity required but unresolved on a trace method (debug_traceCall / debug_traceTransaction)"
-// @Failure      403 {object} apimodels.APIError "runtime-trace, standard-profile mined-trace access, or compliance denial"
-// @Failure      404 {object} apimodels.APIError "method not allowed for the caller, or a strict-profile mined trace unavailable to the caller"
+// @Failure      403 {object} apimodels.APIError "runtime-trace, standard-profile trace-access (debug_traceTransaction for a non-participant or a missing transaction) or compliance denial"
+// @Failure      404 {object} apimodels.APIError "method not allowed for the caller (denials are masked as method not found), or a strict-profile mined trace unavailable to the caller"
 // @Failure      413 {object} apimodels.APIError "request body too large"
-// @Failure      429 {object} apimodels.APIError "concurrency limit or upstream rate limit"
+// @Failure      429 {object} apimodels.APIError "concurrency limit, signed-approval simulation budget, or upstream rate limit"
 // @Failure      500 {object} apimodels.APIError "trace-validation or compliance-check error"
 // @Failure      502 {object} apimodels.APIError "failed to forward to the upstream node"
 // @Security     BearerAuth
@@ -2040,17 +2058,17 @@ func (s *Server) getStatus(c *gin.Context) {
 // result plus latency.
 //
 // @Summary      Test a JSON-RPC request
-// @Description  Dashboard diagnostic: runs one method through RBAC, travel-rule compliance, and upstream forwarding, using a synthetic identity ("test:dashboard") or the subject of a supplied jwt_token. On an upstream JSON-RPC-level error the call still returns HTTP 200 with the error in the response body. Requires the private-network source gate (403 otherwise).
+// @Description  Dashboard diagnostic: runs one method through RBAC, the same nested-call trace as /rpc (eth_call, eth_estimateGas, and eth_createAccessList without `to`), travel-rule compliance, and upstream forwarding, using a synthetic identity ("test:dashboard") or the subject of a supplied jwt_token. On an upstream JSON-RPC-level error the call still returns HTTP 200 with the error in the response body. Requires the private-network source gate (403 otherwise).
 // @Description  Client state/block override options follow the RPC policy for every caller, including admins.
 // @Tags         Admin: ops
 // @Accept       json
 // @Produce      json
 // @Param        request body apimodels.TestRequestInput true "method, params, and optional jwt_token / org_id"
 // @Success      200 {object} apimodels.TestRequestResponse "forwarded result (or an upstream JSON-RPC error message) plus latency"
-// @Failure      400 {object} apimodels.APIError "invalid request body, invalid JWT, or a trace method (debug_traceCall / debug_traceTransaction are not supported here; use dry-run or view-as-user)"
+// @Failure      400 {object} apimodels.APIError "invalid request body, invalid JWT, or a trace method (debug_traceCall / debug_traceTransaction are not supported here; send them to /rpc or /rpc/{org_id}); an invalid call shape refused by the nested-call trace returns a TestRequestResponse"
 // @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
-// @Failure      403 {object} apimodels.TestRequestResponse "RBAC or compliance denied (network-gate rejections return the generic error envelope)"
-// @Failure      500 {object} apimodels.TestRequestResponse "access-check error"
+// @Failure      403 {object} apimodels.TestRequestResponse "RBAC, nested-call trace or compliance denied (network-gate rejections return the generic error envelope)"
+// @Failure      500 {object} apimodels.TestRequestResponse "access-check or trace-validation error"
 // @Failure      502 {object} apimodels.TestRequestResponse "failed to reach the upstream node"
 // @Security     AdminToken
 // @Router       /api/v1/admin/test-request [post]
@@ -2086,7 +2104,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 	// methods. Use the RPC trace endpoint with its access and output checks.
 	if tm := rbac.ResolveMethodAlias(input.Method); tm == "debug_traceCall" || tm == "debug_traceTransaction" ||
 		input.Method == "debug_traceCall" || input.Method == "debug_traceTransaction" {
-		respondBadRequest(c, "trace methods are not supported via test-request; use the dry-run or view-as-user surfaces")
+		respondBadRequest(c, "trace methods are not supported via test-request; send them to /rpc or /rpc/{org_id}")
 		return
 	}
 
@@ -2152,6 +2170,26 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 			Identity: testIdentity,
 		})
 		return
+	}
+
+	// The request is forwarded to the node below, so run the same nested-call
+	// trace as /rpc (eth_call, eth_estimateGas and creation-shaped
+	// eth_createAccessList, aliases included). Deny messages are the opaque
+	// eth_call trace constants.
+	if s.jsonrpcProcessor != nil {
+		traceReq := &ProcessRequest{
+			UserID: testIdentity, OrgID: input.OrgID, Method: input.Method, Params: input.Params,
+			resolvedOrgID: result.OrgID,
+		}
+		if traceErr := s.jsonrpcProcessor.validateEthCallWithTracing(c.Request.Context(), traceReq, accessReq.TargetAddress); traceErr != nil {
+			auditDB.LogAccess(c.Request.Context(), testIdentity, input.Method, traceErr.StatusCode, c.ClientIP())
+			slog.Info("test-request: trace denied", "identity", testIdentity, "method", input.Method, "reason", traceErr.Reason)
+			c.JSON(traceErr.StatusCode, apimodels.TestRequestResponse{
+				Error:    traceErr.Message,
+				Identity: testIdentity,
+			})
+			return
+		}
 	}
 
 	// Travel rule compliance check for eth_sendTransaction and eth_sendRawTransaction

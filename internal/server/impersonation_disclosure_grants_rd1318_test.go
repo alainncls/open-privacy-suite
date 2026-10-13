@@ -250,6 +250,76 @@ func TestDisclosureGrants_SuppressedUnderImpersonationMark_RD1318(t *testing.T) 
 	has, err = f.srv.db.ViewerHasFullDisclosureGrant(marked, rd1318GranteeDID, rd1318SubjectEOA)
 	require.NoError(t, err)
 	assert.False(t, has)
+
+	// The mark, not the RD-1308 org pin, is what hides the grant on the
+	// impersonation surfaces. Pinned to the org the grant was requested in,
+	// without the mark, the grant still applies; pinned to another org it does
+	// not (the pin's own clause); both surfaces carry the pin AND the mark.
+	level := func(ctx context.Context) explorer.VisibilityLevel {
+		t.Helper()
+		v, err := f.srv.db.GetBatchVisibilityDetailed(ctx, rd1318GranteeDID, []string{rd1318SubjectEOA})
+		require.NoError(t, err)
+		return v[rd1318SubjectEOA].Level
+	}
+	assert.Equal(t, explorer.VisibilityFull, level(withViewerOrgScope(ctx, f.orgID)), "the org pin alone keeps a grant requested in the pinned org")
+	assert.Equal(t, explorer.VisibilityHidden, level(withViewerOrgScope(ctx, uuid.New().String())), "the org pin drops a grant requested in another org")
+	assert.Equal(t, explorer.VisibilityHidden, level(withViewerOrgScope(marked, f.orgID)), "pin plus mark, as on dry-run and the View-as RPC mirror")
+}
+
+// A traced write's logs_visible_to_user is the receipt the user would see, and
+// it too is built without their disclosure grants. The grant is requested in
+// the dry-run's own org, so the RD-1308 org pin keeps it: only the RD-1318
+// mark can be what hides the subject.
+func TestDryRun_TraceLogsVisibleToUser_IgnoreTheUsersDisclosureGrant_RD1318(t *testing.T) {
+	f := setupDRFFixture(t)
+	ctx := context.Background()
+	const subjectDID = "did:drf:rd1318_subject"
+	const subjectEOA = "0x1318000000000000000000000000000000000d05"
+	subjectID := drCreateUserInGroup(t, f.ts.db, subjectDID, drCreateGroup(t, f.ts.db, f.orgO, "drf-o-subjects", nil, false))
+	require.NoError(t, f.ts.db.SystemLinkEthAddress(ctx, subjectDID, subjectEOA))
+	reqID := uuid.New().String()
+	scope := `{"disclosure_level":"full"}`
+	_, err := f.ts.db.Conn().ExecContext(ctx, `
+		INSERT INTO disclosure_requests (id, requester_did, target_user_id, org_id, scope, reason, status, requested_at)
+		VALUES ($1, $2, $3, $4, $5::jsonb, 'rd1318', 'approved', NOW())`, reqID, drfMemberDID, subjectID, f.orgO, scope)
+	require.NoError(t, err)
+	_, err = f.ts.db.Conn().ExecContext(ctx, `
+		INSERT INTO disclosure_grants (id, request_id, grant_token_hash, scope, granted_at, expires_at)
+		VALUES ($1, $2, 'rd1318hash', $3::jsonb, NOW(), NOW() + interval '1 day')`, uuid.New().String(), reqID, scope)
+	require.NoError(t, err)
+
+	// Controls: the member's own receipt shows the subject, and so does the
+	// resolver pinned to org O without the mark.
+	const h = "0x1318000000000000000000000000000000000000000000000000000000000042"
+	f.txByHash[h] = drfTx(drfMemberEOA, drfContractO, h)
+	receipt := drfEnvelope(t, map[string]any{
+		"transactionHash": h, "from": drfMemberEOA, "to": drfContractO, "status": "0x1",
+		"gasUsed": "0x5208", "cumulativeGasUsed": "0x5208", "effectiveGasPrice": "0x1", "contractAddress": nil,
+		"logsBloom": "0x" + strings.Repeat("0", 512),
+		"logs":      []any{drfTransferLog(drfContractO, drfMemberEOA, subjectEOA, h, "0x0")},
+	})
+	require.Contains(t, strings.ToLower(string(f.production(t, rbac.MethodGetTransactionReceipt, []any{h}, receipt))), bare(subjectEOA),
+		"control: the member's own receipt shows the subject it holds a grant on")
+	vis, err := f.ts.db.GetBatchVisibilityDetailed(withViewerOrgScope(ctx, f.orgO), drfMemberDID, []string{subjectEOA})
+	require.NoError(t, err)
+	require.Equal(t, explorer.VisibilityFull, vis[subjectEOA].Level, "control: the org pin alone keeps this same-org grant")
+
+	f.serve("debug_traceCall", drfEnvelope(t, map[string]any{
+		"type": "CALL", "from": drfMemberEOA, "to": drfContractO, "gas": "0x0", "gasUsed": "0x0", "input": "0x", "value": "0x0",
+		"logs": []any{map[string]any{
+			"address": drfContractO,
+			"topics":  []string{drfTransferT0, zeroPadAddrToTopic(drfMemberEOA), zeroPadAddrToTopic(subjectEOA)},
+			"data":    "0x00000000000000000000000000000000000000000000000000000000000003e8",
+		}},
+	}))
+	resp, raw := f.dryRun(t, "eth_sendTransaction", []any{map[string]any{"from": drfMemberEOA, "to": drfContractO, "data": "0x"}})
+	require.Equal(t, "allow", resp.Decision, raw)
+	require.Len(t, resp.LogsEmitted, 1)
+	assert.Contains(t, strings.ToLower(string(resp.LogsEmitted[0])), bare(subjectEOA), "logs_emitted is the admin's unfiltered diagnostic")
+	require.Len(t, resp.LogsVisibleToUser, 1, "the member's own Transfer log stays admitted: %s", raw)
+	visible := strings.ToLower(string(resp.LogsVisibleToUser[0]))
+	assert.Contains(t, visible, bare(drfMemberEOA), "the member's own address stays")
+	assert.NotContains(t, visible, bare(subjectEOA), "the member's disclosure grant must not reveal the subject to the admin: %s", raw)
 }
 
 // The dry-run and the View-as RPC mirror mark their context the same way:

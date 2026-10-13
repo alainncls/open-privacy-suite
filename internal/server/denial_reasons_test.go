@@ -34,6 +34,7 @@ func TestWireReason_ClosedAllowlist(t *testing.T) {
 		ReasonTracingUnavailable,
 		ReasonTraceDepthExceeded,
 		ReasonDeployClaimRequired,
+		ReasonTraceAccessDenied,
 		ReasonComplianceBlocked,
 		ReasonInternalError,
 		ReasonNotParticipant, // RD-1299: tx existence is not the caller's own fact

@@ -212,9 +212,10 @@ The proxy uses `debug_traceCall` to validate all addresses touched by transactio
 - **Uncached.** Proxy-pattern contracts (EIP-1967, Diamond, Beacon, transparent upgradeable) can re-target their internal calls by rewriting a storage slot, so a `(from,to,data,value)` cache yields stale "allow" decisions after a cross-org upgrade. The eth_call path always asks the upstream node.
 - **`from` rebound to the JWT-bound EOA.** Sends pin `msg.sender` via the unlocked key; reads do not. The proxy looks up the caller's linked Ethereum addresses and rejects user-supplied `from` that doesn't match (rather than silently rebinding -- mismatches are logged as spoof attempts).
 - **Trace runs at the same block as the forwarded call.** If `eth_call` supplies a historical block tag or EIP-1898 object as `params[1]`, the trace runs at that same block. Otherwise an attacker could exfil historical cross-org state via a proxy contract that has since been re-targeted.
+- **Calls without `to` are deployments.** An `eth_call`, `eth_estimateGas` or `eth_createAccessList` without `to` runs its `data` as contract-creation code. It requires authentication and the `deploy` claim, and it is always traced, whatever `RUNTIME_TRACING_ETH_CALL_ENABLED` says: the trace checks every contract the creation code reaches through `CALL`, `STATICCALL` or `DELEGATECALL` (contracts it deploys itself may be called), with the same per-call timeout. A `from`, if given, must be one of the caller's linked addresses. The creation trace retains the supplied gas, fee, nonce and access-list settings. If tracing is missing, disabled or unavailable, the call is refused.
 
 <EnvTable vars={[
-  { name: "RUNTIME_TRACING_ETH_CALL_ENABLED", default: "true", description: "Rollback knob for the eth_call cross-org tracing path. Default ON. Set to false ONLY as a documented change-management exception (ISO 27001 A.8.32) -- disabling allows same-org wrapper contracts to bubble up foreign-org state via internal calls. See the runtime toggle endpoint below for the emergency rollback path." },
+  { name: "RUNTIME_TRACING_ETH_CALL_ENABLED", default: "true", description: "Rollback knob for the eth_call cross-org tracing path. Default ON. Set to false ONLY as a documented change-management exception (ISO 27001 A.8.32) -- disabling allows same-org wrapper contracts to bubble up foreign-org state via internal calls. It applies to calls with a `to`; calls without `to` (contract-creation code) are always traced. See the runtime toggle endpoint below for the emergency rollback path." },
   { name: "ETH_CALL_TRACE_TIMEOUT", default: "5s", description: "Per-call timeout for the eth_call trace. Distinct from (and shorter than) the 30s send-side trace timeout — a slow upstream times out faster on the read path. Aggregate trace work per JWT is capped by MAX_CONCURRENT_REQUESTS, which is acquired before the trace runs." },
 ]} />
 
@@ -222,11 +223,11 @@ The proxy uses `debug_traceCall` to validate all addresses touched by transactio
 
 <Callout title="Important: eth_call tracing scope">
 
-The eth_call trace validation runs **only** when the method resolves to `eth_call` or `eth_estimateGas`. Chain-specific methods declared in `EXTRA_RPC_NAMESPACES_FILE` with `"alias": "eth_call"` (e.g. an explicit `linea_call` entry) are traced. **Passthrough methods are NOT traced** — and they are also not subject to contract access checks or response filtering (see Extra RPC Namespaces below).
+Read trace validation runs when the method resolves to `eth_call` or `eth_estimateGas`, and for creation-shaped `eth_createAccessList` requests. Chain-specific methods declared in `EXTRA_RPC_NAMESPACES_FILE` with `"alias": "eth_call"` (e.g. an explicit `linea_call` entry) are traced. **Passthrough methods are NOT traced** — and they are also not subject to contract access checks or response filtering (see Extra RPC Namespaces below).
 
 A passthrough method has no defined `to`/`from`/`data` shape, so the proxy has nothing to extract for the trace and no way to know whether the method even runs the EVM. To apply organization scope checks to a chain-specific method, declare it with an `alias` instead.
 
-The [simulation-option policy](/docs/security/response-filtering#state-and-block-overrides) follows standard methods and explicit method mappings. Map a chain-specific method only when its parameters match the standard method's layout. Client-supplied state and block overrides are unsupported for every caller, including admins. Details: RD-1305.
+Client-supplied state and block overrides are refused for every caller, including admins, on built-in and aliased methods (see the [simulation-option policy](/docs/security/response-filtering#state-and-block-overrides)). Passthrough methods get no such check. Declare a chain-specific call or gas-estimation method such as `linea_estimateGas` with an `alias` (here `eth_estimateGas`), not as passthrough: an aliased method's override argument is refused, while a passthrough method's arguments, overrides included, are forwarded as sent.
 
 </Callout>
 
@@ -238,7 +239,7 @@ Set `RUNTIME_TRACING_INTRA_ORG_GRANTS_ENABLED=true` to tighten this: when on, an
 
 - **Default OFF.** Org ownership remains the boundary unless you opt in.
 - **Cross-org isolation is unaffected** by this flag — calls into another org's contracts (and into unregistered addresses) are always denied regardless.
-- Governs both reads (`eth_call`) and writes (`eth_sendTransaction`, `eth_sendRawTransaction`, and contract-deploy constructor calls). Client `debug_traceCall` and standard-profile `debug_traceTransaction` always apply this check, whatever this flag says. Strict-profile mined traces return only the participant's top frame and retain organization ownership validation.
+- Governs both reads (`eth_call`) and writes (`eth_sendTransaction`, `eth_sendRawTransaction`, and contract-deploy constructor calls). Client `debug_traceCall` and standard-profile `debug_traceTransaction` always apply this check, whatever this flag says, because a trace names every contract its internal calls reach. Strict-profile mined traces return only the participant's top frame and retain organization ownership validation.
 - **In-flight deploys are not blocked.** Multi-contract or factory deploys (CREATE2/CREATE3) that reference a precomputed sibling address before it is mined still work — pre-registered deployment addresses are allowed for deploy-claim callers, the same as the direct-call access check.
 - Has no effect when runtime tracing is globally unavailable.
 
@@ -314,7 +315,10 @@ A passthrough method is forwarded to the node **as-is**:
 
 - no contract access check (the proxy does not know whether the method takes an address);
 - no response filtering (the proxy does not know the response shape);
-- no eth_call tracing.
+- no eth_call tracing;
+- no simulation-option check: state and block override arguments are forwarded as sent.
+
+Do not declare a method that executes caller-supplied calls as passthrough. Methods such as `trace_call` and `trace_callMany` would run those calls against any contract, with whatever override arguments the node accepts, and return traces the proxy cannot filter. Declare a chain's own call or gas-estimation method, such as `linea_estimateGas`, with an `alias` instead (see [Aliased methods](#aliased-methods)).
 
 **You are responsible for what a passthrough method returns.** Declare one only if you run a node that serves it and its responses cannot expose data your tenants must not see. The proxy lists the passthrough methods in a startup warning. Each call is tagged `matched_via: "passthrough"` in the SIEM audit stream.
 
@@ -350,7 +354,7 @@ JOIN groups g ON g.id = ga.group_id
 WHERE EXISTS (SELECT 1 FROM unnest(ga.allowed_methods) AS e WHERE strpos(e, '*') > 0);
 ```
 
-Client `debug_traceTransaction` requires the method in the group's stored `allowed_methods`. Under the standard read profile, admitted senders, recipients, called-contract admins and shared recipients receive a validated call tree with access required for each contract. Under strict, linked senders/recipients receive only the top frame, without internal calls or logs, subject to organization ownership checks. Other tracers are rejected.
+Client `debug_traceTransaction` requires the method in the group's stored `allowed_methods`. Under the standard read profile, admitted senders, recipients, called-contract admins and shared recipients receive a validated call tree with access required for each contract, and an internal call's values only when they may read the storage of the contract that produced them. Under strict, linked senders/recipients receive only the top frame, without internal calls or logs, subject to organization ownership checks. Other tracers are rejected.
 
 A ready-to-use example is provided in `rpc-namespaces.example.json` — copy and customize it:
 
@@ -381,6 +385,8 @@ Each RBAC group can have an API key for the upstream RPC node. This enables per-
   { name: "RPC_API_KEY_ENCRYPTION_KEY", default: "(none)", description: "Hex-encoded 32-byte key for encrypting API keys at rest. Required in production. Generate with: openssl rand -hex 32. The proxy refuses to start if this is set to an invalid value (bad hex or wrong length) rather than silently storing keys in plaintext — fix or unset it to boot." },
   { name: "MAX_CONCURRENT_REQUESTS", default: "50", description: "Maximum concurrent in-flight requests per authenticated user." },
   { name: "MAX_CONCURRENT_ANONYMOUS_REQUESTS", default: "= MAX_CONCURRENT_REQUESTS", description: "Shared concurrency cap for anonymous /rpc traffic (requests with no JWT). The per-user cap is keyed by identity and cannot bound anonymous callers, so this bounds the total in-flight work an unauthenticated flood can create. Set 0 to disable." },
+  { name: "OPS_APPROVAL_PREFLIGHT_RATE", default: "20", description: "Applies only when signed transaction approvals are enabled (OPS_APPROVAL_TARGETS set). How many transactions per second each identity may have simulated on the node for approval, sustained; decimals allowed, 0.001 to 100000. The budget is shared by all proxy instances through Redis when REDIS_URL is set, and held per instance otherwise (and per instance while Redis is unreachable). A transaction over the budget is refused with 429 before anything is simulated. An invalid or out-of-range value stops start-up. Environment only: not read from CONFIG_FILE." },
+  { name: "OPS_APPROVAL_PREFLIGHT_BURST", default: "40", description: "How many simulations an identity may run back to back after being idle before OPS_APPROVAL_PREFLIGHT_RATE applies; a whole number, 1 to 100000. An invalid or out-of-range value stops start-up. Environment only: not read from CONFIG_FILE." },
 ]} />
 
 Per-group keys are configured in the admin dashboard under group access settings. Keys are encrypted at rest in production and masked in API responses (only last 4 characters visible). Each group can also override `rpc_api_key_header` to switch between `Authorization` and any single-header alternative such as `X-API-Key`.
@@ -470,7 +476,7 @@ The prod manifest (`docker-compose.privacy.yml`) pulls the proxy-backend image r
 
 | Env var | Default | Purpose |
 |---------|---------|---------|
-| `INDEXER_VERSION` | `0.3.0` (dev) / `latest` (prod) | Tag pulled from `gatewayfm/chain-indexer` (dev, dockerhub) or `ghcr.io/gateway-fm/chain-indexer` (prod). Verify any new pin with `docker manifest inspect` before changing — the dev default has no `v` prefix because the dockerhub tag doesn't carry one. |
+| `INDEXER_VERSION` | `0.4.0` (quickstart) / `latest` (prod) | Tag pulled from `gatewayfm/chain-indexer` (dev, dockerhub) or `ghcr.io/gateway-fm/chain-indexer` (prod). Verify any new pin with `docker manifest inspect` before changing — the dev default has no `v` prefix because the dockerhub tag doesn't carry one. |
 | `BLOCK_EXPLORER_PATH` | `../block-explorer` | Sibling-clone location for the block-explorer source (dev only — both api and frontend build from this path). |
 | `CHAIN_INDEXER_PATH` | `../chain-indexer` | Sibling-clone location for chain-indexer (only used when overriding the published image with a local build via `docker-compose.override.yml`). |
 
