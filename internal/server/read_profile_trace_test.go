@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
@@ -216,7 +217,11 @@ func TestReadProfile_Strict_DebugTraceTransactionParticipantOnly(t *testing.T) {
 				assert.NotContains(t, string(res.ResponseBody), "0xfeedface")
 				assert.NotContains(t, string(res.ResponseBody), `"calls"`)
 			} else {
-				assert.Contains(t, string(res.ResponseBody), "0xfeedface")
+				// Standard returns the call tree; the nested frame's values
+				// follow the storage-read rule (this sender may not read the
+				// contract's storage, so they are redacted).
+				assert.Contains(t, string(res.ResponseBody), `"calls"`)
+				assert.Contains(t, string(res.ResponseBody), `"redacted"`)
 			}
 		})
 		t.Run(profile.String()+"/trace unavailable", func(t *testing.T) {
@@ -287,7 +292,7 @@ func TestReadProfile_Strict_DebugTraceTransactionParticipantOnly(t *testing.T) {
 			if !profile.Strict() {
 				require.Len(t, fwd.Params, 2)
 				assert.Equal(t, map[string]any{"tracer": "callTracer", "tracerConfig": map[string]any{"onlyTopCall": false}}, fwd.Params[1])
-				assert.Contains(t, string(res.ResponseBody), "0xfeedface")
+				assert.Contains(t, string(res.ResponseBody), `"calls"`, "standard returns the call tree")
 				return
 			}
 			assert.Equal(t, "1", string(fwd.ID), "the node request uses the proxy id")
@@ -363,4 +368,84 @@ func rpResultID(t *testing.T, body []byte) json.RawMessage {
 	}
 	require.NoError(t, json.Unmarshal(body, &env))
 	return env.ID
+}
+
+// Strict mined traces compose with the client trace value redaction (RD-1304):
+// strict asks the node for the top frame only and drops any nested frame the
+// node still returns, before the trace is validated; the value redaction then
+// runs on that single frame, whose values are always shown. Standard keeps the
+// call tree, and the redaction hides each internal-call value the viewer may
+// not read. The same viewer, transaction and node answer (a node that ignores
+// onlyTopCall) go through both profiles.
+func TestReadProfile_StrictTraceComposesWithValueRedaction(t *testing.T) {
+	cases := []struct {
+		name     string
+		adminOf  map[string]bool
+		redacted []any // standard: the nested frame's redaction marker
+	}{
+		{"grant only", nil, []any{"input", "value", "output", "revertReason"}},
+		{"admin of both", map[string]bool{"payroll": true, "token": true}, nil},
+	}
+	for _, tc := range cases {
+		for _, profile := range []rbac.ReadProfile{rbac.ReadProfileStandard, rbac.ReadProfileStrict} {
+			t.Run(tc.name+"/"+profile.String(), func(t *testing.T) {
+				f := newPayrollFixture(t, tc.adminOf, valueTraceMethods)
+				proc := newTraceProcessorWithProfile(t, f.ts, f.c, profile)
+				res := proc.Process(context.Background(), traceReq(f.u.did, f.u.orgID, "debug_traceTransaction", traceHash))
+				require.Nil(t, res.Error, "the sender's own mined tx is traced: %+v", res.Error)
+				body := string(res.ResponseBody)
+				var env struct {
+					Result map[string]any `json:"result"`
+				}
+				require.NoError(t, json.Unmarshal(res.ResponseBody, &env))
+				root := env.Result
+
+				// The top frame is shown in full under both profiles.
+				assert.Equal(t, payInput(f.token, f.emp), root["input"])
+				assert.Equal(t, topOutputValue, root["output"])
+				assert.NotContains(t, root, "redacted")
+
+				if profile.Strict() {
+					// No internal call reaches the redaction step, so no
+					// nested value, marker or frame is returned to any viewer.
+					assert.NotContains(t, root, "calls")
+					assert.NotContains(t, body, `"redacted"`)
+					assert.NotContains(t, body, salaryMarker)
+					assert.NotContains(t, body, tokenOutMarker)
+					assert.NotContains(t, body, traceRevertMsg)
+					return
+				}
+				child := firstCall(t, root)
+				shown := tc.redacted == nil
+				assert.Equal(t, shown, strings.Contains(body, salaryMarker), "nested input: %s", body)
+				assert.Equal(t, shown, strings.Contains(body, tokenOutMarker), "nested output: %s", body)
+				if shown {
+					assert.NotContains(t, child, "redacted")
+				} else {
+					assert.Equal(t, tc.redacted, child["redacted"])
+				}
+			})
+		}
+	}
+}
+
+// newTraceProcessorWithProfile is newTraceProcessor under the given read
+// profile.
+func newTraceProcessorWithProfile(t *testing.T, ts *testServerRBAC, c *traceCanary, profile rbac.ReadProfile) *JSONRPCProcessor {
+	t.Helper()
+	rt := tracer.NewRuntimeTracer(tracer.RuntimeTracerConfig{NodeURL: c.srv.URL, Enabled: true, Timeout: 5 * time.Second})
+	t.Cleanup(rt.Stop)
+	return NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		ReadProfile:        profile,
+		RBACAccessCtrl:     ts.rbacAccessCtrl,
+		RateLimiter:        &noopRateLimiter{},
+		Proxy:              proxy.New(c.srv.URL),
+		AccessLogger:       ts.db,
+		RuntimeTracer:      rt,
+		TraceValidator:     rbac.NewTraceValidator(ts.db),
+		TxVisibilityStore:  ts.db,
+		CircuitBreaker:     middleware.NewCircuitBreaker(),
+		ConcurrencyLimiter: middleware.NewConcurrencyLimiter(50, 0),
+		EthCallTracing:     &EthCallTracingConfig{Enabled: true, Timeout: 5 * time.Second},
+	})
 }
