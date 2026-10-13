@@ -370,8 +370,21 @@ func sendTraceDenyMessage(reason string) string {
 //     upstream error and never echo the denied contract address.
 //
 // Returns nil to allow the eth_call to be forwarded; non-nil to deny.
+//
+// Under an impersonation scope (RD-1308, the View-as RPC mirror) the trace is
+// validated in the scope org only, exactly as the admin dry-run does; an empty
+// scope denies rather than widening to every org of the viewer.
 func (p *JSONRPCProcessor) validateEthCallWithTracing(ctx context.Context, req *ProcessRequest, targetAddr string) *ProcessError {
-	return p.validateEthCallWithTracingInOrg(ctx, req, targetAddr, "")
+	orgID := ""
+	if scope, scoped := viewerOrgScope(ctx); scoped {
+		// An empty scope cannot occur (both writers pass a validated org);
+		// should it, refuse every method rather than trace in all orgs.
+		if scope == "" {
+			return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyTracerError, Reason: ReasonTracingUnavailable}
+		}
+		orgID = scope
+	}
+	return p.validateEthCallWithTracingInOrg(ctx, req, targetAddr, orgID)
 }
 
 // validateEthCallWithTracingInOrg is the dry-run-safe variant of
@@ -940,7 +953,8 @@ func (p *JSONRPCProcessor) gateDebugTraceCall(ctx context.Context, req *ProcessR
 //   - CheckAccess (Method=debug_traceTransaction, AccessMethod=
 //     eth_getTransactionByHash) gives the ban/KYC gates, the path-org (or
 //     single-org) resolution and the allowlist in that org — so the replay is
-//     scoped to the org the request (or the view-as gate) names;
+//     scoped to the org the request names (the View-as RPC mirror refuses
+//     trace methods before processing, RD-1308);
 //   - the viewer must be a participant (linked address == from|to), an admin
 //     of the tx's `to` contract in that org, or a visibleTo recipient;
 //   - a `to` contract registered to another org is refused before the trace.

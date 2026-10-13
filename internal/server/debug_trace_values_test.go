@@ -255,43 +255,10 @@ func TestTraceValues_DelegatecallParentUsesStorageContext(t *testing.T) {
 	}
 }
 
-// View-as judges values as the impersonated user, not the admin viewing.
-func TestTraceValues_ViewAsJudgedAsImpersonatedUser(t *testing.T) {
-	srv := setupImpersonationTestServer(t)
-	c := newTraceCanary(t)
-	srv.jsonrpcProcessor = newTraceProcessor(t, srv.testServerRBAC, c)
-	ctx := context.Background()
-	me, payroll, token, emp := fixedAddr(0x71), fixedAddr(0x72), fixedAddr(0x73), fixedAddr(0x74)
-	u := newTraceUser(t, ctx, srv.testServerRBAC, "", nil, valueTraceMethods, me) // grants, no admin claim
-	addContract(t, ctx, srv.testServerRBAC, u.orgID, payroll, u.groupID)
-	addContract(t, ctx, srv.testServerRBAC, u.orgID, token, u.groupID)
-	c.mu.Lock()
-	c.txFrom, c.txTo, c.txIn = me, payroll, payInput(token, emp)
-	c.callTracerBody = map[string]any{
-		"type": "CALL", "from": me, "to": payroll, "input": payInput(token, emp),
-		"calls": []any{map[string]any{"type": "CALL", "from": payroll, "to": token, "input": transferInput(emp), "output": "0x" + tokenOutMarker}},
-	}
-	c.mu.Unlock()
-
-	body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 9, "method": "debug_traceTransaction", "params": []any{traceHash}})
-	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodGet, impersonatePath(u.did, u.orgID, "/rpc"), strings.NewReader(string(body)))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Test-Auth-Method", "jwt_admin")
-	req.Header.Set("X-Test-Admin-Subject", "did:privado:tv-viewas-admin")
-	req.Header.Set("X-Test-Admin-Org-IDs", u.orgID)
-	w := httptest.NewRecorder()
-	srv.router.ServeHTTP(w, req)
-
-	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
-	assert.Contains(t, w.Body.String(), token, "the call tree is shown")
-	assert.NotContains(t, w.Body.String(), salaryMarker, "values are judged as the impersonated user")
-	assert.NotContains(t, w.Body.String(), tokenOutMarker)
-}
-
-// The positive twin: when the impersonated user is admin of both contracts,
-// View-as shows the values, although the admin viewing is not a member at all.
-func TestTraceValues_ViewAsShowsValuesTheUserMaySee(t *testing.T) {
+// View-as serves only its read-method set (RD-1308): client traces are refused
+// before processing, even when the impersonated user administers both
+// contracts and would see every value on /rpc. Nothing reaches the tracer.
+func TestTraceValues_ViewAsRefusesClientTraces(t *testing.T) {
 	srv := setupImpersonationTestServer(t)
 	c := newTraceCanary(t)
 	srv.jsonrpcProcessor = newTraceProcessor(t, srv.testServerRBAC, c)
@@ -308,18 +275,29 @@ func TestTraceValues_ViewAsShowsValuesTheUserMaySee(t *testing.T) {
 	}
 	c.mu.Unlock()
 
-	body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 9, "method": "debug_traceTransaction", "params": []any{traceHash}})
-	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodGet, impersonatePath(u.did, u.orgID, "/rpc"), strings.NewReader(string(body)))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Test-Auth-Method", "jwt_admin")
-	req.Header.Set("X-Test-Admin-Subject", "did:privado:tv-viewas-admin")
-	req.Header.Set("X-Test-Admin-Org-IDs", u.orgID)
-	w := httptest.NewRecorder()
-	srv.router.ServeHTTP(w, req)
+	for _, tc := range []struct {
+		method string
+		params []any
+	}{
+		{"debug_traceTransaction", []any{traceHash}},
+		{"debug_traceCall", []any{map[string]any{"from": me, "to": payroll, "data": payInput(token, emp)}, "latest"}},
+	} {
+		t.Run(tc.method, func(t *testing.T) {
+			body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 9, "method": tc.method, "params": tc.params})
+			require.NoError(t, err)
+			req := httptest.NewRequest(http.MethodGet, impersonatePath(u.did, u.orgID, "/rpc"), strings.NewReader(string(body)))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Test-Auth-Method", "jwt_admin")
+			req.Header.Set("X-Test-Admin-Subject", "did:privado:tv-viewas-admin")
+			req.Header.Set("X-Test-Admin-Org-IDs", u.orgID)
+			w := httptest.NewRecorder()
+			srv.router.ServeHTTP(w, req)
 
-	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
-	assert.Contains(t, w.Body.String(), salaryMarker, "judged as the impersonated user, who administers Payroll")
-	assert.Contains(t, w.Body.String(), tokenOutMarker, "and Token")
-	assert.NotContains(t, w.Body.String(), "redacted")
+			assert.Equal(t, http.StatusBadRequest, w.Code, "body=%s", w.Body.String())
+			assert.Contains(t, w.Body.String(), "method not supported under impersonation")
+			assert.NotContains(t, w.Body.String(), salaryMarker)
+			assert.NotContains(t, w.Body.String(), tokenOutMarker)
+		})
+	}
+	assert.Equal(t, 0, c.traceRequests(), "a View-as trace must not reach the node's tracer")
 }

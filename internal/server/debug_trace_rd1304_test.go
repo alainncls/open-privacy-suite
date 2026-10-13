@@ -913,11 +913,11 @@ func TestRD1304_TraceTransaction_PathOrgPinned(t *testing.T) {
 	require.Nil(t, resB.Error, "the sender may replay it in the tx's own org: %+v", resB.Error)
 }
 
-// The same pinning through the View-as RPC surface over HTTP: the org named
-// in the View-as URL scopes the replay. A user in orgs A and B sent a tx into
-// an org-B contract; viewed as that user in org A it is not replayed, viewed
-// in org B it is.
-func TestRD1304_ViewAsTraceTransactionPinnedToNamedOrg(t *testing.T) {
+// The View-as RPC surface serves only its read-method set (RD-1308), so a
+// replay is refused there before processing, whichever org the View-as URL
+// names, including the transaction's own org, where the sender may replay it
+// on /rpc. A user in orgs A and B sent a tx into an org-B contract.
+func TestRD1304_ViewAsTraceTransactionRefused(t *testing.T) {
 	srv := setupImpersonationTestServer(t)
 	c := newTraceCanary(t)
 	srv.jsonrpcProcessor = newTraceProcessor(t, srv.testServerRBAC, c)
@@ -942,15 +942,13 @@ func TestRD1304_ViewAsTraceTransactionPinnedToNamedOrg(t *testing.T) {
 		return w
 	}
 
-	inA := viewAs(u.orgID)
-	assert.Equal(t, http.StatusForbidden, inA.Code, "viewed in org A, the org-B tx must not be replayed; body=%s", inA.Body.String())
-	assert.Contains(t, inA.Body.String(), traceDenyAccess, "refused by the replay rule, not by the View-as gate")
-	assert.Equal(t, 0, c.traceRequests(), "the org-A view must not reach the node's tracer")
-
-	inB := viewAs(orgB)
-	require.Equal(t, http.StatusOK, inB.Code, "viewed in org B, the sender's own tx is replayed; body=%s", inB.Body.String())
-	assert.Contains(t, inB.Body.String(), bAddr)
-	assert.Equal(t, 1, c.traceRequests())
+	for _, orgID := range []string{u.orgID, orgB} {
+		w := viewAs(orgID)
+		assert.Equal(t, http.StatusBadRequest, w.Code, "View-as must refuse a replay; body=%s", w.Body.String())
+		assert.Contains(t, w.Body.String(), "method not supported under impersonation")
+		assert.NotContains(t, strings.ToLower(w.Body.String()), strings.ToLower(bAddr))
+	}
+	assert.Equal(t, 0, c.traceRequests(), "a View-as replay must not reach the node's tracer")
 }
 
 // Ban and KYC apply to the replay path too: a ban revokes refresh tokens
