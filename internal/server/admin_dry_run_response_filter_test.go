@@ -1137,7 +1137,10 @@ func TestDryRun_OwnDeploymentOfOtherOrgContract_IsNull_RD1308(t *testing.T) {
 
 // Embedded-address redaction counts only disclosure grants requested in the
 // path org: a Full grant the member holds through org P does not unzero the
-// disclosed subject in an org-O dry-run.
+// disclosed subject in an org-O dry-run. Since RD-1318 both surfaces also
+// carry the mark that suppresses every disclosure grant, so this end-to-end
+// check holds under either rule; the org clause on its own is pinned at the
+// resolver in TestDisclosureGrants_SuppressedUnderImpersonationMark_RD1318.
 func TestDryRun_DisclosureGrantFromOtherOrg_NotApplied_RD1308(t *testing.T) {
 	f := setupDRFFixture(t)
 	ctx := context.Background()

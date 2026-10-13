@@ -55,18 +55,21 @@ While the banner is up:
 - Read-only RPC calls (`eth_call`, `eth_getBalance`, `eth_getCode`, `eth_getLogs`, `eth_getStorageAt`, `eth_getTransactionByHash`, `eth_getTransactionReceipt`, `eth_blockNumber`, `eth_chainId`, and the org-free metadata set `eth_gasPrice`, `net_version`, `net_listening`, `web3_clientVersion`) are routed through the user's permission view. These are the only methods the RPC surface serves: any other JSON-RPC method in the request body (writes, traces, block and block-receipt reads) is rejected with **400** before it reaches the node.
 - Write-method UI (deploy, send-tx, grant-mutation, RBAC-edit) is **disabled with a tooltip**, not hidden — admins know the feature exists and is intentionally unavailable.
 
-What the admin sees vs what the user sees: **the redaction layer and visible dataset are the target user's own.** Logs the target cannot read are removed; addresses they cannot resolve are returned redacted; contracts they cannot access are denied. The admin's own broader visibility is not merged into the session. Clicking **Stop viewing as** restores the normal admin view.
+What the admin sees vs what the user sees: **View-as uses the target user's applicable permissions and redaction rules, within the limits of this surface.** Logs the target cannot read are removed; addresses they cannot resolve are returned redacted; contracts they cannot access are denied. The admin's own broader visibility is not merged into the session. Clicking **Stop viewing as** restores the normal admin view.
 
 RPC calls under View-as to a [dry-run](/docs/rbac#admin-dry-run--impersonation) read method give the same answer the dry-run gives for the same call:
 
 | What decides visibility | Applies (View-as RPC and dry-run) |
 |---|---|
-| The target's grants, admin role and `visibleTo` unlock eligibility in the named org | Yes |
-| The target's grants or admin role in any other org | No |
+| The target's contract grants, admin role and `visibleTo` unlock eligibility in the named org | Yes |
+| The target's contract grants or admin role in any other org | No |
+| The target's [disclosure grants](/docs/disclosure), in any org | No (see below) |
 | Transactions shared with the target via `visibleTo` by a sender acting in the named org | Yes |
 | Shares made under another org | No |
 | The target's own transactions with addresses no organization owns | Yes (their own activity) |
 | The target's own transactions or receipts with another organization's contract (including deploying one) | No — returned as `null` |
+
+One limit is **disclosure grants**. A grant is approved by its data owner for the grantee only, so while an admin views as the grantee none of the grantee's grants apply: grant pages return 404, no disclosed addresses are listed, and disclosed parties render as the target would see them without the grant. The same holds for [dry-run](/docs/rbac#admin-dry-run--impersonation). See [Selective Disclosure](/docs/disclosure). Transactions shared with the target through `visibleTo` are not disclosure grants and continue to follow the surface's method and organization rules.
 
 ---
 
