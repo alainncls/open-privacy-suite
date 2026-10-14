@@ -66,13 +66,24 @@ func (op policyCheckRPCBlock) rpcBlock() apimodels.DryRunRPCBlock {
 	return apimodels.DryRunRPCBlock{Method: op.Method, Params: op.Params}
 }
 
-// policyCheckResponse is projected according to the configured server mode.
-// verdict_only omits Artifacts; full_simulation includes the authorized trace.
+// Oracle answers. deny only when policy was evaluated inside the oracle scope;
+// indeterminate when part of the evaluation is outside it.
+const (
+	oracleDecisionAllow         = "allow"
+	oracleDecisionDeny          = "deny"
+	oracleDecisionIndeterminate = "indeterminate"
+
+	oracleReasonDenied       = "denied"
+	oracleReasonOutsideScope = "outside_oracle_scope"
+	oracleReasonNotSimulated = "not_simulated"
+)
+
+// policyCheckWireResponse is projected according to the configured server
+// mode. verdict_only omits Artifacts; full_simulation includes the trace.
 type policyCheckWireResponse struct {
-	Allowed   bool                      `json:"allowed"`
+	Decision  string                    `json:"decision"`
+	Reason    string                    `json:"reason,omitempty"`
 	Artifacts *policyCheckWireArtifacts `json:"artifacts,omitempty"`
-	// Reason is set only on deny, sanitized to a coarse category (RD-934).
-	Reason string `json:"reason,omitempty"`
 }
 
 type policyCheckWireArtifacts struct {
@@ -83,14 +94,38 @@ type policyCheckWireArtifacts struct {
 // Spec-only mirrors keep RawMessage fields documented as JSON values rather
 // than byte arrays while retaining the published component schema names.
 type policyCheckResponse struct {
-	Allowed   bool                  `json:"allowed"`
+	Decision  string                `json:"decision" enums:"allow,deny,indeterminate"`
+	Reason    string                `json:"reason,omitempty" enums:"denied,outside_oracle_scope,not_simulated"`
 	Artifacts *policyCheckArtifacts `json:"artifacts,omitempty"`
-	Reason    string                `json:"reason,omitempty"`
 }
 
 type policyCheckArtifacts struct {
 	Trace any   `json:"trace"`
 	Logs  []any `json:"logs,omitempty"`
+}
+
+// oracleOutcome is one evaluated answer. The internal reason and scope detail
+// go to the audit record only; the wire carries the coarse reason.
+type oracleOutcome struct {
+	decision       string
+	wireReason     string
+	internalReason string
+	scopeDetail    map[string]string
+	artifacts      *policyCheckWireArtifacts
+}
+
+func oracleAllow() oracleOutcome { return oracleOutcome{decision: oracleDecisionAllow} }
+
+func oracleDeny(internalReason string) oracleOutcome {
+	return oracleOutcome{decision: oracleDecisionDeny, wireReason: oracleReasonDenied, internalReason: internalReason}
+}
+
+func oracleOutsideScope(internalReason string, detail map[string]string) oracleOutcome {
+	return oracleOutcome{decision: oracleDecisionIndeterminate, wireReason: oracleReasonOutsideScope, internalReason: internalReason, scopeDetail: detail}
+}
+
+func oracleNotSimulated() oracleOutcome {
+	return oracleOutcome{decision: oracleDecisionIndeterminate, wireReason: oracleReasonNotSimulated, internalReason: oracleReasonNotSimulated}
 }
 
 // crossOrgOracleLimitKey is the one concurrency key for every oracle request,
@@ -112,16 +147,6 @@ type upstreamRateLimitedError struct{ retryAfter string }
 
 func (e *upstreamRateLimitedError) Error() string { return "upstream rate limit reached" }
 
-// sanitizePolicyCheckReason is the client-facing sanitizer: one of
-// policyCheckKnownReasonCategories, else "denied".
-func sanitizePolicyCheckReason(reason any) string {
-	// The dedicated credential is still an oracle. Do not let callers
-	// distinguish subject state (ban, sender linkage, compliance, grant
-	// shape) from the response; precise categories remain in chained audit.
-	_ = reason
-	return "denied"
-}
-
 // errPolicyCheckSubjectMalformed marks an invalid subject (neither or both of
 // did/address); the handler answers 400.
 var errPolicyCheckSubjectMalformed = errors.New("subject must have exactly one of did or address")
@@ -131,9 +156,9 @@ var errPolicyCheckSubjectAddressMalformed = errors.New("subject address must be 
 // resolvePolicyCheckSubject resolves the subject to the DID CheckAccess
 // evaluates against, using eth_address_links so the caller cannot assert an
 // identity. A multi-DID address refuses rather than picking a winner.
-// Returns (did, "", nil) on success, ("", reason, nil) for a clean deny, or an
-// error (400 for the sentinel, else 500).
-func (s *Server) resolvePolicyCheckSubject(ctx context.Context, subj policyCheckSubject) (did string, denyReason string, err error) {
+// Returns (did, "", nil) on success, ("", reason, nil) when no single identity
+// is linked, or an error (400 for the sentinel, else 500).
+func (s *Server) resolvePolicyCheckSubject(ctx context.Context, subj policyCheckSubject) (did string, unresolvedReason string, err error) {
 	hasDID := strings.TrimSpace(subj.DID) != ""
 	hasAddr := strings.TrimSpace(subj.Address) != ""
 
@@ -157,29 +182,29 @@ func (s *Server) resolvePolicyCheckSubject(ctx context.Context, subj policyCheck
 	}
 	switch len(dids) {
 	case 0:
-		return "", "no identity is linked to this address", nil
+		return "", "address_not_linked", nil
 	case 1:
 		return dids[0], "", nil
 	default:
 		// Never echo which DIDs collided (RD-934). The audit row records
 		// subject_address, which is enough to investigate via
 		// GetAddressLinkCollisions.
-		return "", "address is linked to multiple identities; refusing rather than choosing one", nil
+		return "", "address_multiple_identities", nil
 	}
 }
 
 // handlePolicyCheck handles POST /api/v1/admin/cross-org-authorization-oracle.
 //
 // @Summary      Check whether a subject would be allowed to make an RPC call
-// @Description  Cross-organization privacy-policy oracle for an explicitly trusted infrastructure caller. Subject is a DID or Ethereum address. Operation is a JSON-RPC method and params. EVM execution methods use debug_traceCall with the same upstream credential as live calls. Write methods also run a side-effect-free compliance preview. The endpoint does not submit the call or consume a travel-rule record. A supplied sender must link to the subject. Requests share one global concurrency cap (MAX_CONCURRENT_REQUESTS in flight); request-rate limits belong to the upstream RPC proxy. Traces use the subject organization's upstream API key, or the default key, so they count against that key's upstream quota; an upstream 429 is returned as 429 with its Retry-After. debug_traceCall and debug_traceTransaction are not supported. Requires the dedicated X-Cross-Org-Authorization-Oracle-Token credential and an allowlisted organization. Admin, operator, and JWT credentials are not accepted. Every evaluation is audited and fails closed. Operational failures (concurrency cap, upstream 429, trace errors or timeouts) return 429 or 503, never a policy verdict.
+// @Description  Cross-organization privacy-policy oracle for an explicitly trusted infrastructure caller. Subject is a DID or Ethereum address. Operation is a JSON-RPC method and params. The answer is decision=allow, deny or indeterminate. deny means policy was evaluated inside the oracle scope (the organizations in CROSS_ORG_AUTHORIZATION_ORACLE_ORG_IDS) and refuses the call. indeterminate means the oracle cannot judge: reason=outside_oracle_scope when the subject, the requested or resolved organization, the target or a nested call is outside that scope; reason=not_simulated when the method executes EVM code the oracle does not trace. The oracle never consults an organization outside the scope. Callers should proceed on allow, block on deny, and on indeterminate not block on the oracle but let the live call decide. EVM execution methods use debug_traceCall with the same upstream credential as live calls. Write methods also run a side-effect-free compliance preview. The endpoint does not submit the call or consume a travel-rule record. A supplied sender must link to the subject. Requests share one global concurrency cap (MAX_CONCURRENT_REQUESTS in flight); request-rate limits belong to the upstream RPC proxy. Traces use the subject organization's upstream API key, or the default key, so they count against that key's upstream quota; an upstream 429 is returned as 429 with its Retry-After. debug_traceCall and debug_traceTransaction are not supported (400). Requires the dedicated X-Cross-Org-Authorization-Oracle-Token credential. Admin, operator, and JWT credentials are not accepted. Every evaluation is audited and fails closed. Operational failures (concurrency cap, upstream 429, trace errors or timeouts) return 429 or 503, never a policy verdict.
 // @Tags         Admin: RBAC
 // @Accept       json
 // @Produce      json
 // @Param        request body policyCheckRequest true "subject, operation, and optional org_id"
 // @Success      200 {object} policyCheckResponse
-// @Failure      400 {object} apimodels.APIError "invalid body, missing operation.method, an invalid subject address, or subject has neither/both of did and address"
+// @Failure      400 {object} apimodels.APIError "invalid body, missing or unsupported operation.method, an invalid subject address, or subject has neither/both of did and address"
 // @Failure      401 {object} apimodels.APIError "missing or invalid X-Cross-Org-Authorization-Oracle-Token"
-// @Failure      403 {object} apimodels.APIError "source address not on the private network, or the credential cannot read tenant policy"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network"
 // @Failure      429 {object} apimodels.APIError "global concurrency cap reached, or upstream 429 (Retry-After passed through); operational, not a policy verdict"
 // @Failure      500 {object} apimodels.APIError "internal error (includes audit-log write failure, response withheld)"
 // @Failure      503 {object} apimodels.APIError "policy simulation unavailable (upstream trace failure); operational, not a policy verdict"
@@ -223,29 +248,53 @@ func (s *Server) handlePolicyCheck(c *gin.Context) {
 		respondBadRequest(c, "operation.method is required")
 		return
 	}
+	if policyCheckUnsupportedTraceMethod(req.Operation.Method) {
+		respondBadRequest(c, "operation not supported")
+		return
+	}
 	req.OrgID = strings.TrimSpace(req.OrgID)
-	correlationID := middleware.GetCorrelationID(c)
 	operation := req.Operation.rpcBlock()
-	if req.OrgID != "" && !s.crossOrgAuthorizationOracleOrgAllowed(req.OrgID) {
-		if logErr := s.recordPolicyCheck(ctx, authMethod, req.Subject.DID, req.Subject.Address, req.OrgID, operation, false, "organization_not_authorized", correlationID); logErr != nil {
+	rec := oracleAuditRecord{
+		subjectDID:     strings.TrimSpace(req.Subject.DID),
+		subjectAddress: req.Subject.Address,
+		requestedOrgID: req.OrgID,
+		operation:      operation,
+		correlationID:  middleware.GetCorrelationID(c),
+	}
+	respond := func(out oracleOutcome) {
+		rec.outcome = out
+		if logErr := s.recordPolicyCheck(ctx, rec); logErr != nil {
+			// No verdict without an audit trail.
 			slog.Error("policy-check: audit log write failed; refusing response", "err", logErr)
 			respondInternalError(c, "internal error")
 			return
 		}
-		respondForbidden(c, "organization is outside the oracle allowlist")
-		return
+		response := policyCheckWireResponse{Decision: out.decision, Reason: out.wireReason}
+		if out.decision == oracleDecisionAllow && s.config != nil && strings.EqualFold(strings.TrimSpace(s.config.CrossOrgAuthorizationOracleMode), "full_simulation") {
+			response.Artifacts = out.artifacts
+		}
+		c.JSON(http.StatusOK, response)
 	}
-	if _, err := dryRunAccessRequest("", "", operation); err != nil {
-		if logErr := s.recordPolicyCheck(ctx, authMethod, req.Subject.DID, req.Subject.Address, req.OrgID, operation, false, "decode_error", correlationID); logErr != nil {
+	respondClientError := func() {
+		rec.outcome = oracleOutcome{decision: "error", internalReason: "decode_error"}
+		if logErr := s.recordPolicyCheck(ctx, rec); logErr != nil {
 			slog.Error("policy-check: audit log write failed; refusing response", "err", logErr)
 			respondInternalError(c, "internal error")
 			return
 		}
 		respondBadRequest(c, "invalid operation")
+	}
+
+	if req.OrgID != "" && !s.crossOrgAuthorizationOracleOrgAllowed(req.OrgID) {
+		respond(oracleOutsideScope("requested_org_outside_allowlist", map[string]string{"org_id": req.OrgID}))
+		return
+	}
+	if _, err := dryRunAccessRequest("", "", operation); err != nil {
+		respondClientError()
 		return
 	}
 
-	did, denyReason, err := s.resolvePolicyCheckSubject(ctx, req.Subject)
+	did, unresolvedReason, err := s.resolvePolicyCheckSubject(ctx, req.Subject)
 	if err != nil {
 		if errors.Is(err, errPolicyCheckSubjectMalformed) {
 			respondBadRequest(c, "subject must have exactly one of did or address")
@@ -260,237 +309,213 @@ func (s *Server) handlePolicyCheck(c *gin.Context) {
 		respondInternalError(c, "internal error")
 		return
 	}
-	if denyReason != "" {
-		if logErr := s.recordPolicyCheck(ctx, authMethod, "", req.Subject.Address, req.OrgID, operation, false, denyReason, correlationID); logErr != nil {
-			slog.Error("policy-check: audit log write failed; refusing response", "err", logErr)
-			respondInternalError(c, "internal error")
-			return
-		}
-		c.JSON(http.StatusOK, policyCheckResponse{Allowed: false, Reason: sanitizePolicyCheckReason(denyReason)})
+	if unresolvedReason != "" {
+		// Never pick a winner among several identities, and never tell an
+		// unlinked address apart from an out-of-scope one.
+		respond(oracleOutsideScope(unresolvedReason, nil))
 		return
 	}
-	if policyCheckUnsupportedTraceMethod(operation.Method) {
-		if logErr := s.recordPolicyCheck(ctx, authMethod, did, req.Subject.Address, req.OrgID, operation, false, ReasonMethodNotAllowed, correlationID); logErr != nil {
-			slog.Error("policy-check: audit log write failed; refusing response", "err", logErr)
+	rec.subjectDID = did
+
+	out, evaluatedOrgID, err := s.evaluateOracle(ctx, did, req.OrgID, operation)
+	rec.evaluatedOrgID = evaluatedOrgID
+	if err != nil {
+		var clientErr *simulationClientError
+		var rateLimited *upstreamRateLimitedError
+		switch {
+		case errors.As(err, &clientErr):
+			respondClientError()
+		case errors.As(err, &rateLimited):
+			// Operational unavailability is not a policy verdict: a caller must
+			// not mistake a busy or degraded node for a deny.
+			if rateLimited.retryAfter != "" {
+				c.Header("Retry-After", rateLimited.retryAfter)
+			}
+			respondTooManyRequests(c, "upstream rate limit reached; retry later")
+		case errors.Is(err, errSimUpstreamUnavailable):
+			slog.Warn("policy-check: simulation upstream unavailable", "subject_did", did, "method", operation.Method, "err", err)
+			respondServiceUnavailable(c, "policy simulation unavailable; retry later")
+		default:
+			slog.Error("policy-check: evaluation failed", "subject_did", did, "method", operation.Method, "err", err)
+			rec.outcome = oracleOutcome{decision: "error", internalReason: "error"}
+			if logErr := s.recordPolicyCheck(ctx, rec); logErr != nil {
+				slog.Error("policy-check: audit log write also failed", "err", logErr)
+			}
 			respondInternalError(c, "internal error")
-			return
 		}
-		c.JSON(http.StatusOK, policyCheckResponse{Allowed: false, Reason: "denied"})
 		return
 	}
-	authorityAccessReq, authorityErr := dryRunAccessRequest(did, "", operation)
-	if authorityErr != nil {
-		if logErr := s.recordPolicyCheck(ctx, authMethod, did, req.Subject.Address, req.OrgID, operation, false, "decode_error", correlationID); logErr != nil {
-			slog.Error("policy-check: audit log write failed; refusing response", "err", logErr)
-			respondInternalError(c, "internal error")
-			return
-		}
-		respondBadRequest(c, "invalid operation")
-		return
+	if out.decision == oracleDecisionIndeterminate {
+		s.recordOracleIndeterminate(out.wireReason)
 	}
-	authorizedOrgID, authorized, authorityErr := s.policyCheckAuthorizedOrg(ctx, did, req.OrgID, authorityAccessReq.TargetAddress)
-	if authorityErr != nil {
-		slog.Error("policy-check: subject authority resolution failed", "err", authorityErr)
-		respondInternalError(c, "internal error")
-		return
-	} else if !authorized {
-		if logErr := s.recordPolicyCheck(ctx, authMethod, did, req.Subject.Address, req.OrgID, operation, false, "organization_not_authorized", correlationID); logErr != nil {
-			slog.Error("policy-check: audit log write failed; refusing response", "err", logErr)
-			respondInternalError(c, "internal error")
-			return
+	respond(out)
+}
+
+// evaluateOracle answers for a resolved subject. It returns the organization
+// it evaluated, for the audit record.
+func (s *Server) evaluateOracle(ctx context.Context, did, requestedOrgID string, operation apimodels.DryRunRPCBlock) (oracleOutcome, string, error) {
+	authorityAccessReq, err := dryRunAccessRequest(did, "", operation)
+	if err != nil {
+		return oracleOutcome{}, "", &simulationClientError{msg: "invalid operation"}
+	}
+	orgID, early, err := s.resolveOracleOrg(ctx, did, requestedOrgID, authorityAccessReq.TargetAddress)
+	if err != nil || early != nil {
+		if early != nil {
+			return *early, orgID, nil
 		}
-		respondForbidden(c, "subject is outside the oracle allowlist")
-		return
+		return oracleOutcome{}, orgID, err
 	}
 
-	// Pin CheckAccess to the pre-authorized organization, through both OrgID
-	// and the view scope, so it never resolves memberships outside the
-	// deployment allowlist.
-	evaluation, err := s.evaluateOperation(withViewerOrgScope(ctx, authorizedOrgID), did, operation, authorizationScopeAllActiveMemberships, authorizedOrgID)
+	// Pin CheckAccess to the evaluated organization, through both OrgID and
+	// the view scope, so it never resolves memberships outside the allowlist.
+	evaluation, err := s.evaluateOperation(withViewerOrgScope(ctx, orgID), did, operation, authorizationScopeAllActiveMemberships, orgID)
 	if err != nil {
 		var accessErr *operationAccessError
 		if errors.As(err, &accessErr) {
-			slog.Error("policy-check: CheckAccess errored", "subject_did", did, "method", operation.Method, "err", err)
-			if logErr := s.recordPolicyCheck(ctx, authMethod, did, req.Subject.Address, req.OrgID, operation, false, "error", correlationID); logErr != nil {
-				slog.Error("policy-check: audit log write also failed", "err", logErr)
-			}
-			respondInternalError(c, "internal error")
-			return
+			return oracleOutcome{}, orgID, err
 		}
-		// A malformed raw transaction is a client error, not a denial; still audited.
-		if logErr := s.recordPolicyCheck(ctx, authMethod, did, req.Subject.Address, req.OrgID, operation, false, "decode_error", correlationID); logErr != nil {
-			slog.Error("policy-check: audit log write failed; refusing response", "err", logErr)
-			respondInternalError(c, "internal error")
-			return
-		}
-		respondBadRequest(c, "invalid operation")
-		return
+		// A malformed raw transaction is a client error, not a denial.
+		return oracleOutcome{}, orgID, &simulationClientError{msg: "invalid operation"}
 	}
-	accessReq, result := evaluation.AccessRequest, evaluation.AccessResult
+	result := evaluation.AccessResult
 	if result.OrgID != "" && !s.crossOrgAuthorizationOracleOrgAllowed(result.OrgID) {
-		if logErr := s.recordPolicyCheck(ctx, authMethod, did, req.Subject.Address, result.OrgID, operation, false, "organization_not_authorized", correlationID); logErr != nil {
-			slog.Error("policy-check: audit log write failed; refusing response", "err", logErr)
-			respondInternalError(c, "internal error")
-			return
-		}
-		respondForbidden(c, "organization is outside the oracle allowlist")
-		return
+		return oracleOutsideScope("resolved_org_outside_allowlist", map[string]string{"org_id": result.OrgID}), orgID, nil
 	}
-
-	allowed := result.Allowed
-	auditReason, wireReason := "", ""
-	var artifacts policyCheckWireArtifacts
-	if !allowed {
-		auditReason = sanitizeDryRunReason(result.Reason)
-		wireReason = sanitizePolicyCheckReason(result.Reason)
-	} else {
-		wireReason, auditReason, err = s.simulatePolicyCheck(ctx, did, operation, accessReq, result, &artifacts)
-		if err != nil {
-			// Caller-controlled operation shapes (malformed params) are a client
-			// error, not a denial and not an infrastructure failure.
-			var clientErr *simulationClientError
-			if errors.As(err, &clientErr) {
-				if logErr := s.recordPolicyCheck(ctx, authMethod, did, req.Subject.Address, result.OrgID, operation, false, "decode_error", correlationID); logErr != nil {
-					slog.Error("policy-check: audit log write failed; refusing response", "err", logErr)
-					respondInternalError(c, "internal error")
-					return
-				}
-				respondBadRequest(c, "invalid operation")
-				return
-			}
-			// Operational unavailability is not a policy verdict: answer 429/503
-			// so a caller cannot mistake a busy or degraded node for a deny.
-			var rateLimited *upstreamRateLimitedError
-			switch {
-			case errors.As(err, &rateLimited):
-				if rateLimited.retryAfter != "" {
-					c.Header("Retry-After", rateLimited.retryAfter)
-				}
-				respondTooManyRequests(c, "upstream rate limit reached; retry later")
-				return
-			case errors.Is(err, errSimUpstreamUnavailable):
-				slog.Warn("policy-check: simulation upstream unavailable", "subject_did", did, "method", operation.Method, "err", err)
-				respondServiceUnavailable(c, "policy simulation unavailable; retry later")
-				return
-			}
-			slog.Error("policy-check: simulation failed", "subject_did", did, "method", operation.Method, "err", err)
-			if logErr := s.recordPolicyCheck(ctx, authMethod, did, req.Subject.Address, result.OrgID, operation, false, "error", correlationID); logErr != nil {
-				slog.Error("policy-check: audit log write also failed", "err", logErr)
-			}
-			respondInternalError(c, "internal error")
-			return
-		}
-		allowed = wireReason == ""
+	if !result.Allowed {
+		return oracleDeny(sanitizeDryRunReason(result.Reason)), orgID, nil
 	}
-	if logErr := s.recordPolicyCheck(ctx, authMethod, did, req.Subject.Address, result.OrgID, operation, allowed, auditReason, correlationID); logErr != nil {
-		// H12: no verdict without an audit trail.
-		slog.Error("policy-check: audit log write failed; refusing response", "err", logErr)
-		respondInternalError(c, "internal error")
-		return
-	}
-	response := policyCheckWireResponse{Allowed: allowed, Reason: wireReason}
-	if allowed && s.config != nil && strings.EqualFold(strings.TrimSpace(s.config.CrossOrgAuthorizationOracleMode), "full_simulation") {
-		response.Artifacts = &artifacts
-	}
-	c.JSON(http.StatusOK, response)
+	out, err := s.simulatePolicyCheck(ctx, did, operation, evaluation.AccessRequest, result)
+	return out, orgID, err
 }
 
-// policyCheckAuthorizedOrg resolves and authorizes the one organization that
-// CheckAccess may evaluate. It runs before RBAC policy loading and considers
-// only active memberships intersecting the deployment allowlist.
-func (s *Server) policyCheckAuthorizedOrg(
-	ctx context.Context,
-	subjectDID, requestedOrgID, targetAddress string,
-) (string, bool, error) {
+// resolveOracleOrg picks the one organization CheckAccess evaluates. It runs
+// before any policy loads and decides only from allowlisted organizations:
+// a target owned outside the allowlist, or a subject with no allowlisted
+// membership, is outside the oracle scope. A non-nil outcome is the answer.
+func (s *Server) resolveOracleOrg(ctx context.Context, subjectDID, requestedOrgID, targetAddress string) (string, *oracleOutcome, error) {
 	if s.db == nil || s.rbacAccessCtrl == nil {
-		return "", false, errors.New("policy authority store is unavailable")
+		return "", nil, errors.New("policy authority store is unavailable")
 	}
-	user, err := s.db.GetUserByExternalID(ctx, subjectDID)
-	if err != nil {
-		return "", false, err
-	}
-	if user == nil {
-		return "", false, nil
-	}
-	memberships, err := s.rbacAccessCtrl.Store().ListActiveUserMembershipsWithDetails(ctx, user.ID)
-	if err != nil {
-		return "", false, err
-	}
-	allowedMemberships := make(map[string]struct{})
-	for _, membership := range memberships {
-		if membership.Group == nil || !s.crossOrgAuthorizationOracleOrgAllowed(membership.Group.OrgID) {
-			continue
-		}
-		allowedMemberships[membership.Group.OrgID] = struct{}{}
-	}
-	if requestedOrgID != "" {
-		_, ok := allowedMemberships[requestedOrgID]
-		return requestedOrgID, ok, nil
-	}
-
+	ownerOrgID := ""
 	if targetAddress != "" {
 		contract, err := s.rbacAccessCtrl.Store().GetContractByAddressGlobal(ctx, targetAddress)
 		if err != nil {
-			return "", false, err
+			return "", nil, err
 		}
 		if contract != nil {
-			_, ok := allowedMemberships[contract.OrgID]
-			return contract.OrgID, ok, nil
+			ownerOrgID = contract.OrgID
+			if !s.crossOrgAuthorizationOracleOrgAllowed(ownerOrgID) {
+				out := oracleOutsideScope("target_org_outside_allowlist", map[string]string{"org_id": ownerOrgID, "contract": strings.ToLower(targetAddress)})
+				return "", &out, nil
+			}
 		}
 	}
-	if len(allowedMemberships) == 1 {
-		for orgID := range allowedMemberships {
-			return orgID, true, nil
+	allowed, err := s.oracleMemberships(ctx, subjectDID)
+	if err != nil {
+		return "", nil, err
+	}
+	if len(allowed) == 0 {
+		out := oracleOutsideScope("no_allowlisted_membership", nil)
+		return "", &out, nil
+	}
+
+	// As live RPC, a registered target is evaluated in its owner organization.
+	orgID := ownerOrgID
+	if orgID == "" {
+		orgID = requestedOrgID
+	}
+	if orgID == "" {
+		if len(allowed) > 1 {
+			// An unregistered or absent target is ambiguous for a multi-org
+			// subject, as on the live path.
+			out := oracleDeny("ambiguous_organization")
+			return "", &out, nil
+		}
+		for only := range allowed {
+			orgID = only
 		}
 	}
-	// As on the live path, an unregistered/no target is ambiguous for a
-	// multi-org subject. Do not pass the full membership set to CheckAccess.
-	return "", false, nil
+	if !allowed[orgID] {
+		out := oracleDeny("subject_not_member")
+		return orgID, &out, nil
+	}
+	return orgID, nil, nil
 }
 
-// simulatePolicyCheck traces methods that can execute EVM code. It returns an
-// empty reason when the trace passes.
+// oracleMemberships returns the subject's active memberships in allowlisted
+// organizations. Other memberships never reach a decision.
+func (s *Server) oracleMemberships(ctx context.Context, subjectDID string) (map[string]bool, error) {
+	user, err := s.db.GetUserByExternalID(ctx, subjectDID)
+	if err != nil {
+		return nil, err
+	}
+	allowed := make(map[string]bool)
+	if user == nil {
+		return allowed, nil
+	}
+	memberships, err := s.rbacAccessCtrl.Store().ListActiveUserMembershipsWithDetails(ctx, user.ID)
+	if err != nil {
+		return nil, err
+	}
+	for _, membership := range memberships {
+		if membership.Group != nil && s.crossOrgAuthorizationOracleOrgAllowed(membership.Group.OrgID) {
+			allowed[membership.Group.OrgID] = true
+		}
+	}
+	return allowed, nil
+}
+
+// oracleTracedMethods are the EVM execution methods the oracle simulates.
+var oracleTracedMethods = map[string]bool{
+	"eth_call": true, "eth_estimateGas": true, "eth_createAccessList": true,
+	"eth_sendTransaction": true, "eth_sendRawTransaction": true,
+}
+
+// simulatePolicyCheck traces methods that can execute EVM code and answers
+// for an operation CheckAccess allowed.
 func (s *Server) simulatePolicyCheck(
 	ctx context.Context,
 	subjectDID string,
 	op apimodels.DryRunRPCBlock,
 	accessReq *rbac.AccessCheckRequest,
 	accessResult *rbac.AccessCheckResult,
-	artifacts *policyCheckWireArtifacts,
-) (wireReason, auditReason string, err error) {
+) (oracleOutcome, error) {
 	effectiveMethod := rbac.ResolveMethodAlias(op.Method)
-	switch effectiveMethod {
-	case "eth_call", "eth_estimateGas", "eth_createAccessList", "eth_sendTransaction", "eth_sendRawTransaction":
-	default:
-		return "", "", nil
+	if !oracleTracedMethods[effectiveMethod] {
+		// A catalog read has no EVM execution, so the RBAC verdict is complete.
+		// Anything else may execute code the oracle does not trace.
+		if rbac.IsCatalogMethod(effectiveMethod) {
+			return oracleAllow(), nil
+		}
+		return oracleNotSimulated(), nil
 	}
 
 	if s.db == nil || s.rbacAccessCtrl == nil || accessResult == nil || accessResult.OrgID == "" {
-		return "", "", errors.New("resolved policy context is unavailable")
+		return oracleOutcome{}, errors.New("resolved policy context is unavailable")
 	}
 	user, err := s.db.GetUserByExternalID(ctx, subjectDID)
 	if err != nil || user == nil {
-		return "", "", errors.New("resolved policy subject is unavailable")
+		return oracleOutcome{}, errors.New("resolved policy subject is unavailable")
 	}
 	if reason, senderErr := s.validatePolicyCheckSender(ctx, subjectDID, op); senderErr != nil {
-		return "", "", senderErr
+		return oracleOutcome{}, senderErr
 	} else if reason != "" {
 		if reason == ReasonInvalidRequestShape {
-			return "", "", &simulationClientError{msg: reason}
+			return oracleOutcome{}, &simulationClientError{msg: reason}
 		}
-		return sanitizePolicyCheckReason(reason), reason, nil
+		return oracleDeny(reason), nil
 	}
 	if reason, visibleToErr := validatePolicyCheckVisibleTo(op); visibleToErr != nil {
-		return "", "", visibleToErr
+		return oracleOutcome{}, visibleToErr
 	} else if reason != "" {
 		if reason == ReasonInvalidRequestShape {
-			return "", "", &simulationClientError{msg: reason}
+			return oracleOutcome{}, &simulationClientError{msg: reason}
 		}
-		return sanitizePolicyCheckReason(reason), reason, nil
+		return oracleDeny(reason), nil
 	}
 	perms, err := s.rbacAccessCtrl.GetEffectivePermissionsByIDs(ctx, user.ID, accessResult.OrgID)
 	if err != nil || perms == nil {
-		return "", "", errors.New("resolved policy permissions are unavailable")
+		return oracleOutcome{}, errors.New("resolved policy permissions are unavailable")
 	}
 	traceCtx, cancel := context.WithTimeout(ctx, policyCheckTraceTimeout)
 	defer cancel()
@@ -503,6 +528,7 @@ func (s *Server) simulatePolicyCheck(
 		}
 		apiKeyHeader = s.jsonrpcProcessor.resolveAPIKeyHeader()
 	}
+	var artifacts policyCheckWireArtifacts
 	if !s.policyCheckEOATransfer(traceCtx, op, apiKey, apiKeyHeader) {
 		traceResult, traceErr := s.forwardDryRunTraceWithAPIKey(traceCtx, op, apiKey, apiKeyHeader)
 		if traceErr != nil {
@@ -511,46 +537,49 @@ func (s *Server) simulatePolicyCheck(
 			var clientErr *simulationClientError
 			var rateLimited *upstreamRateLimitedError
 			if errors.As(traceErr, &clientErr) || errors.As(traceErr, &rateLimited) {
-				return "", "", traceErr
+				return oracleOutcome{}, traceErr
 			}
 			// Any other trace failure (node error, timeout, empty/malformed
 			// trace) is a transient upstream condition: surface 503, not a deny.
-			return "", "", fmt.Errorf("%w: %v", errSimUpstreamUnavailable, traceErr)
+			return oracleOutcome{}, fmt.Errorf("%w: %v", errSimUpstreamUnavailable, traceErr)
 		}
 		if traceResult == nil || traceResult.Parsed == nil {
-			return "", "", fmt.Errorf("%w: trace returned no result", errSimUpstreamUnavailable)
+			return oracleOutcome{}, fmt.Errorf("%w: trace returned no result", errSimUpstreamUnavailable)
 		}
-		if artifacts != nil {
-			artifacts.Trace = traceResult.Trace
-			artifacts.Logs = traceResult.Logs
-		}
+		artifacts.Trace = traceResult.Trace
+		artifacts.Logs = traceResult.Logs
 		if validationErr := s.validatePolicyCheckTrace(ctx, user, perms, accessResult.OrgID, accessReq.TargetAddress, traceResult.Parsed); validationErr != nil {
 			if validationErr.StatusCode >= http.StatusInternalServerError {
-				return "", "", fmt.Errorf("%w: trace validation unavailable", errSimUpstreamUnavailable)
+				return oracleOutcome{}, fmt.Errorf("%w: trace validation unavailable", errSimUpstreamUnavailable)
 			}
-			wireReason = sanitizePolicyCheckReason(validationErr.Message)
-			auditReason = sanitizeDryRunReason(validationErr.Message)
-			return wireReason, auditReason, nil
+			if validationErr.TraceDenialKind == rbac.DenialKindOutOfScope {
+				return oracleOutsideScope("nested_call_outside_allowlist", map[string]string{
+					"org_id": validationErr.TraceDeniedOrgID, "contract": validationErr.TraceDeniedTarget,
+				}), nil
+			}
+			return oracleDeny(sanitizeDryRunReason(validationErr.Reason)), nil
 		}
 	}
 	if effectiveMethod == "eth_sendTransaction" || effectiveMethod == "eth_sendRawTransaction" {
 		from, to, data, value, extractErr := policyCheckTransactionFields(op)
 		if extractErr != nil {
-			return "", "", extractErr
+			return oracleOutcome{}, extractErr
 		}
 		if s.complianceChecker != nil {
 			compResult, compErr := s.complianceChecker.CheckPreview(ctx, &compliance.CheckRequest{
 				OrgID: accessResult.OrgID, UserID: user.ID, From: from, To: to, Data: data, Value: value,
 			})
 			if compErr != nil {
-				return "", "", compErr
+				return oracleOutcome{}, compErr
 			}
 			if !compResult.Allowed {
-				return "denied", ReasonComplianceBlocked, nil
+				return oracleDeny(ReasonComplianceBlocked), nil
 			}
 		}
 	}
-	return "", "", nil
+	out := oracleAllow()
+	out.artifacts = &artifacts
+	return out, nil
 }
 
 // policyCheckEOATransfer mirrors the live simple-transfer fast path. A missing
@@ -581,9 +610,10 @@ func (s *Server) policyCheckEOATransfer(ctx context.Context, op apimodels.DryRun
 	return result.Result == "0x" || result.Result == "0x0"
 }
 
-// validatePolicyCheckTrace mirrors live trace ownership. RBAC and compliance
-// remain scoped to the resolved organization, but nested calls may enter any
-// organization where the subject has an active membership.
+// validatePolicyCheckTrace mirrors live trace ownership within the oracle
+// scope. Nested calls may enter any allowlisted organization where the subject
+// has an active membership; a frame owned outside the allowlist yields
+// DenialKindOutOfScope without consulting the subject's membership there.
 func (s *Server) validatePolicyCheckTrace(
 	ctx context.Context,
 	user *rbac.User,
@@ -617,7 +647,8 @@ func (s *Server) validatePolicyCheckTrace(
 	if s.jsonrpcProcessor != nil && s.jsonrpcProcessor.rbacAccessCtrl != nil {
 		userHasDeploy = s.jsonrpcProcessor.userHasDeployClaim(ctx, memberships)
 	}
-	return s.validateTraceWithOrgIDs(ctx, user, perms, orgID, targetAddr, traceResult, userOrgIDs, userHasDeploy)
+	return s.validateTraceWithOrgIDs(ctx, user, perms, orgID, targetAddr, traceResult, userOrgIDs, userHasDeploy,
+		rbac.WithEvaluationScope(s.crossOrgAuthorizationOracleOrgAllowed))
 }
 
 func (s *Server) crossOrgAuthorizationOracleOrgAllowed(orgID string) bool {
@@ -768,15 +799,24 @@ func policyCheckTransactionFields(op apimodels.DryRunRPCBlock) (from, to, data, 
 	return from, to, data, value, nil
 }
 
-// recordPolicyCheck writes one row to policy_check_log. subjectDID may be empty
-// when resolution denied before any DID was known; subjectAddress still records it.
-func (s *Server) recordPolicyCheck(
-	ctx context.Context,
-	callerAuthMethod, subjectDID, subjectAddress, orgID string,
-	op apimodels.DryRunRPCBlock,
-	allowed bool,
-	reason, correlationID string,
-) error {
+// oracleAuditRecord is the audited view of one oracle request.
+type oracleAuditRecord struct {
+	subjectDID, subjectAddress     string
+	requestedOrgID, evaluatedOrgID string
+	operation                      apimodels.DryRunRPCBlock
+	outcome                        oracleOutcome
+	correlationID                  string
+}
+
+func (s *Server) recordOracleIndeterminate(reason string) {
+	if s.metrics != nil && s.metrics.CrossOrgOracleIndeterminateTotal != nil {
+		s.metrics.CrossOrgOracleIndeterminateTotal.WithLabelValues(reason).Inc()
+	}
+}
+
+// recordPolicyCheck writes one row to policy_check_log and one to the
+// hash-chained RBAC audit log.
+func (s *Server) recordPolicyCheck(ctx context.Context, rec oracleAuditRecord) error {
 	if s.db == nil {
 		return nil
 	}
@@ -784,26 +824,32 @@ func (s *Server) recordPolicyCheck(
 	if conn == nil {
 		return nil
 	}
+	op := rec.operation
 	paramsHash := dryRunParamsHash(op.Method, op.Params)
 	corr := uuid.NullUUID{}
-	if id, err := uuid.Parse(correlationID); err == nil {
+	if id, err := uuid.Parse(rec.correlationID); err == nil {
 		corr.UUID = id
 		corr.Valid = true
 	}
 	var didVal, addrVal, orgVal any
-	if subjectDID != "" {
-		didVal = subjectDID
+	if rec.subjectDID != "" {
+		didVal = rec.subjectDID
 	}
-	if subjectAddress != "" {
-		addrVal = strings.ToLower(strings.TrimSpace(subjectAddress))
+	if rec.subjectAddress != "" {
+		addrVal = strings.ToLower(strings.TrimSpace(rec.subjectAddress))
+	}
+	orgID := rec.evaluatedOrgID
+	if orgID == "" {
+		orgID = rec.requestedOrgID
 	}
 	if orgID != "" {
 		orgVal = orgID
 	}
+	allowed := rec.outcome.decision == oracleDecisionAllow
 	_, err := conn.ExecContext(ctx, `
 		INSERT INTO policy_check_log (caller_auth_method, subject_did, subject_address, org_id, method, params_hash, allowed, reason, correlation_id)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, ''), $9)`,
-		callerAuthMethod, didVal, addrVal, orgVal, op.Method, paramsHash, allowed, reason, corr,
+		"cross_org_authorization_oracle_token", didVal, addrVal, orgVal, op.Method, paramsHash, allowed, rec.outcome.internalReason, corr,
 	)
 	if err != nil {
 		return err
@@ -820,11 +866,12 @@ func (s *Server) recordPolicyCheck(
 		OrgID:           auditOrgID,
 		NewValue: map[string]any{
 			"params_hash":     paramsHash,
-			"subject_did":     subjectDID,
+			"subject_did":     rec.subjectDID,
 			"subject_address": addrVal,
-			"allowed":         allowed,
-			"internal_reason": reason,
-			"correlation_id":  correlationID,
+			"decision":        rec.outcome.decision,
+			"internal_reason": rec.outcome.internalReason,
+			"scope_detail":    rec.outcome.scopeDetail,
+			"correlation_id":  rec.correlationID,
 		},
 	})
 }

@@ -219,6 +219,10 @@ type ProcessError struct {
 	// TraceDenialKind preserves the validator's internal classification for
 	// projections such as org-local dry-run. It is never serialized directly.
 	TraceDenialKind rbac.DenialKind
+	// TraceDeniedTarget and TraceDeniedOrgID carry the denied frame and, for
+	// an out-of-scope frame, its owner, for audit records only.
+	TraceDeniedTarget string
+	TraceDeniedOrgID  string
 }
 
 func (e *ProcessError) Error() string {

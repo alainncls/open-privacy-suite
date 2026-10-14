@@ -108,10 +108,10 @@ func TestPolicyCheckMatchesLiveEnforcement(t *testing.T) {
 			require.Equal(t, tc.want, liveAllowed,
 				"fixture no longer produces the intended live outcome (status %d)", rpcResp.StatusCode)
 
-			allowed, _ := policyCheckVerdict(t, serverURL, adminToken+"-oracle", map[string]any{
+			decision, _ := policyCheckVerdict(t, serverURL, adminToken+"-oracle", map[string]any{
 				"subject": tc.subject, "operation": op, "org_id": tc.orgID,
 			})
-			require.Equal(t, liveAllowed, allowed, "policy-check disagrees with live enforcement")
+			require.Equal(t, liveAllowed, decision == "allow", "policy-check disagrees with live enforcement: %s", decision)
 		})
 	}
 
@@ -137,7 +137,7 @@ func TestPolicyCheckMatchesLiveEnforcement(t *testing.T) {
 
 // policyCheckVerdict POSTs to policy-check with an X-Admin-Token and returns
 // the verdict, failing the test on any non-200.
-func policyCheckVerdict(t *testing.T, serverURL, token string, body map[string]any) (bool, string) {
+func policyCheckVerdict(t *testing.T, serverURL, token string, body map[string]any) (string, string) {
 	t.Helper()
 	raw, err := json.Marshal(body)
 	require.NoError(t, err)
@@ -150,11 +150,11 @@ func policyCheckVerdict(t *testing.T, serverURL, token string, body map[string]a
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var out struct {
-		Allowed bool   `json:"allowed"`
-		Reason  string `json:"reason"`
+		Decision string `json:"decision"`
+		Reason   string `json:"reason"`
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
-	return out.Allowed, out.Reason
+	return out.Decision, out.Reason
 }
 
 // The unit tests fake auth_method through a test middleware, so this is the
