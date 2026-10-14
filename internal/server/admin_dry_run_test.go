@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -288,7 +289,14 @@ func TestDryRun_StateOverrideDenied(t *testing.T) {
 	// The allow baseline forwards upstream, so the fixture needs a node; count
 	// hits so the deny case can prove the override never reached it.
 	var hits atomic.Int64
-	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		// Dry-run eth_call traces first; answer the trace with a well-formed
+		// in-org frame and count only the forwarded call.
+		if strings.Contains(string(body), "debug_traceCall") {
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"type":"CALL","from":"0x00000000000000000000000000000000000000a1","to":"` + f.contractAddr + `","input":"0x","output":"0x"}}`))
+			return
+		}
 		hits.Add(1)
 		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":"0x"}`))
 	}))
@@ -362,7 +370,7 @@ func TestDryRun_FunctionLevelRules(t *testing.T) {
 
 	// The allow case forwards upstream, so the fixture needs a node to answer.
 	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":"0x1"}`))
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"type":"CALL","from":"0x0000000000000000000000000000000000000000","to":"` + contractAddr + `"}}`))
 	}))
 	t.Cleanup(stub.Close)
 	f.srv.proxy = proxy.New(stub.URL)
@@ -513,8 +521,17 @@ func TestDryRun_FunctionRuleTraceStaysInPathOrg(t *testing.T) {
 
 	var resp dryRunResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, "deny", resp.Decision)
-	assert.Equal(t, sendTraceDenyCrossOrg, resp.Reason)
+	assert.Equal(t, "indeterminate", resp.Decision)
+	assert.Equal(t, "external_scope_required", resp.Reason)
+	var auditDecision, auditResponseDecision, auditReason string
+	require.NoError(t, f.srv.db.Conn().QueryRowContext(ctx, `
+		SELECT decision, COALESCE(response_decision, ''), reason FROM impersonation_log
+		 WHERE impersonated_did = $1 AND method = 'eth_sendTransaction' ORDER BY created_at DESC LIMIT 1`,
+		userDID,
+	).Scan(&auditDecision, &auditResponseDecision, &auditReason))
+	assert.Equal(t, "deny", auditDecision)
+	assert.Equal(t, "indeterminate", auditResponseDecision)
+	assert.Equal(t, "external_scope_required", auditReason)
 	assert.Empty(t, resp.Trace, "a denied nested call must not expose its trace")
 	assert.Empty(t, resp.LogsEmitted, "a denied nested call must not expose its logs")
 }
@@ -544,8 +561,27 @@ func TestDryRun_RawTransactionChecksDecodedTarget(t *testing.T) {
 	drCreateGrant(t, f.srv.db, drCreateContract(t, f.srv.db, f.orgID, grantedAddr, "DRGranted"), groupID)
 	drCreateContract(t, f.srv.db, f.orgID, ungrantedAddr, "DRUngranted")
 
-	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
+	// Return a realistic callTracer frame whose top-level CALL targets the
+	// decoded raw-tx recipient. An empty `{}` result now fails closed (treated
+	// as an upstream trace error), so the stub must echo a well-formed frame.
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Params []json.RawMessage `json:"params"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		to := grantedAddr
+		if len(req.Params) > 0 {
+			var tx map[string]any
+			if json.Unmarshal(req.Params[0], &tx) == nil {
+				if v, ok := tx["to"].(string); ok && v != "" {
+					to = v
+				}
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0", "id": 1,
+			"result": map[string]any{"type": "CALL", "from": "0x0000000000000000000000000000000000000000", "to": to},
+		})
 	}))
 	t.Cleanup(stub.Close)
 	f.srv.proxy = proxy.New(stub.URL)
@@ -561,11 +597,15 @@ func TestDryRun_RawTransactionChecksDecodedTarget(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			to := common.HexToAddress(tc.to)
+			rawTx := drSignedRawTx(t, &to, []byte{0xab, 0xcd, 0xab, 0xcd})
+			from, _, _, _, _, err := decodeRawTransaction(rawTx)
+			require.NoError(t, err)
+			require.NoError(t, f.srv.db.SystemLinkEthAddress(ctx, senderDID, from))
 			w := dryRunPost(t, f.srv, f.orgID, "jwt_admin", f.adminDID, map[string]any{
 				"user_did": senderDID,
 				"rpc": apimodels.DryRunRPCBlock{
 					Method: "eth_sendRawTransaction",
-					Params: []any{drSignedRawTx(t, &to, []byte{0xab, 0xcd, 0xab, 0xcd})},
+					Params: []any{rawTx},
 				},
 			})
 			require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
@@ -784,6 +824,20 @@ func TestDryRun_RawSendTransactionMalformedAudit(t *testing.T) {
 		).Scan(&count))
 		assert.Zero(t, count)
 	})
+}
+
+func TestPolicyCheckTraceTransaction_StripsVisibleToWithoutMutatingInput(t *testing.T) {
+	original := map[string]any{
+		"to":        "0x000000000000000000000000000000000000ac51",
+		"data":      "0x12345678",
+		"visibleTo": []any{"did:example:recipient"},
+	}
+
+	traceTx := policyCheckTraceTransaction(original)
+
+	assert.NotContains(t, traceTx, "visibleTo")
+	assert.Contains(t, original, "visibleTo")
+	assert.Equal(t, original["to"], traceTx["to"])
 }
 
 // ---- fixture helpers -------------------------------------------------

@@ -78,6 +78,10 @@ func setupTestServerForRBAC(t *testing.T) *testServerRBAC {
 	// place; a later test that re-uses the same DID sees the stale link
 	// and the parity assertions fail. Per-test reset closes the leak.
 	conn.ExecContext(ctx, "DELETE FROM eth_address_links")
+	// Same hazard as eth_address_links above: policy_check_log is keyed by
+	// subject_did/subject_address, not a FK, so tests reusing a literal DID
+	// accumulate rows across the package and break row-count assertions.
+	conn.ExecContext(ctx, "DELETE FROM policy_check_log")
 
 	t.Cleanup(func() {
 		database.Close()
@@ -578,7 +582,7 @@ func TestGroupAccessValidation(t *testing.T) {
 		// Unsupported method names are refused when group access is saved.
 		body := map[string]any{
 			"allowed_methods": []string{"some_unknown_method", "another_custom_method"},
-			"claims":          []string{},
+			"claims":          []string{}, // No claims needed for unknown methods
 		}
 		jsonBody, _ := json.Marshal(body)
 
