@@ -308,42 +308,102 @@ func TestPolicyCheck_RejectsUnlinkedSender(t *testing.T) {
 	assert.Equal(t, "denied", resp.Reason)
 }
 
-func TestPolicyCheck_UsesConcurrencyLimit(t *testing.T) {
+func policyCheckPostFrom(t *testing.T, srv *policyCheckTestServer, remoteIP, forwardedFor string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	jb, err := json.Marshal(body)
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/api/policy-check", bytes.NewReader(jb))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Test-Auth-Method", "cross_org_authorization_oracle_token")
+	if forwardedFor != "" {
+		req.Header.Set("X-Forwarded-For", forwardedFor)
+	}
+	req.RemoteAddr = remoteIP + ":1234"
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+	return w
+}
+
+// One global concurrency key: neither the client IP nor X-Forwarded-For opens
+// a fresh slot.
+func TestPolicyCheck_ConcurrencyCapIsGlobal(t *testing.T) {
 	f := setupPCFixture(t)
-	const callerIP = "203.0.113.7"
 	limiter := middleware.NewConcurrencyLimiter(1, 1)
-	limitKey := crossOrgOracleLimitKey(callerIP)
-	require.True(t, limiter.TryAcquire(limitKey))
-	defer limiter.Release(limitKey)
+	require.True(t, limiter.TryAcquire(crossOrgOracleLimitKey))
+	defer limiter.Release(crossOrgOracleLimitKey)
 	f.srv.jsonrpcProcessor = &JSONRPCProcessor{concurrencyLimiter: limiter}
 
 	body := map[string]any{
 		"subject":   map[string]any{"did": f.userDID},
 		"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr),
 	}
-	jb, err := json.Marshal(body)
-	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodPost, "/api/policy-check", bytes.NewReader(jb))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Test-Auth-Method", "cross_org_authorization_oracle_token")
-	req.RemoteAddr = callerIP + ":1234"
-	w := httptest.NewRecorder()
-	f.srv.router.ServeHTTP(w, req)
-	// Concurrency exhaustion is operational unavailability, not a policy deny.
-	require.Equal(t, http.StatusTooManyRequests, w.Code, "body: %s", w.Body.String())
+	for _, tc := range []struct{ ip, xff string }{
+		{"203.0.113.7", ""},
+		{"198.51.100.9", ""},
+		{"203.0.113.7", "192.0.2.44"},
+		{"203.0.113.7", "192.0.2.45"},
+	} {
+		w := policyCheckPostFrom(t, f.srv, tc.ip, tc.xff, body)
+		// Concurrency exhaustion is operational unavailability, not a policy deny.
+		require.Equal(t, http.StatusTooManyRequests, w.Code, "ip=%s xff=%s body: %s", tc.ip, tc.xff, w.Body.String())
+	}
 }
 
-func TestPolicyCheck_UsesTraceRateLimit(t *testing.T) {
+// No request quota: more than the former 100/day budget passes, and the
+// processor's rate limiter is never consulted.
+func TestPolicyCheck_NoRequestQuota(t *testing.T) {
 	f := setupPCFixture(t)
-	f.srv.jsonrpcProcessor = &JSONRPCProcessor{rateLimiter: policyCheckDenyingRateLimiter{}}
+	f.srv.jsonrpcProcessor = &JSONRPCProcessor{
+		concurrencyLimiter: middleware.NewConcurrencyLimiter(1, 1),
+		rateLimiter:        policyCheckDenyingRateLimiter{},
+	}
 	body := map[string]any{
 		"subject":   map[string]any{"did": f.userDID},
 		"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr),
 	}
+	for i := 0; i < 101; i++ {
+		w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", body)
+		require.Equal(t, http.StatusOK, w.Code, "request %d: %s", i, w.Body.String())
+	}
+}
 
-	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", body)
-	// A spent trace rate budget is operational unavailability, not a policy deny.
+func TestPolicyCheck_UpstreamRateLimitReturns429WithRetryAfter(t *testing.T) {
+	f := setupPCFixture(t)
+	node := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "7")
+		http.Error(w, "slow down", http.StatusTooManyRequests)
+	}))
+	t.Cleanup(node.Close)
+	f.srv.proxy = proxy.New(node.URL)
+
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", map[string]any{
+		"subject":   map[string]any{"did": f.userDID},
+		"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr),
+	})
 	require.Equal(t, http.StatusTooManyRequests, w.Code, "body: %s", w.Body.String())
+	assert.Equal(t, "7", w.Header().Get("Retry-After"))
+}
+
+func TestPolicyCheck_TraceTimeoutReturns503(t *testing.T) {
+	f := setupPCFixture(t)
+	prev := policyCheckTraceTimeout
+	policyCheckTraceTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { policyCheckTraceTimeout = prev })
+	release := make(chan struct{})
+	node := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(func() { close(release); node.Close() })
+	f.srv.proxy = proxy.New(node.URL)
+
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", map[string]any{
+		"subject":   map[string]any{"did": f.userDID},
+		"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr),
+	})
+	require.Equal(t, http.StatusServiceUnavailable, w.Code, "body: %s", w.Body.String())
 }
 
 // policyCheckPostRaw posts a raw body, for cases a marshalled struct cannot
