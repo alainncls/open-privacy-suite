@@ -1199,6 +1199,59 @@ func TestValidatePolicyCheckVisibleTo(t *testing.T) {
 	})
 }
 
+// Review item 3: the deploy claim for a nested CREATE comes from allowlisted
+// memberships only. Without one, the claim may exist where the oracle may not
+// look, so every such case is indeterminate.
+func TestPolicyCheck_NestedCreateDeployClaimScope(t *testing.T) {
+	created := "0x0000000000000000000000000000000000c0ffee"
+	for _, tc := range []struct {
+		name     string
+		claimOrg string // "", "allowlisted" or "unallowlisted"
+		decision string
+		reason   string
+	}{
+		{name: "claim only in non-allowlisted org", claimOrg: "unallowlisted", decision: oracleDecisionIndeterminate, reason: oracleReasonOutsideScope},
+		{name: "claim in allowlisted org", claimOrg: "allowlisted", decision: oracleDecisionAllow},
+		{name: "no claim anywhere", decision: oracleDecisionIndeterminate, reason: oracleReasonOutsideScope},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := setupPCFixture(t)
+			ctx := context.Background()
+			orgD, groupD := pcUnallowlistedOrg(t, f, "pc-deploy-d", "")
+			pcAddMembership(t, f, f.userDID, groupD)
+			if tc.claimOrg != "" {
+				orgID := f.orgA
+				if tc.claimOrg == "unallowlisted" {
+					orgID = orgD
+				}
+				claimGroup := uuid.New().String()
+				require.NoError(t, f.db.CreateGroup(ctx, &rbac.Group{
+					ID: claimGroup, OrgID: orgID, Slug: "pc-claim", Name: "pc-claim", Depth: 0, Path: "pc-claim",
+				}))
+				require.NoError(t, f.db.CreateGroupAccess(ctx, &rbac.GroupAccess{
+					ID: uuid.New().String(), GroupID: claimGroup, AllowedMethods: []string{"eth_call"}, Claims: []rbac.Claim{rbac.ClaimDeploy},
+				}))
+				pcAddMembership(t, f, f.userDID, claimGroup)
+			}
+			node := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": map[string]any{
+					"type": "CALL", "from": f.userAddr, "to": f.contractAddr,
+					"calls": []map[string]any{{"type": "CREATE", "from": f.contractAddr, "to": created}},
+				}})
+			}))
+			t.Cleanup(node.Close)
+			f.srv.proxy = proxy.New(node.URL)
+
+			w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", map[string]any{
+				"subject":   map[string]any{"did": f.userDID},
+				"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr),
+			})
+			assertOracleAnswer(t, w, tc.decision, tc.reason)
+		})
+	}
+}
+
 // TestPolicyCheck_DeploymentRequiresClaim: a tx with no `to` is a deployment,
 // gated on the deploy claim regardless of method allowlist.
 func TestPolicyCheck_DeploymentRequiresClaim(t *testing.T) {

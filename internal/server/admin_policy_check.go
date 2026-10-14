@@ -552,6 +552,11 @@ func (s *Server) simulatePolicyCheck(
 			if validationErr.StatusCode >= http.StatusInternalServerError {
 				return oracleOutcome{}, fmt.Errorf("%w: trace validation unavailable", errSimUpstreamUnavailable)
 			}
+			if validationErr.TraceDenialKind == rbac.DenialKindDeployClaim {
+				// The claim may exist in an organization the oracle may not
+				// consult, so a missing in-scope claim cannot be judged.
+				return oracleOutsideScope("deploy_claim_not_in_scope", nil), nil
+			}
 			if validationErr.TraceDenialKind == rbac.DenialKindOutOfScope {
 				return oracleOutsideScope("nested_call_outside_allowlist", map[string]string{
 					"org_id": validationErr.TraceDeniedOrgID, "contract": validationErr.TraceDeniedTarget,
@@ -631,10 +636,14 @@ func (s *Server) validatePolicyCheckTrace(
 		slog.Warn("policy-check: membership lookup failed", "subject_did", user.ExternalID, "err", err)
 		return &ProcessError{StatusCode: http.StatusInternalServerError, Message: sendTraceValidatorError, Reason: ReasonTracingUnavailable}
 	}
+	// Every policy input, the deploy claim included, comes from allowlisted
+	// memberships only.
 	userOrgIDs := make(map[string]bool)
+	inScope := make([]*rbac.MembershipWithDetails, 0, len(memberships))
 	for _, membership := range memberships {
 		if membership.Group != nil && s.crossOrgAuthorizationOracleOrgAllowed(membership.Group.OrgID) {
 			userOrgIDs[membership.Group.OrgID] = true
+			inScope = append(inScope, membership)
 		}
 	}
 	if !userOrgIDs[orgID] {
@@ -645,7 +654,7 @@ func (s *Server) validatePolicyCheckTrace(
 	}
 	userHasDeploy := effectivePermissionsHasDeployClaim(perms)
 	if s.jsonrpcProcessor != nil && s.jsonrpcProcessor.rbacAccessCtrl != nil {
-		userHasDeploy = s.jsonrpcProcessor.userHasDeployClaim(ctx, memberships)
+		userHasDeploy = s.jsonrpcProcessor.userHasDeployClaim(ctx, inScope)
 	}
 	return s.validateTraceWithOrgIDs(ctx, user, perms, orgID, targetAddr, traceResult, userOrgIDs, userHasDeploy,
 		rbac.WithEvaluationScope(s.crossOrgAuthorizationOracleOrgAllowed))
