@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/proxy"
@@ -893,4 +894,44 @@ func drCreateGrant(t *testing.T, database interface {
 	require.NoError(t, database.CreateContractGrant(context.Background(), &rbac.ContractGrant{
 		ID: uuid.New().String(), ContractID: contractID, GroupID: groupID, Functions: nil,
 	}))
+}
+
+// Review item 5: dry-run eth_call traces first, so a node without the debug
+// API gets an explicit, permanent answer rather than a retryable 503.
+func TestDryRun_EthCallNodeWithoutDebugAPI(t *testing.T) {
+	f := setupDryRunFixture(t)
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"the method debug_traceCall does not exist/is not available"}}`))
+	}))
+	t.Cleanup(stub.Close)
+	f.srv.proxy = proxy.New(stub.URL)
+
+	w := dryRunPost(t, f.srv, f.orgID, "jwt_admin", f.adminDID, map[string]any{
+		"user_did": f.userDID,
+		"rpc":      map[string]any{"method": "eth_call", "params": []any{map[string]any{"to": f.contractAddr, "data": "0x"}, "latest"}},
+	})
+	require.Equal(t, http.StatusBadGateway, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "node does not support debug_traceCall")
+}
+
+func TestDryRun_EthCallTraceTimeoutReturns503(t *testing.T) {
+	f := setupDryRunFixture(t)
+	prev := policyCheckTraceTimeout
+	policyCheckTraceTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { policyCheckTraceTimeout = prev })
+	release := make(chan struct{})
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(func() { close(release); stub.Close() })
+	f.srv.proxy = proxy.New(stub.URL)
+
+	w := dryRunPost(t, f.srv, f.orgID, "jwt_admin", f.adminDID, map[string]any{
+		"user_did": f.userDID,
+		"rpc":      map[string]any{"method": "eth_call", "params": []any{map[string]any{"to": f.contractAddr, "data": "0x"}, "latest"}},
+	})
+	require.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
 }
