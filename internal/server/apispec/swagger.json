@@ -89,13 +89,23 @@
             },
             "internal_server.policyCheckResponse": {
                 "properties": {
-                    "allowed": {
-                        "type": "boolean"
-                    },
                     "artifacts": {
                         "$ref": "#/components/schemas/internal_server.policyCheckArtifacts"
                     },
+                    "decision": {
+                        "enum": [
+                            "allow",
+                            "deny",
+                            "indeterminate"
+                        ],
+                        "type": "string"
+                    },
                     "reason": {
+                        "enum": [
+                            "denied",
+                            "outside_oracle_scope",
+                            "not_simulated"
+                        ],
                         "type": "string"
                     }
                 },
@@ -6173,7 +6183,7 @@
         },
         "/api/v1/admin/cross-org-authorization-oracle": {
             "post": {
-                "description": "Cross-organization privacy-policy oracle for an explicitly trusted infrastructure caller. Subject is a DID or Ethereum address. Operation is a JSON-RPC method and params. EVM execution methods use debug_traceCall with the same upstream credential as live calls. Write methods also run a side-effect-free compliance preview. The endpoint does not submit the call or consume a travel-rule record. A supplied sender must link to the subject. Requests share one global concurrency cap (MAX_CONCURRENT_REQUESTS in flight); request-rate limits belong to the upstream RPC proxy. Traces use the subject organization's upstream API key, or the default key, so they count against that key's upstream quota; an upstream 429 is returned as 429 with its Retry-After. debug_traceCall and debug_traceTransaction are not supported. Requires the dedicated X-Cross-Org-Authorization-Oracle-Token credential and an allowlisted organization. Admin, operator, and JWT credentials are not accepted. Every evaluation is audited and fails closed. Operational failures (concurrency cap, upstream 429, trace errors or timeouts) return 429 or 503, never a policy verdict.",
+                "description": "Cross-organization privacy-policy oracle for an explicitly trusted infrastructure caller. Subject is a DID or Ethereum address. Operation is a JSON-RPC method and params. The answer is decision=allow, deny or indeterminate. deny means policy was evaluated inside the oracle scope (the organizations in CROSS_ORG_AUTHORIZATION_ORACLE_ORG_IDS) and refuses the call. indeterminate means the oracle cannot judge: reason=outside_oracle_scope when the subject, the requested or resolved organization, the target or a nested call is outside that scope; reason=not_simulated when the method executes EVM code the oracle does not trace. The oracle never consults an organization outside the scope. Callers should proceed on allow, block on deny, and on indeterminate not block on the oracle but let the live call decide. EVM execution methods use debug_traceCall with the same upstream credential as live calls. Write methods also run a side-effect-free compliance preview. The endpoint does not submit the call or consume a travel-rule record. A supplied sender must link to the subject. Requests share one global concurrency cap (MAX_CONCURRENT_REQUESTS in flight); request-rate limits belong to the upstream RPC proxy. Traces use the subject organization's upstream API key, or the default key, so they count against that key's upstream quota; an upstream 429 is returned as 429 with its Retry-After. debug_traceCall and debug_traceTransaction are not supported (400). Requires the dedicated X-Cross-Org-Authorization-Oracle-Token credential. Admin, operator, and JWT credentials are not accepted. Every evaluation is audited and fails closed. Operational failures (concurrency cap, upstream 429, trace errors or timeouts) return 429 or 503, never a policy verdict.",
                 "parameters": [
                     {
                         "description": "Dedicated cross-org oracle token",
@@ -6215,7 +6225,7 @@
                                 }
                             }
                         },
-                        "description": "invalid body, missing operation.method, an invalid subject address, or subject has neither/both of did and address"
+                        "description": "invalid body, missing or unsupported operation.method, an invalid subject address, or subject has neither/both of did and address"
                     },
                     "401": {
                         "content": {
@@ -6235,7 +6245,7 @@
                                 }
                             }
                         },
-                        "description": "source address not on the private network, or the credential cannot read tenant policy"
+                        "description": "source address not on the private network"
                     },
                     "429": {
                         "content": {

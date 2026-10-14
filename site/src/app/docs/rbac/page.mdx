@@ -147,18 +147,31 @@ To ban an admin, have another admin in the same organization do it, or use the f
 It is disabled by default. When enabled, use the dedicated `CROSS_ORG_AUTHORIZATION_ORACLE_TOKEN` in the
 `X-Cross-Org-Authorization-Oracle-Token` header. Admin, operator, and JWT credentials cannot use this endpoint.
 
-The request identifies one subject by DID or linked Ethereum address. An optional `org_id` selects the organization.
-A supplied `from` address must link to the subject. In `verdict_only` mode the response contains only `allowed` and a safe
-reason category; `full_simulation` additionally returns authorized trace artifacts.
+The request identifies one subject by DID or linked Ethereum address. An optional `org_id` selects the organization;
+a registered target is evaluated in its owner organization, as on live RPC. A supplied `from` address must link to the subject.
+
+The response has a `decision` of `allow`, `deny` or `indeterminate`:
+
+| Decision | Meaning | What the caller should do |
+| --- | --- | --- |
+| `allow` | Policy was evaluated and allows the call. | Proceed to signing. |
+| `deny` (reason `denied`) | Policy was evaluated inside the oracle scope and refuses the call. | Block. |
+| `indeterminate` (reason `outside_oracle_scope`) | Part of the evaluation is outside the allowlisted organizations: the subject, the requested organization, the target or a nested call. | Do not block on the oracle; warn and let the live call decide. Report recurring cases to the operator. |
+| `indeterminate` (reason `not_simulated`) | The method may execute EVM code that the oracle does not simulate. | Same as above. |
+
+The oracle never consults an organization outside `CROSS_ORG_AUTHORIZATION_ORACLE_ORG_IDS`, including whether the subject
+is a member of one. An unlinked address and a member of a non-allowlisted organization get the same answer. `indeterminate`
+never weakens security: live RPC still enforces the full policy. In `verdict_only` mode the response contains only the decision
+and its coarse reason; `full_simulation` additionally returns the trace artifacts on `allow`.
 
 The endpoint checks RBAC and nested EVM calls with `debug_traceCall`. Write operations also use a side-effect-free compliance preview.
 The preview does not send a transaction, write a compliance log, or consume a travel-rule record.
 
 The upstream node must support `debug_traceCall`. The endpoint fails closed when tracing is unavailable or exceeds five seconds.
 Traces use the subject organization's upstream RPC API key (or the default key), so oracle load counts against that key's upstream quota. There is no oracle request quota: one global concurrency cap (`MAX_CONCURRENT_REQUESTS` requests in flight) and a 5-second trace timeout protect the proxy and the node. An upstream `429` is returned as `429` with its `Retry-After`.
-`debug_traceCall` and `debug_traceTransaction` are not supported.
+`debug_traceCall` and `debug_traceTransaction` are not supported as the operation (`400`).
 
-Each returned allow or deny verdict writes a row to `policy_check_log`. Body or subject validation failures return an HTTP error without an audit row; an invalid operation (for example an undecodable raw transaction) returns an HTTP error and is still audited with reason `decode_error`.
+Each returned decision writes a row to `policy_check_log`; the specific out-of-scope organization or contract is recorded in the RBAC audit log, never on the wire. Body or subject validation failures return an HTTP error without an audit row; an invalid operation (for example an undecodable raw transaction) returns an HTTP error and is still audited with reason `decode_error`.
 
 This endpoint predicts privacy and compliance acceptance. It does not predict EVM success, gas use, nonce validity, or later state changes.
 

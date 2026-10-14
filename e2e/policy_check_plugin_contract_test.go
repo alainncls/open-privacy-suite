@@ -65,24 +65,24 @@ func TestPolicyCheckAcceptsRPCPayload(t *testing.T) {
 	unknownOriginator := "0x00000000000000000000000000000000000f0f0f"
 
 	tests := []struct {
-		name        string
-		from        string
-		to          string
-		data        string
-		wantAllowed bool
+		name         string
+		from         string
+		to           string
+		data         string
+		wantDecision string
 	}{
-		{"granted contract, selector-bearing calldata", originator, grantedDest, pluginTransferCalldata, true},
-		{"granted contract, bare value transfer", originator, grantedDest, "0x", true},
-		{"contract this org holds but has not granted", originator, ungrantedDest, pluginTransferCalldata, false},
-		{"originator unknown to this chain", unknownOriginator, grantedDest, pluginTransferCalldata, false},
+		{"granted contract, selector-bearing calldata", originator, grantedDest, pluginTransferCalldata, "allow"},
+		{"granted contract, bare value transfer", originator, grantedDest, "0x", "allow"},
+		{"contract this org holds but has not granted", originator, ungrantedDest, pluginTransferCalldata, "deny"},
+		{"originator unknown to this chain", unknownOriginator, grantedDest, pluginTransferCalldata, "indeterminate"},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			body := fmt.Sprintf(pluginPolicyCheckPayload, tc.from, tc.from, tc.to, tc.data)
-			allowed, reason := postRawPolicyCheck(t, serverURL, adminToken+"-oracle", body)
-			require.Equal(t, tc.wantAllowed, allowed, "reason=%q", reason)
-			if !tc.wantAllowed {
+			decision, reason := postRawPolicyCheck(t, serverURL, adminToken+"-oracle", body)
+			require.Equal(t, tc.wantDecision, decision, "reason=%q", reason)
+			if tc.wantDecision != "allow" {
 				// The plugin surfaces this straight into a peer-visible abort reason, so it must
 				// stay a short category and never carry RBAC internals.
 				require.NotEmpty(t, reason)
@@ -118,17 +118,17 @@ func TestPolicyCheckDerivesSelectorFromRPCPayload(t *testing.T) {
 	contractID := createContract(t, database, orgID, dest, "PCSelectorGated")
 	createGrantWithFunctionRule(t, database, contractID, groupID, "0xa9059cbb")
 
-	allowed, _ := postRawPolicyCheck(t, serverURL, adminToken+"-oracle",
+	decision, _ := postRawPolicyCheck(t, serverURL, adminToken+"-oracle",
 		fmt.Sprintf(pluginPolicyCheckPayload, originator, originator, dest, pluginTransferCalldata))
-	require.True(t, allowed, "the permitted selector must be allowed")
+	require.Equal(t, "allow", decision, "the permitted selector must be allowed")
 
 	// approve(address,uint256): same contract, same subject, different selector.
 	const approveCalldata = "0x095ea7b3" +
 		"00000000000000000000000000000000000000000000000000000000000000ff" +
 		"0000000000000000000000000000000000000000000000000000000000000001"
-	allowed, reason := postRawPolicyCheck(t, serverURL, adminToken+"-oracle",
+	decision, reason := postRawPolicyCheck(t, serverURL, adminToken+"-oracle",
 		fmt.Sprintf(pluginPolicyCheckPayload, originator, originator, dest, approveCalldata))
-	require.False(t, allowed, "a selector outside the rule must deny (RD-435), reason=%q", reason)
+	require.Equal(t, "deny", decision, "a selector outside the rule must deny (RD-435), reason=%q", reason)
 }
 
 // createGrantWithFunctionRule restricts a grant to a single selector, the shape that makes the
@@ -143,7 +143,7 @@ func createGrantWithFunctionRule(t *testing.T, database *db.DB, contractID, grou
 	}))
 }
 
-func postRawPolicyCheck(t *testing.T, serverURL, token, rawBody string) (bool, string) {
+func postRawPolicyCheck(t *testing.T, serverURL, token, rawBody string) (string, string) {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, serverURL+"/api/v1/admin/cross-org-authorization-oracle", bytes.NewReader([]byte(rawBody)))
 	require.NoError(t, err)
@@ -154,9 +154,9 @@ func postRawPolicyCheck(t *testing.T, serverURL, token, rawBody string) (bool, s
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode, "plugin payload was not understood by the server")
 	var out struct {
-		Allowed bool   `json:"allowed"`
-		Reason  string `json:"reason"`
+		Decision string `json:"decision"`
+		Reason   string `json:"reason"`
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
-	return out.Allowed, out.Reason
+	return out.Decision, out.Reason
 }

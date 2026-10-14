@@ -801,6 +801,7 @@ func (s *Server) validateTraceWithOrgIDs(
 	traceResult *tracer.TraceResult,
 	userOrgIDs map[string]bool,
 	userHasDeploy bool,
+	extraOpts ...rbac.TraceOption,
 ) *ProcessError {
 	if user == nil || perms == nil || traceResult == nil || s.db == nil {
 		return &ProcessError{
@@ -836,7 +837,7 @@ func (s *Server) validateTraceWithOrgIDs(
 		userOrgIDs,
 		traceResult,
 		userHasDeploy,
-		traceOpts...,
+		append(traceOpts, extraOpts...)...,
 	)
 	if err != nil {
 		slog.Warn("dry-run trace: validator error",
@@ -858,10 +859,12 @@ func (s *Server) validateTraceWithOrgIDs(
 			slog.String("reason", validation.Reason),
 			slog.String("denied_target", validation.DeniedTarget))
 		return &ProcessError{
-			StatusCode:      http.StatusForbidden,
-			Message:         sendTraceDenyMessage(validation.Reason),
-			Reason:          traceDenialReason(validation.DenialKind),
-			TraceDenialKind: validation.DenialKind,
+			StatusCode:        http.StatusForbidden,
+			Message:           sendTraceDenyMessage(validation.Reason),
+			Reason:            traceDenialReason(validation.DenialKind),
+			TraceDenialKind:   validation.DenialKind,
+			TraceDeniedTarget: validation.DeniedTarget,
+			TraceDeniedOrgID:  validation.DeniedOrgID,
 		}
 	}
 	return nil
@@ -869,7 +872,7 @@ func (s *Server) validateTraceWithOrgIDs(
 
 func traceDenialReason(kind rbac.DenialKind) string {
 	switch kind {
-	case rbac.DenialKindForeignOrg, rbac.DenialKindCreateForeign:
+	case rbac.DenialKindForeignOrg, rbac.DenialKindCreateForeign, rbac.DenialKindOutOfScope:
 		return ReasonCrossOrg
 	case rbac.DenialKindUnregistered:
 		return ReasonCrossOrg
