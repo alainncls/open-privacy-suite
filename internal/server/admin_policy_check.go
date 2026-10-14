@@ -20,7 +20,6 @@ import (
 
 	gethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 )
 
 // policyCheckSubject identifies who the operation is checked for. Exactly one
@@ -128,6 +127,10 @@ func oracleNotSimulated() oracleOutcome {
 	return oracleOutcome{decision: oracleDecisionIndeterminate, wireReason: oracleReasonNotSimulated, internalReason: oracleReasonNotSimulated}
 }
 
+// oracleMaxMethodLength bounds operation.method before evaluation, so no audit
+// field can overflow.
+const oracleMaxMethodLength = 128
+
 // crossOrgOracleLimitKey is the one concurrency key for every oracle request,
 // so the limiter's per-key capacity (MAX_CONCURRENT_REQUESTS) caps the total
 // traces in flight whatever the caller address.
@@ -196,13 +199,13 @@ func (s *Server) resolvePolicyCheckSubject(ctx context.Context, subj policyCheck
 // handlePolicyCheck handles POST /api/v1/admin/cross-org-authorization-oracle.
 //
 // @Summary      Check whether a subject would be allowed to make an RPC call
-// @Description  Cross-organization privacy-policy oracle for an explicitly trusted infrastructure caller. Subject is a DID or Ethereum address. Operation is a JSON-RPC method and params. The answer is decision=allow, deny or indeterminate. deny means policy was evaluated inside the oracle scope (the organizations in CROSS_ORG_AUTHORIZATION_ORACLE_ORG_IDS) and refuses the call. indeterminate means the oracle cannot judge: reason=outside_oracle_scope when the subject, the requested or resolved organization, the target or a nested call is outside that scope; reason=not_simulated when the method executes EVM code the oracle does not trace. The oracle never consults an organization outside the scope. Callers should proceed on allow, block on deny, and on indeterminate not block on the oracle but let the live call decide. EVM execution methods use debug_traceCall with the same upstream credential as live calls. Write methods also run a side-effect-free compliance preview. The endpoint does not submit the call or consume a travel-rule record. A supplied sender must link to the subject. Requests share one global concurrency cap (MAX_CONCURRENT_REQUESTS in flight); request-rate limits belong to the upstream RPC proxy. Traces use the subject organization's upstream API key, or the default key, so they count against that key's upstream quota; an upstream 429 is returned as 429 with its Retry-After. debug_traceCall and debug_traceTransaction are not supported (400). Requires the dedicated X-Cross-Org-Authorization-Oracle-Token credential. Admin, operator, and JWT credentials are not accepted. Every evaluation is audited and fails closed. Operational failures (concurrency cap, upstream 429, trace errors or timeouts) return 429 or 503, never a policy verdict.
+// @Description  Cross-organization privacy-policy oracle for an explicitly trusted infrastructure caller. Subject is a DID or Ethereum address. Operation is a JSON-RPC method and params. The answer is decision=allow, deny or indeterminate. deny means policy was evaluated inside the oracle scope (the organizations in CROSS_ORG_AUTHORIZATION_ORACLE_ORG_IDS) and refuses the call. indeterminate means the oracle cannot judge: reason=outside_oracle_scope when the subject, the requested or resolved organization, the target or a nested call is outside that scope; reason=not_simulated when the method executes EVM code the oracle does not trace. The oracle never consults an organization outside the scope. Callers should proceed on allow, block on deny, and on indeterminate not block on the oracle but let the live call decide. EVM execution methods use debug_traceCall with the same upstream credential as live calls. Write methods also run a side-effect-free compliance preview. The endpoint does not submit the call or consume a travel-rule record. A supplied sender must link to the subject. Requests share one global concurrency cap (MAX_CONCURRENT_REQUESTS in flight); request-rate limits belong to the upstream RPC proxy. Traces use the subject organization's upstream API key, or the default key, so they count against that key's upstream quota; an upstream 429 is returned as 429 with its Retry-After. debug_traceCall and debug_traceTransaction are not supported (400). Requires the dedicated X-Cross-Org-Authorization-Oracle-Token credential. Admin, operator, and JWT credentials are not accepted. Every request that reaches evaluation writes one operator-only entry (no organization) to the hash-chained RBAC audit log, including a 429 or 503 after evaluation started; if that write fails the answer is withheld (500). Early 400s (malformed body, subject or method) and the concurrency-cap 429 are not audited. Operational failures (concurrency cap, upstream 429, trace errors or timeouts) return 429 or 503, never a policy verdict.
 // @Tags         Admin: RBAC
 // @Accept       json
 // @Produce      json
 // @Param        request body policyCheckRequest true "subject, operation, and optional org_id"
 // @Success      200 {object} policyCheckResponse
-// @Failure      400 {object} apimodels.APIError "invalid body, missing or unsupported operation.method, an invalid subject address, or subject has neither/both of did and address"
+// @Failure      400 {object} apimodels.APIError "invalid body, missing, over-long or unsupported operation.method, an invalid subject address, or subject has neither/both of did and address"
 // @Failure      401 {object} apimodels.APIError "missing or invalid X-Cross-Org-Authorization-Oracle-Token"
 // @Failure      403 {object} apimodels.APIError "source address not on the private network"
 // @Failure      429 {object} apimodels.APIError "global concurrency cap reached, or upstream 429 (Retry-After passed through); operational, not a policy verdict"
@@ -246,6 +249,10 @@ func (s *Server) handlePolicyCheck(c *gin.Context) {
 	req.Operation.Method = rbac.CanonicalizeMethod(strings.TrimSpace(req.Operation.Method))
 	if req.Operation.Method == "" {
 		respondBadRequest(c, "operation.method is required")
+		return
+	}
+	if len(req.Operation.Method) > oracleMaxMethodLength {
+		respondBadRequest(c, "operation.method is too long")
 		return
 	}
 	if policyCheckUnsupportedTraceMethod(req.Operation.Method) {
@@ -322,18 +329,33 @@ func (s *Server) handlePolicyCheck(c *gin.Context) {
 	if err != nil {
 		var clientErr *simulationClientError
 		var rateLimited *upstreamRateLimitedError
+		recordUnavailable := func(reason string) bool {
+			rec.outcome = oracleOutcome{decision: "unavailable", internalReason: reason}
+			if logErr := s.recordPolicyCheck(ctx, rec); logErr != nil {
+				slog.Error("policy-check: audit log write failed; refusing response", "err", logErr)
+				respondInternalError(c, "internal error")
+				return false
+			}
+			return true
+		}
 		switch {
 		case errors.As(err, &clientErr):
 			respondClientError()
 		case errors.As(err, &rateLimited):
 			// Operational unavailability is not a policy verdict: a caller must
 			// not mistake a busy or degraded node for a deny.
+			if !recordUnavailable("upstream_rate_limited") {
+				return
+			}
 			if rateLimited.retryAfter != "" {
 				c.Header("Retry-After", rateLimited.retryAfter)
 			}
 			respondTooManyRequests(c, "upstream rate limit reached; retry later")
 		case errors.Is(err, errSimUpstreamUnavailable):
 			slog.Warn("policy-check: simulation upstream unavailable", "subject_did", did, "method", operation.Method, "err", err)
+			if !recordUnavailable(ReasonTracingUnavailable) {
+				return
+			}
 			respondServiceUnavailable(c, "policy simulation unavailable; retry later")
 		default:
 			slog.Error("policy-check: evaluation failed", "subject_did", did, "method", operation.Method, "err", err)
@@ -823,64 +845,33 @@ func (s *Server) recordOracleIndeterminate(reason string) {
 	}
 }
 
-// recordPolicyCheck writes one row to policy_check_log and one to the
-// hash-chained RBAC audit log.
+// recordPolicyCheck writes the one audit record of an evaluated request to the
+// hash-chained RBAC audit log. org_id stays NULL, so the row is operator-only:
+// a caller-chosen organization must never surface in that tenant's view.
 func (s *Server) recordPolicyCheck(ctx context.Context, rec oracleAuditRecord) error {
 	if s.db == nil {
-		return nil
-	}
-	conn := s.db.Conn()
-	if conn == nil {
-		return nil
+		return errors.New("audit store is unavailable")
 	}
 	op := rec.operation
-	paramsHash := dryRunParamsHash(op.Method, op.Params)
-	corr := uuid.NullUUID{}
-	if id, err := uuid.Parse(rec.correlationID); err == nil {
-		corr.UUID = id
-		corr.Valid = true
+	payload := map[string]any{
+		"subject_did":      rec.subjectDID,
+		"subject_address":  strings.ToLower(strings.TrimSpace(rec.subjectAddress)),
+		"requested_org_id": rec.requestedOrgID,
+		"evaluated_org_id": rec.evaluatedOrgID,
+		"method":           op.Method,
+		"params_hash":      dryRunParamsHash(op.Method, op.Params),
+		"decision":         rec.outcome.decision,
+		"internal_reason":  rec.outcome.internalReason,
+		"correlation_id":   rec.correlationID,
 	}
-	var didVal, addrVal, orgVal any
-	if rec.subjectDID != "" {
-		didVal = rec.subjectDID
-	}
-	if rec.subjectAddress != "" {
-		addrVal = strings.ToLower(strings.TrimSpace(rec.subjectAddress))
-	}
-	orgID := rec.evaluatedOrgID
-	if orgID == "" {
-		orgID = rec.requestedOrgID
-	}
-	if orgID != "" {
-		orgVal = orgID
-	}
-	allowed := rec.outcome.decision == oracleDecisionAllow
-	_, err := conn.ExecContext(ctx, `
-		INSERT INTO policy_check_log (caller_auth_method, subject_did, subject_address, org_id, method, params_hash, allowed, reason, correlation_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, ''), $9)`,
-		"cross_org_authorization_oracle_token", didVal, addrVal, orgVal, op.Method, paramsHash, allowed, rec.outcome.internalReason, corr,
-	)
-	if err != nil {
-		return err
-	}
-	var auditOrgID *string
-	if orgID != "" {
-		auditOrgID = &orgID
+	if len(rec.outcome.scopeDetail) > 0 {
+		payload["scope_detail"] = rec.outcome.scopeDetail
 	}
 	return s.db.CreateAuditLog(ctx, &rbac.AuditLogEntry{
 		ActorExternalID: "cross-org-authorization-oracle",
-		Action:          "oracle.policy_check",
-		ResourceType:    "policy_check",
-		ResourceName:    op.Method,
-		OrgID:           auditOrgID,
-		NewValue: map[string]any{
-			"params_hash":     paramsHash,
-			"subject_did":     rec.subjectDID,
-			"subject_address": addrVal,
-			"decision":        rec.outcome.decision,
-			"internal_reason": rec.outcome.internalReason,
-			"scope_detail":    rec.outcome.scopeDetail,
-			"correlation_id":  rec.correlationID,
-		},
+		Action:          "cross_org_oracle.query",
+		ResourceType:    "configuration",
+		ResourceName:    "cross_org_authorization_oracle",
+		NewValue:        payload,
 	})
 }

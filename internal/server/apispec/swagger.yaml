@@ -4324,9 +4324,13 @@ paths:
         that key''s upstream quota; an upstream 429 is returned as 429 with its Retry-After.
         debug_traceCall and debug_traceTransaction are not supported (400). Requires
         the dedicated X-Cross-Org-Authorization-Oracle-Token credential. Admin, operator,
-        and JWT credentials are not accepted. Every evaluation is audited and fails
-        closed. Operational failures (concurrency cap, upstream 429, trace errors
-        or timeouts) return 429 or 503, never a policy verdict.'
+        and JWT credentials are not accepted. Every request that reaches evaluation
+        writes one operator-only entry (no organization) to the hash-chained RBAC
+        audit log, including a 429 or 503 after evaluation started; if that write
+        fails the answer is withheld (500). Early 400s (malformed body, subject or
+        method) and the concurrency-cap 429 are not audited. Operational failures
+        (concurrency cap, upstream 429, trace errors or timeouts) return 429 or 503,
+        never a policy verdict.'
       parameters:
       - description: Dedicated cross-org oracle token
         in: header
@@ -4353,8 +4357,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
-          description: invalid body, missing or unsupported operation.method, an invalid
-            subject address, or subject has neither/both of did and address
+          description: invalid body, missing, over-long or unsupported operation.method,
+            an invalid subject address, or subject has neither/both of did and address
         "401":
           content:
             application/json:
