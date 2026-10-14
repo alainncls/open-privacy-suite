@@ -166,6 +166,11 @@ address and a member of a non-allowlisted organization get the same answer. `ind
 never weakens security: live RPC still enforces the full policy. In `verdict_only` mode the response contains only the decision
 and its coarse reason; `full_simulation` additionally returns the trace artifacts on `allow`.
 
+**Authority scope.** The token holder may query any member of any allowlisted organization: the allowlist, set by the
+operator, is the consent boundary. In `full_simulation` mode the caller receives the raw trace and logs for those members,
+unredacted by design. Where the operator must not be able to access tenant data, use `verdict_only`. Per-organization
+consent is planned as follow-up work. See [Configuration](/docs/configuration#cross-org-authorization-oracle) for the settings.
+
 The endpoint checks RBAC and nested EVM calls with `debug_traceCall`, using the same evaluation phases as live RPC and admin
 dry-run (organization selection, sender binding, RBAC, trace with the live block-parameter check, compliance). As on live RPC,
 a targeted `eth_createAccessList` keeps its entry-point check only. Write operations also use a side-effect-free compliance preview.
