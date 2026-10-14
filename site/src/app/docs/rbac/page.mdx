@@ -155,8 +155,8 @@ The endpoint checks RBAC and nested EVM calls with `debug_traceCall`. Write oper
 The preview does not send a transaction, write a compliance log, or consume a travel-rule record.
 
 The upstream node must support `debug_traceCall`. The endpoint fails closed when tracing is unavailable or exceeds five seconds.
-Trace checks use the same upstream RPC credential and configured shared budget as live calls; timeout and concurrency limits also protect resources.
-`debug_traceCall` and `debug_traceTransaction` are not supported. The endpoint also uses the authenticated-request concurrency limit.
+Traces use the subject organization's upstream RPC API key (or the default key), so oracle load counts against that key's upstream quota. There is no oracle request quota: one global concurrency cap (`MAX_CONCURRENT_REQUESTS` requests in flight) and a 5-second trace timeout protect the proxy and the node. An upstream `429` is returned as `429` with its `Retry-After`.
+`debug_traceCall` and `debug_traceTransaction` are not supported.
 
 Each returned allow or deny verdict writes a row to `policy_check_log`. Body or subject validation failures return an HTTP error without an audit row; an invalid operation (for example an undecodable raw transaction) returns an HTTP error and is still audited with reason `decode_error`.
 

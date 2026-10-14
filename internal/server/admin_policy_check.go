@@ -93,32 +93,24 @@ type policyCheckArtifacts struct {
 	Logs  []any `json:"logs,omitempty"`
 }
 
-// policyCheckKnownReasonCategories is the wire-facing allowlist of deny
-// categories; anything else maps to "denied" (RD-877).
-const policyCheckLimiterKey = "admin_policy_check"
+// crossOrgOracleLimitKey is the one concurrency key for every oracle request,
+// so the limiter's per-key capacity (MAX_CONCURRENT_REQUESTS) caps the total
+// traces in flight whatever the caller address.
+const crossOrgOracleLimitKey = "cross_org_oracle"
 
-// crossOrgOracleLimitKey scopes oracle concurrency/rate budgets per caller IP,
-// matching live debug_traceCall (per-user) without sharing one global bucket.
-func crossOrgOracleLimitKey(clientIP string) string {
-	ip := strings.TrimSpace(clientIP)
-	if ip == "" {
-		ip = "unknown"
-	}
-	return policyCheckLimiterKey + ":" + ip
-}
+// policyCheckTraceTimeout bounds one oracle or dry-run trace. A variable so
+// tests can shorten it.
+var policyCheckTraceTimeout = 5 * time.Second
 
-const policyCheckTraceTimeout = 5 * time.Second
+// errSimUpstreamUnavailable wraps any upstream/trace failure (node error,
+// timeout, empty or malformed trace): a transient condition, answered 503.
+var errSimUpstreamUnavailable = errors.New("policy-check simulation upstream unavailable")
 
-// errSimRateLimited and errSimConcurrencyLimited mark operational unavailability
-// (per-caller concurrency cap or trace rate budget), not a policy verdict. The
-// handler answers 429, never a deny.
-var (
-	errSimRateLimited        = errors.New("policy-check trace rate limit reached")
-	errSimConcurrencyLimited = errors.New("policy-check concurrency limit reached")
-	// errSimUpstreamUnavailable wraps any upstream/trace failure (node error,
-	// timeout, empty or malformed trace): a transient condition, answered 503.
-	errSimUpstreamUnavailable = errors.New("policy-check simulation upstream unavailable")
-)
+// upstreamRateLimitedError is an upstream HTTP 429 on a trace forward. The
+// oracle answers 429 and passes Retry-After through.
+type upstreamRateLimitedError struct{ retryAfter string }
+
+func (e *upstreamRateLimitedError) Error() string { return "upstream rate limit reached" }
 
 // sanitizePolicyCheckReason is the client-facing sanitizer: one of
 // policyCheckKnownReasonCategories, else "denied".
@@ -179,7 +171,7 @@ func (s *Server) resolvePolicyCheckSubject(ctx context.Context, subj policyCheck
 // handlePolicyCheck handles POST /api/v1/admin/cross-org-authorization-oracle.
 //
 // @Summary      Check whether a subject would be allowed to make an RPC call
-// @Description  Cross-organization privacy-policy oracle for an explicitly trusted infrastructure caller. Subject is a DID or Ethereum address. Operation is a JSON-RPC method and params. EVM execution methods use debug_traceCall with the same upstream credential as live calls. Write methods also run a side-effect-free compliance preview. The endpoint does not submit the call or consume a travel-rule record. A supplied sender must link to the subject. Trace checks share the per-caller concurrency and rate budget of live calls. debug_traceCall and debug_traceTransaction are not supported. Requires the dedicated X-Cross-Org-Authorization-Oracle-Token credential and an allowlisted organization. Admin, operator, and JWT credentials are not accepted. Every evaluation is audited and fails closed. Operational failures (upstream trace errors, concurrency or rate exhaustion) return 429 or 503, never a policy verdict.
+// @Description  Cross-organization privacy-policy oracle for an explicitly trusted infrastructure caller. Subject is a DID or Ethereum address. Operation is a JSON-RPC method and params. EVM execution methods use debug_traceCall with the same upstream credential as live calls. Write methods also run a side-effect-free compliance preview. The endpoint does not submit the call or consume a travel-rule record. A supplied sender must link to the subject. Requests share one global concurrency cap (MAX_CONCURRENT_REQUESTS in flight); request-rate limits belong to the upstream RPC proxy. Traces use the subject organization's upstream API key, or the default key, so they count against that key's upstream quota; an upstream 429 is returned as 429 with its Retry-After. debug_traceCall and debug_traceTransaction are not supported. Requires the dedicated X-Cross-Org-Authorization-Oracle-Token credential and an allowlisted organization. Admin, operator, and JWT credentials are not accepted. Every evaluation is audited and fails closed. Operational failures (concurrency cap, upstream 429, trace errors or timeouts) return 429 or 503, never a policy verdict.
 // @Tags         Admin: RBAC
 // @Accept       json
 // @Produce      json
@@ -188,7 +180,7 @@ func (s *Server) resolvePolicyCheckSubject(ctx context.Context, subj policyCheck
 // @Failure      400 {object} apimodels.APIError "invalid body, missing operation.method, an invalid subject address, or subject has neither/both of did and address"
 // @Failure      401 {object} apimodels.APIError "missing or invalid X-Cross-Org-Authorization-Oracle-Token"
 // @Failure      403 {object} apimodels.APIError "source address not on the private network, or the credential cannot read tenant policy"
-// @Failure      429 {object} apimodels.APIError "concurrency or rate budget exhausted; operational, not a policy verdict"
+// @Failure      429 {object} apimodels.APIError "global concurrency cap reached, or upstream 429 (Retry-After passed through); operational, not a policy verdict"
 // @Failure      500 {object} apimodels.APIError "internal error (includes audit-log write failure, response withheld)"
 // @Failure      503 {object} apimodels.APIError "policy simulation unavailable (upstream trace failure); operational, not a policy verdict"
 // @Param        X-Cross-Org-Authorization-Oracle-Token header string true "Dedicated cross-org oracle token"
@@ -368,9 +360,13 @@ func (s *Server) handlePolicyCheck(c *gin.Context) {
 			}
 			// Operational unavailability is not a policy verdict: answer 429/503
 			// so a caller cannot mistake a busy or degraded node for a deny.
+			var rateLimited *upstreamRateLimitedError
 			switch {
-			case errors.Is(err, errSimRateLimited), errors.Is(err, errSimConcurrencyLimited):
-				respondTooManyRequests(c, "policy-check trace capacity exhausted; retry later")
+			case errors.As(err, &rateLimited):
+				if rateLimited.retryAfter != "" {
+					c.Header("Retry-After", rateLimited.retryAfter)
+				}
+				respondTooManyRequests(c, "upstream rate limit reached; retry later")
 				return
 			case errors.Is(err, errSimUpstreamUnavailable):
 				slog.Warn("policy-check: simulation upstream unavailable", "subject_did", did, "method", operation.Method, "err", err)
@@ -510,9 +506,11 @@ func (s *Server) simulatePolicyCheck(
 	if !s.policyCheckEOATransfer(traceCtx, op, apiKey, apiKeyHeader) {
 		traceResult, traceErr := s.forwardDryRunTraceWithAPIKey(traceCtx, op, apiKey, apiKeyHeader)
 		if traceErr != nil {
-			// Malformed operation params are a client error, not an upstream failure.
+			// Malformed operation params are a client error, and an upstream 429
+			// is passed through; neither is an upstream outage.
 			var clientErr *simulationClientError
-			if errors.As(traceErr, &clientErr) {
+			var rateLimited *upstreamRateLimitedError
+			if errors.As(traceErr, &clientErr) || errors.As(traceErr, &rateLimited) {
 				return "", "", traceErr
 			}
 			// Any other trace failure (node error, timeout, empty/malformed

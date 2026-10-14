@@ -1839,35 +1839,22 @@ func (s *Server) crossOrgAuthorizationOracleAuthMiddleware() gin.HandlerFunc {
 	}
 }
 
-// crossOrgAuthorizationOracleLimitMiddleware covers the entire authenticated
-// oracle request, including subject/RBAC denials and non-EVM methods. The
-// simulation path has additional trace-specific controls.
+// crossOrgAuthorizationOracleLimitMiddleware caps the oracle requests in flight
+// with one global concurrency key, so a burst cannot tie up the proxy or the
+// node. Request-rate limits belong to the upstream RPC proxy.
 func (s *Server) crossOrgAuthorizationOracleLimitMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if s.jsonrpcProcessor == nil {
+		if s.jsonrpcProcessor == nil || s.jsonrpcProcessor.concurrencyLimiter == nil {
 			c.Next()
 			return
 		}
-		limitKey := crossOrgOracleLimitKey(c.ClientIP())
 		limiter := s.jsonrpcProcessor.concurrencyLimiter
-		if limiter != nil && !limiter.TryAcquire(limitKey) {
+		if !limiter.TryAcquire(crossOrgOracleLimitKey) {
 			respondTooManyRequests(c, "policy-check capacity exhausted; retry later")
 			c.Abort()
 			return
 		}
-		if limiter != nil {
-			defer limiter.Release(limitKey)
-		}
-		if rateLimiter := s.jsonrpcProcessor.rateLimiter; rateLimiter != nil {
-			// Match the live debug-trace budget (jsonrpc_trace.go): nil limits are
-			// treated as unlimited and would make this endpoint unrategated.
-			rps, daily := 1, 100
-			if allowed, _ := rateLimiter.CheckAndIncrement(limitKey, &rps, &daily); !allowed {
-				respondTooManyRequests(c, "policy-check rate limit exhausted; retry later")
-				c.Abort()
-				return
-			}
-		}
+		defer limiter.Release(crossOrgOracleLimitKey)
 		c.Next()
 	}
 }

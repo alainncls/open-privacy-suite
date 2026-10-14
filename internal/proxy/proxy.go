@@ -141,10 +141,21 @@ func (p *Proxy) ForwardWithAPIKeyHeaderContext(ctx context.Context, reqBody []by
 	return p.forwardWithAPIKeyHeaderContext(ctx, reqBody, headerName, apiKey, clientIP)
 }
 
+// ForwardWithResponseHeaders is ForwardWithAPIKeyHeaderContext that also
+// returns the upstream response headers (e.g. Retry-After on a 429).
+func (p *Proxy) ForwardWithResponseHeaders(ctx context.Context, reqBody []byte, headerName, apiKey, clientIP string) ([]byte, int, http.Header, error) {
+	return p.forward(ctx, reqBody, headerName, apiKey, clientIP)
+}
+
 func (p *Proxy) forwardWithAPIKeyHeaderContext(ctx context.Context, reqBody []byte, headerName, apiKey, clientIP string) ([]byte, int, error) {
+	body, status, _, err := p.forward(ctx, reqBody, headerName, apiKey, clientIP)
+	return body, status, err
+}
+
+func (p *Proxy) forward(ctx context.Context, reqBody []byte, headerName, apiKey, clientIP string) ([]byte, int, http.Header, error) {
 	req, err := http.NewRequestWithContext(ctx, "POST", p.targetURL, bytes.NewReader(reqBody))
 	if err != nil {
-		return nil, http.StatusInternalServerError, fmt.Errorf("failed to create request: %w", err)
+		return nil, http.StatusInternalServerError, nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -155,7 +166,7 @@ func (p *Proxy) forwardWithAPIKeyHeaderContext(ctx context.Context, reqBody []by
 
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return nil, http.StatusBadGateway, fmt.Errorf("failed to forward request: %w", err)
+		return nil, http.StatusBadGateway, nil, fmt.Errorf("failed to forward request: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -164,13 +175,13 @@ func (p *Proxy) forwardWithAPIKeyHeaderContext(ctx context.Context, reqBody []by
 	// rejected with 502 so a misbehaving upstream cannot OOM the proxy.
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxRPCResponseSize+1))
 	if err != nil {
-		return nil, http.StatusBadGateway, fmt.Errorf("failed to read response: %w", err)
+		return nil, http.StatusBadGateway, nil, fmt.Errorf("failed to read response: %w", err)
 	}
 	if len(body) > maxRPCResponseSize {
-		return nil, http.StatusBadGateway, fmt.Errorf("upstream RPC response exceeded %d byte limit", maxRPCResponseSize)
+		return nil, http.StatusBadGateway, nil, fmt.Errorf("upstream RPC response exceeded %d byte limit", maxRPCResponseSize)
 	}
 
-	return body, resp.StatusCode, nil
+	return body, resp.StatusCode, resp.Header, nil
 }
 
 // ErrBatchRequest is returned when a batch JSON-RPC request is detected.

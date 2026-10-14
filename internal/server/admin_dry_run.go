@@ -689,9 +689,12 @@ func (s *Server) forwardDryRunTraceWithAPIKey(ctx context.Context, rpc apimodels
 	if err != nil {
 		return nil, fmt.Errorf("marshal: %w", err)
 	}
-	respBody, _, err := s.proxy.ForwardWithAPIKeyHeaderContext(ctx, body, apiKeyHeader, apiKey, "")
+	respBody, status, header, err := s.proxy.ForwardWithResponseHeaders(ctx, body, apiKeyHeader, apiKey, "")
 	if err != nil {
 		return nil, err
+	}
+	if status == http.StatusTooManyRequests {
+		return nil, &upstreamRateLimitedError{retryAfter: header.Get("Retry-After")}
 	}
 
 	var rpcResp struct {

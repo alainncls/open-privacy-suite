@@ -6256,7 +6256,7 @@
         },
         "/api/v1/admin/cross-org-authorization-oracle": {
             "post": {
-                "description": "Cross-organization privacy-policy oracle for an explicitly trusted infrastructure caller. Subject is a DID or Ethereum address. Operation is a JSON-RPC method and params. EVM execution methods use debug_traceCall with the same upstream credential as live calls. Write methods also run a side-effect-free compliance preview. The endpoint does not submit the call or consume a travel-rule record. A supplied sender must link to the subject. Trace checks share the per-caller concurrency and rate budget of live calls. debug_traceCall and debug_traceTransaction are not supported. Requires the dedicated X-Cross-Org-Authorization-Oracle-Token credential and an allowlisted organization. Admin, operator, and JWT credentials are not accepted. Every evaluation is audited and fails closed. Operational failures (upstream trace errors, concurrency or rate exhaustion) return 429 or 503, never a policy verdict.",
+                "description": "Cross-organization privacy-policy oracle for an explicitly trusted infrastructure caller. Subject is a DID or Ethereum address. Operation is a JSON-RPC method and params. EVM execution methods use debug_traceCall with the same upstream credential as live calls. Write methods also run a side-effect-free compliance preview. The endpoint does not submit the call or consume a travel-rule record. A supplied sender must link to the subject. Requests share one global concurrency cap (MAX_CONCURRENT_REQUESTS in flight); request-rate limits belong to the upstream RPC proxy. Traces use the subject organization's upstream API key, or the default key, so they count against that key's upstream quota; an upstream 429 is returned as 429 with its Retry-After. debug_traceCall and debug_traceTransaction are not supported. Requires the dedicated X-Cross-Org-Authorization-Oracle-Token credential and an allowlisted organization. Admin, operator, and JWT credentials are not accepted. Every evaluation is audited and fails closed. Operational failures (concurrency cap, upstream 429, trace errors or timeouts) return 429 or 503, never a policy verdict.",
                 "parameters": [
                     {
                         "description": "Dedicated cross-org oracle token",
@@ -6328,7 +6328,7 @@
                                 }
                             }
                         },
-                        "description": "concurrency or rate budget exhausted; operational, not a policy verdict"
+                        "description": "global concurrency cap reached, or upstream 429 (Retry-After passed through); operational, not a policy verdict"
                     },
                     "500": {
                         "content": {
