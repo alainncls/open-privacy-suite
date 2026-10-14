@@ -512,6 +512,10 @@ func (s *Server) simulatePolicyCheck(
 		return oracleNotSimulated(), nil
 	}
 
+	if effectiveMethod == "eth_createAccessList" && accessReq.TargetAddress != "" {
+		// As live RPC: a targeted access list keeps its entry-point gate only.
+		return oracleAllow(), nil
+	}
 	if s.db == nil || s.rbacAccessCtrl == nil || accessResult == nil || accessResult.OrgID == "" {
 		return oracleOutcome{}, errors.New("resolved policy context is unavailable")
 	}
@@ -574,17 +578,8 @@ func (s *Server) simulatePolicyCheck(
 			if validationErr.StatusCode >= http.StatusInternalServerError {
 				return oracleOutcome{}, fmt.Errorf("%w: trace validation unavailable", errSimUpstreamUnavailable)
 			}
-			if validationErr.TraceDenialKind == rbac.DenialKindDeployClaim {
-				// The claim may exist in an organization the oracle may not
-				// consult, so a missing in-scope claim cannot be judged.
-				return oracleOutsideScope("deploy_claim_not_in_scope", nil), nil
-			}
-			if validationErr.TraceDenialKind == rbac.DenialKindOutOfScope {
-				return oracleOutsideScope("nested_call_outside_allowlist", map[string]string{
-					"org_id": validationErr.TraceDeniedOrgID, "contract": validationErr.TraceDeniedTarget,
-				}), nil
-			}
-			return oracleDeny(sanitizeDryRunReason(validationErr.Reason)), nil
+			v := traceVerdict(authorizationScopeAllowlisted, validationErr)
+			return oracleOutcome{decision: v.decision, wireReason: v.wireReason, internalReason: v.internalReason, scopeDetail: v.detail}, nil
 		}
 	}
 	if effectiveMethod == "eth_sendTransaction" || effectiveMethod == "eth_sendRawTransaction" {
@@ -593,7 +588,7 @@ func (s *Server) simulatePolicyCheck(
 			return oracleOutcome{}, extractErr
 		}
 		if s.complianceChecker != nil {
-			compResult, compErr := s.complianceChecker.CheckPreview(ctx, &compliance.CheckRequest{
+			compResult, compErr := complianceVerdict(ctx, s.complianceChecker, evaluationPreview, &compliance.CheckRequest{
 				OrgID: accessResult.OrgID, UserID: user.ID, From: from, To: to, Data: data, Value: value,
 			})
 			if compErr != nil {
@@ -648,35 +643,11 @@ func (s *Server) validatePolicyCheckTrace(
 	orgID, targetAddr string,
 	traceResult *tracer.TraceResult,
 ) *ProcessError {
-	if user == nil || s.rbacAccessCtrl == nil {
-		return &ProcessError{StatusCode: http.StatusInternalServerError, Message: sendTraceValidatorError, Reason: ReasonTracingUnavailable}
-	}
-	// Active memberships only (DB-side filter): an expired time-boxed grant
-	// must not authorize nested calls into its former organization.
-	memberships, err := s.rbacAccessCtrl.Store().ListActiveUserMembershipsWithDetails(ctx, user.ID)
+	scope := evaluationScope{kind: authorizationScopeAllowlisted, orgID: orgID, inScope: s.crossOrgAuthorizationOracleOrgAllowed}
+	userOrgIDs, userHasDeploy, err := traceOrgScope(ctx, s.rbacAccessCtrl, user, scope)
 	if err != nil {
-		slog.Warn("policy-check: membership lookup failed", "subject_did", user.ExternalID, "err", err)
+		slog.Warn("policy-check: trace scope lookup failed", "org_id", orgID, "err", err)
 		return &ProcessError{StatusCode: http.StatusInternalServerError, Message: sendTraceValidatorError, Reason: ReasonTracingUnavailable}
-	}
-	// Every policy input, the deploy claim included, comes from allowlisted
-	// memberships only.
-	userOrgIDs := make(map[string]bool)
-	inScope := make([]*rbac.MembershipWithDetails, 0, len(memberships))
-	for _, membership := range memberships {
-		if membership.Group != nil && s.crossOrgAuthorizationOracleOrgAllowed(membership.Group.OrgID) {
-			userOrgIDs[membership.Group.OrgID] = true
-			inScope = append(inScope, membership)
-		}
-	}
-	if !userOrgIDs[orgID] {
-		return &ProcessError{StatusCode: http.StatusForbidden, Message: "subject organization is outside the oracle allowlist", Reason: ReasonWireGenericDenied}
-	}
-	if len(userOrgIDs) == 0 {
-		return &ProcessError{StatusCode: http.StatusInternalServerError, Message: sendTraceValidatorError, Reason: ReasonTracingUnavailable}
-	}
-	userHasDeploy := effectivePermissionsHasDeployClaim(perms)
-	if s.jsonrpcProcessor != nil && s.jsonrpcProcessor.rbacAccessCtrl != nil {
-		userHasDeploy = s.jsonrpcProcessor.userHasDeployClaim(ctx, inScope)
 	}
 	return s.validateTraceWithOrgIDs(ctx, user, perms, orgID, targetAddr, traceResult, userOrgIDs, userHasDeploy,
 		rbac.WithEvaluationScope(s.crossOrgAuthorizationOracleOrgAllowed))
@@ -805,16 +776,14 @@ func (s *Server) validatePolicyCheckSender(ctx context.Context, subjectDID strin
 	if !gethcommon.IsHexAddress(from) {
 		return ReasonInvalidRequestShape, nil
 	}
-	addresses, err := s.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, subjectDID)
+	linked, err := senderLinked(ctx, s.rbacAccessCtrl.Store(), subjectDID, from)
 	if err != nil {
 		return "", err
 	}
-	for _, address := range addresses {
-		if strings.EqualFold(address, from) {
-			return "", nil
-		}
+	if !linked {
+		return ReasonSenderNotLinked, nil
 	}
-	return ReasonSenderNotLinked, nil
+	return "", nil
 }
 
 func policyCheckTransactionFields(op apimodels.DryRunRPCBlock) (from, to, data, value string, err error) {

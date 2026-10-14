@@ -1406,7 +1406,7 @@ func (p *JSONRPCProcessor) checkCompliance(ctx context.Context, req *ProcessRequ
 	}
 
 	compStart := time.Now()
-	compResult, compErr := p.complianceChecker.Check(ctx, &compliance.CheckRequest{
+	compResult, compErr := complianceVerdict(ctx, p.complianceChecker, evaluationCommit, &compliance.CheckRequest{
 		OrgID:         orgID,
 		UserID:        userID,
 		From:          from,
