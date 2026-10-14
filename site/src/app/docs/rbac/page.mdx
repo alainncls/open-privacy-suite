@@ -166,7 +166,9 @@ address and a member of a non-allowlisted organization get the same answer. `ind
 never weakens security: live RPC still enforces the full policy. In `verdict_only` mode the response contains only the decision
 and its coarse reason; `full_simulation` additionally returns the trace artifacts on `allow`.
 
-The endpoint checks RBAC and nested EVM calls with `debug_traceCall`. Write operations also use a side-effect-free compliance preview.
+The endpoint checks RBAC and nested EVM calls with `debug_traceCall`, using the same evaluation phases as live RPC and admin
+dry-run (organization selection, sender binding, RBAC, trace with the live block-parameter check, compliance). As on live RPC,
+a targeted `eth_createAccessList` keeps its entry-point check only. Write operations also use a side-effect-free compliance preview.
 The preview does not send a transaction, write a compliance log, or consume a travel-rule record.
 
 The upstream node must support `debug_traceCall`. The endpoint fails closed when tracing is unavailable or exceeds five seconds.

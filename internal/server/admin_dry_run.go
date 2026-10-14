@@ -562,7 +562,7 @@ func (s *Server) dryRunWriteComplianceBlocked(
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid operation"})
 		return true
 	}
-	compResult, compErr := s.complianceChecker.CheckPreview(ctx, &compliance.CheckRequest{
+	compResult, compErr := complianceVerdict(ctx, s.complianceChecker, evaluationPreview, &compliance.CheckRequest{
 		OrgID: orgID, UserID: user.ID, From: from, To: to, Data: data, Value: value,
 	})
 	if compErr != nil {
@@ -656,9 +656,12 @@ func (s *Server) forwardDryRunTraceWithAPIKey(ctx context.Context, rpc apimodels
 		txObj = obj
 		if effectiveMethod == "eth_sendTransaction" {
 			txObj = policyCheckTraceTransaction(txObj)
-		}
-		if (effectiveMethod == "eth_call" || effectiveMethod == "eth_estimateGas" || effectiveMethod == "eth_createAccessList") && len(rpc.Params) > 1 {
-			blockParam = rpc.Params[1]
+		} else {
+			block, err := traceBlockParam(rpc.Params)
+			if err != nil {
+				return nil, err
+			}
+			blockParam = block
 		}
 	case "eth_sendRawTransaction":
 		if len(rpc.Params) > 2 {
@@ -778,22 +781,14 @@ func policyCheckTraceTransaction(txObj map[string]any) map[string]any {
 // orgID rather than all of the impersonated user's memberships: an Org A admin
 // must not receive nested Org B calls merely because the user belongs to both.
 func dryRunTraceProcessOutcome(validationErr *ProcessError) (decision, wireDecision, wireReason, auditReason, responseDecision string) {
-	decision = "deny"
-	wireDecision = "deny"
-	wireReason = validationErr.Message
-	auditReason = sanitizeDryRunReason(validationErr.Reason)
-	if validationErr.TraceDenialKind == rbac.DenialKindForeignOrg ||
-		validationErr.TraceDenialKind == rbac.DenialKindCreateForeign {
-		wireDecision = "indeterminate"
-		wireReason = "external_scope_required"
-		auditReason = "external_scope_required"
-		responseDecision = "indeterminate"
-	}
 	if validationErr.StatusCode >= http.StatusInternalServerError {
-		decision = "error"
-		responseDecision = ""
+		return "error", "deny", validationErr.Message, sanitizeDryRunReason(validationErr.Reason), ""
 	}
-	return decision, wireDecision, wireReason, auditReason, responseDecision
+	v := traceVerdict(authorizationScopeOrgLocal, validationErr)
+	if v.decision == oracleDecisionIndeterminate {
+		responseDecision = v.decision
+	}
+	return "deny", v.decision, v.wireReason, v.internalReason, responseDecision
 }
 
 func (s *Server) validateDryRunTrace(
@@ -803,10 +798,12 @@ func (s *Server) validateDryRunTrace(
 	orgID, targetAddr string,
 	traceResult *tracer.TraceResult,
 ) *ProcessError {
-	return s.validateTraceWithOrgIDs(
-		ctx, user, perms, orgID, targetAddr, traceResult,
-		map[string]bool{orgID: true}, effectivePermissionsHasDeployClaim(perms),
-	)
+	userOrgIDs, userHasDeploy, err := traceOrgScope(ctx, s.rbacAccessCtrl, user, evaluationScope{kind: authorizationScopeOrgLocal, orgID: orgID})
+	if err != nil {
+		slog.Warn("dry-run trace: scope lookup failed", "org_id", orgID, "err", err)
+		return &ProcessError{StatusCode: http.StatusInternalServerError, Message: sendTraceValidatorError, Reason: ReasonTracingUnavailable}
+	}
+	return s.validateTraceWithOrgIDs(ctx, user, perms, orgID, targetAddr, traceResult, userOrgIDs, userHasDeploy)
 }
 
 // validateTraceWithOrgIDs applies a trace policy with an explicit organization
