@@ -160,7 +160,9 @@ The response has a `decision` of `allow`, `deny` or `indeterminate`:
 | `indeterminate` (reason `not_simulated`) | The method may execute EVM code that the oracle does not simulate. | Same as above. |
 
 The oracle never consults an organization outside `CROSS_ORG_AUTHORIZATION_ORACLE_ORG_IDS`, including whether the subject
-is a member of one. An unlinked address and a member of a non-allowlisted organization get the same answer. `indeterminate`
+is a member of one, and every policy input comes from allowlisted memberships only. A nested contract creation without a
+deploy claim in an allowlisted organization is therefore `indeterminate`, since the claim may exist elsewhere. An unlinked
+address and a member of a non-allowlisted organization get the same answer. `indeterminate`
 never weakens security: live RPC still enforces the full policy. In `verdict_only` mode the response contains only the decision
 and its coarse reason; `full_simulation` additionally returns the trace artifacts on `allow`.
 
