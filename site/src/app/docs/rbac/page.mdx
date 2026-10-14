@@ -173,7 +173,13 @@ The upstream node must support `debug_traceCall`. The endpoint fails closed when
 Traces use the subject organization's upstream RPC API key (or the default key), so oracle load counts against that key's upstream quota. There is no oracle request quota: one global concurrency cap (`MAX_CONCURRENT_REQUESTS` requests in flight) and a 5-second trace timeout protect the proxy and the node. An upstream `429` is returned as `429` with its `Retry-After`.
 `debug_traceCall` and `debug_traceTransaction` are not supported as the operation (`400`).
 
-Each returned decision writes a row to `policy_check_log`; the specific out-of-scope organization or contract is recorded in the RBAC audit log, never on the wire. Body or subject validation failures return an HTTP error without an audit row; an invalid operation (for example an undecodable raw transaction) returns an HTTP error and is still audited with reason `decode_error`.
+Every request that reaches evaluation writes exactly one entry to the hash-chained RBAC audit log (action
+`cross_org_oracle.query`), covered by the [audit integrity](/docs/security/audit-integrity) verifier. The entry has no
+organization, so it is operator-only and never appears in a tenant's audit view, even when the request names that
+organization. It records the subject, the requested and evaluated organizations, the method, a hash of the params, the
+decision, the internal reason and, for `indeterminate`, the specific out-of-scope organization or contract. A `429` or `503`
+after evaluation started is recorded too. If the entry cannot be written, no answer is returned (`500`). Early `400`s
+(malformed body, subject or method) and the concurrency-cap `429` write no entry.
 
 This endpoint predicts privacy and compliance acceptance. It does not predict EVM success, gas use, nonce validity, or later state changes.
 

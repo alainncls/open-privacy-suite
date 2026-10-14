@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"privacy-proxy/internal/apimodels"
+	"privacy-proxy/internal/audit"
 	"privacy-proxy/internal/compliance"
 	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/metrics"
@@ -522,9 +523,7 @@ func TestPolicyCheck_RejectsMalformedAddressSubject(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
 	assert.Contains(t, w.Body.String(), "valid Ethereum address")
 
-	var count int
-	require.NoError(t, f.db.Conn().QueryRowContext(context.Background(), `SELECT COUNT(*) FROM policy_check_log`).Scan(&count))
-	assert.Zero(t, count)
+	assert.Empty(t, oracleAuditRows(t, f), "an early 400 writes no audit row")
 }
 
 // -------------------------------------------------------------- subject ---
@@ -535,6 +534,36 @@ func assertOracleAnswer(t *testing.T, w *httptest.ResponseRecorder, decision, re
 	resp := decodePolicyCheckResponse(t, w)
 	assert.Equal(t, decision, resp.Decision, "body: %s", w.Body.String())
 	assert.Equal(t, reason, resp.Reason, "body: %s", w.Body.String())
+}
+
+// oracleAuditRows returns the payloads of the oracle's RBAC audit rows, oldest
+// first, and asserts every row is operator-only (org_id NULL).
+func oracleAuditRows(t *testing.T, f *pcFixture) []map[string]any {
+	t.Helper()
+	rows, err := f.db.Conn().QueryContext(context.Background(), `
+		SELECT org_id IS NULL, new_value FROM rbac_audit_log
+		 WHERE action = 'cross_org_oracle.query' ORDER BY id`)
+	require.NoError(t, err)
+	defer rows.Close()
+	var out []map[string]any
+	for rows.Next() {
+		var orgNull bool
+		var raw []byte
+		require.NoError(t, rows.Scan(&orgNull, &raw))
+		assert.True(t, orgNull, "oracle audit rows must be operator-only")
+		var payload map[string]any
+		require.NoError(t, json.Unmarshal(raw, &payload))
+		out = append(out, payload)
+	}
+	require.NoError(t, rows.Err())
+	return out
+}
+
+func lastOracleAudit(t *testing.T, f *pcFixture) map[string]any {
+	t.Helper()
+	rows := oracleAuditRows(t, f)
+	require.NotEmpty(t, rows, "expected an oracle audit row")
+	return rows[len(rows)-1]
 }
 
 // pcUnallowlistedOrg creates an organization outside the oracle allowlist with
@@ -662,13 +691,9 @@ func TestPolicyCheck_CollisionAddressRefusesToChoose(t *testing.T) {
 
 	// Neither colliding DID appears in the audit row: resolution never got far
 	// enough to pick one.
-	var subjectDID *string
-	require.NoError(t, f.srv.db.Conn().QueryRowContext(context.Background(), `
-		SELECT subject_did FROM policy_check_log
-		 WHERE subject_address = $1 ORDER BY created_at DESC LIMIT 1`,
-		f.collisionAddr,
-	).Scan(&subjectDID))
-	assert.Nil(t, subjectDID)
+	row := lastOracleAudit(t, f)
+	assert.Equal(t, strings.ToLower(f.collisionAddr), row["subject_address"])
+	assert.Empty(t, row["subject_did"])
 }
 
 // ------------------------------------------------------------------ org ---
@@ -700,13 +725,15 @@ func TestPolicyCheck_ExplicitUnallowlistedOrgOutsideScope(t *testing.T) {
 	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", body)
 	assertOracleAnswer(t, w, oracleDecisionIndeterminate, oracleReasonOutsideScope)
 
-	var auditReason string
-	require.NoError(t, f.srv.db.Conn().QueryRowContext(ctx, `
-		SELECT reason FROM policy_check_log
-		 WHERE subject_did = $1 AND org_id = $2 ORDER BY created_at DESC LIMIT 1`,
-		f.userDID, forbiddenOrg,
-	).Scan(&auditReason))
-	assert.Equal(t, "requested_org_outside_allowlist", auditReason)
+	row := lastOracleAudit(t, f)
+	assert.Equal(t, "requested_org_outside_allowlist", row["internal_reason"])
+	assert.Equal(t, forbiddenOrg, row["requested_org_id"])
+	assert.Equal(t, map[string]any{"org_id": forbiddenOrg}, row["scope_detail"])
+
+	// The probe never appears in that organization's tenant audit view.
+	scoped, err := f.srv.db.ListAuditLogsScoped(ctx, "", nil, []string{forbiddenOrg}, 100, 0)
+	require.NoError(t, err)
+	assert.Empty(t, scoped)
 }
 
 func TestPolicyCheck_OrgOmittedMultiOrgSubjectDenied(t *testing.T) {
@@ -732,13 +759,7 @@ func TestPolicyCheck_OrgOmittedMultiOrgSubjectDenied(t *testing.T) {
 	assertOracleAnswer(t, w, oracleDecisionDeny, oracleReasonDenied)
 
 	// The audit row keeps the informative reason: it is operator-only.
-	var auditReason string
-	require.NoError(t, f.srv.db.Conn().QueryRowContext(ctx, `
-		SELECT reason FROM policy_check_log
-		 WHERE subject_did = $1 AND allowed = false ORDER BY created_at DESC LIMIT 1`,
-		f.userDID,
-	).Scan(&auditReason))
-	assert.Equal(t, "ambiguous_organization", auditReason)
+	assert.Equal(t, "ambiguous_organization", lastOracleAudit(t, f)["internal_reason"])
 }
 
 // A target owned outside the allowlist is outside the oracle scope, whether or
@@ -931,7 +952,7 @@ func TestPolicyCheck_NestedCallOutsideAllowlistIndeterminate(t *testing.T) {
 			var raw []byte
 			require.NoError(t, f.db.Conn().QueryRowContext(context.Background(), `
 				SELECT (new_value::jsonb)->'scope_detail' FROM rbac_audit_log
-				 WHERE action = 'oracle.policy_check' ORDER BY id DESC LIMIT 1`).Scan(&raw))
+				 WHERE action = 'cross_org_oracle.query' ORDER BY id DESC LIMIT 1`).Scan(&raw))
 			require.NoError(t, json.Unmarshal(raw, &detail))
 			assert.Equal(t, orgC, detail["org_id"])
 			assert.Equal(t, nested, detail["contract"])
@@ -1356,13 +1377,10 @@ func TestPolicyCheck_MalformedRawTransactionBadRequestAndAudited(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "invalid operation")
 
-	var reason string
-	require.NoError(t, f.srv.db.Conn().QueryRowContext(context.Background(), `
-		SELECT reason FROM policy_check_log
-		 WHERE subject_did = $1 AND method = 'eth_sendRawTransaction' ORDER BY created_at DESC LIMIT 1`,
-		f.userDID,
-	).Scan(&reason))
-	assert.Equal(t, "decode_error", reason)
+	row := lastOracleAudit(t, f)
+	assert.Equal(t, "eth_sendRawTransaction", row["method"])
+	assert.Equal(t, "error", row["decision"])
+	assert.Equal(t, "decode_error", row["internal_reason"])
 }
 
 // TestPolicyCheck_AuditWriteFailureIsFailClosed mirrors
@@ -1377,61 +1395,100 @@ func TestPolicyCheck_AuditWriteFailureIsFailClosed(t *testing.T) {
 	conn := f.srv.db.Conn()
 
 	_, err := conn.ExecContext(ctx, `
-		ALTER TABLE policy_check_log
-		ADD CONSTRAINT policy_check_log_reject_deny_test
-		CHECK (allowed = true) NOT VALID`)
+		ALTER TABLE rbac_audit_log
+		ADD CONSTRAINT rbac_audit_log_reject_oracle_test
+		CHECK (action <> 'cross_org_oracle.query') NOT VALID`)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_, dropErr := conn.ExecContext(context.Background(), `
-			ALTER TABLE policy_check_log
-			DROP CONSTRAINT IF EXISTS policy_check_log_reject_deny_test`)
+			ALTER TABLE rbac_audit_log
+			DROP CONSTRAINT IF EXISTS rbac_audit_log_reject_oracle_test`)
 		assert.NoError(t, dropErr)
 	})
 
 	otherAddr := "0x000000000000000000000000000000000000ac88"
-	op := pcBalanceOfCallOp(f.contractAddr, otherAddr) // denied by the param rule
 	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", map[string]any{
 		"subject":   map[string]any{"did": f.userDID},
-		"operation": op,
+		"operation": pcBalanceOfCallOp(f.contractAddr, otherAddr), // denied by the param rule
 	})
-
 	require.Equal(t, http.StatusInternalServerError, w.Code, "body: %s", w.Body.String())
 	assert.JSONEq(t, `{"error":"internal error"}`, w.Body.String())
-
-	// Scoped by params_hash, not just subject+method, so this stays correct
-	// even if some other test's row for the same subject/method survives.
-	wantHash := dryRunParamsHash(op["method"].(string), op["params"].([]any))
-	var count int
-	require.NoError(t, conn.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM policy_check_log
-		 WHERE subject_did = $1 AND params_hash = $2`,
-		f.userDID, wantHash,
-	).Scan(&count))
-	assert.Zero(t, count, "the denied verdict must never be persisted once the audit write itself failed")
+	assert.Empty(t, oracleAuditRows(t, f))
 }
 
-// ---------------------------------------------------------------- audit ---
+func TestPolicyCheck_NoAuditStoreIsFailClosed(t *testing.T) {
+	f := setupPCFixture(t)
+	srv := &Server{config: f.srv.config}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("auth_method", "cross_org_authorization_oracle_token")
+	jb, err := json.Marshal(map[string]any{
+		"subject":   map[string]any{"did": f.userDID},
+		"org_id":    uuid.New().String(),
+		"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr),
+	})
+	require.NoError(t, err)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/policy-check", bytes.NewReader(jb))
+	srv.handlePolicyCheck(c)
+	require.Equal(t, http.StatusInternalServerError, w.Code, "body: %s", w.Body.String())
+	assert.NotContains(t, w.Body.String(), "decision")
+}
 
-func TestPolicyCheck_AuditRowRecordsCallerAndSubject(t *testing.T) {
+// One evaluated request leaves exactly one operator-only row, including a 503
+// after a trace started, and the hash chain still verifies afterwards.
+func TestPolicyCheck_OneChainedAuditRowPerEvaluation(t *testing.T) {
+	f := setupPCFixture(t)
+	ctx := context.Background()
+	f.srv.db.SetRBACAuditChain(audit.NewHashChain(""))
+
+	body := map[string]any{
+		"subject":   map[string]any{"did": f.userDID},
+		"org_id":    f.orgA,
+		"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr),
+	}
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", body)
+	assertOracleAnswer(t, w, oracleDecisionAllow, "")
+	rows := oracleAuditRows(t, f)
+	require.Len(t, rows, 1)
+	assert.Equal(t, f.userDID, rows[0]["subject_did"])
+	assert.Equal(t, f.orgA, rows[0]["requested_org_id"])
+	assert.Equal(t, f.orgA, rows[0]["evaluated_org_id"])
+	assert.Equal(t, "eth_call", rows[0]["method"])
+	assert.Equal(t, oracleDecisionAllow, rows[0]["decision"])
+	assert.Len(t, rows[0]["params_hash"], 64)
+
+	// The request named orgA, yet orgA's tenant view does not show it.
+	scoped, err := f.srv.db.ListAuditLogsScoped(ctx, "", nil, []string{f.orgA}, 100, 0)
+	require.NoError(t, err)
+	assert.Empty(t, scoped)
+
+	node := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "node down", http.StatusBadGateway)
+	}))
+	t.Cleanup(node.Close)
+	f.srv.proxy = proxy.New(node.URL)
+	w = policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", body)
+	require.Equal(t, http.StatusServiceUnavailable, w.Code, "body: %s", w.Body.String())
+	rows = oracleAuditRows(t, f)
+	require.Len(t, rows, 2)
+	assert.Equal(t, "unavailable", rows[1]["decision"])
+
+	res, err := audit.NewVerifier(f.srv.db.Conn(), f.srv.db).Verify(ctx, audit.ChainRBACAuditLog)
+	require.NoError(t, err)
+	assert.True(t, res.OK, "chain must verify after oracle queries: %s", res.FirstMismatchReason)
+}
+
+func TestPolicyCheck_OverLongMethodRejected(t *testing.T) {
 	f := setupPCFixture(t)
 	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", map[string]any{
 		"subject":   map[string]any{"did": f.userDID},
-		"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr),
+		"operation": map[string]any{"method": "eth_" + strings.Repeat("x", oracleMaxMethodLength), "params": []any{}},
 	})
-	require.Equal(t, http.StatusOK, w.Code)
-
-	var callerAuthMethod, method, paramsHash string
-	var allowed bool
-	require.NoError(t, f.srv.db.Conn().QueryRowContext(context.Background(), `
-		SELECT caller_auth_method, method, params_hash, allowed FROM policy_check_log
-		 WHERE subject_did = $1 ORDER BY created_at DESC LIMIT 1`,
-		f.userDID,
-	).Scan(&callerAuthMethod, &method, &paramsHash, &allowed))
-	assert.Equal(t, "cross_org_authorization_oracle_token", callerAuthMethod)
-	assert.Equal(t, "eth_call", method)
-	assert.True(t, allowed)
-	assert.Len(t, paramsHash, 64)
+	require.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
+	assert.Empty(t, oracleAuditRows(t, f))
 }
+
+// ---------------------------------------------------------------- audit ---
 
 func TestPolicyCheck_AuditRowRecordsSubjectAddressForAddressPath(t *testing.T) {
 	f := setupPCFixture(t)
@@ -1441,14 +1498,9 @@ func TestPolicyCheck_AuditRowRecordsSubjectAddressForAddressPath(t *testing.T) {
 	})
 	require.Equal(t, http.StatusOK, w.Code)
 
-	var subjectDID, subjectAddr string
-	require.NoError(t, f.srv.db.Conn().QueryRowContext(context.Background(), `
-		SELECT subject_did, subject_address FROM policy_check_log
-		 WHERE subject_address = $1 ORDER BY created_at DESC LIMIT 1`,
-		strings.ToLower(f.userAddr),
-	).Scan(&subjectDID, &subjectAddr))
-	assert.Equal(t, f.userDID, subjectDID, "address resolved to the right DID before the row was written")
-	assert.Equal(t, strings.ToLower(f.userAddr), subjectAddr)
+	row := lastOracleAudit(t, f)
+	assert.Equal(t, f.userDID, row["subject_did"], "address resolved to the right DID before the row was written")
+	assert.Equal(t, strings.ToLower(f.userAddr), row["subject_address"])
 }
 
 // ------------------------------------------------------ reason sanitizer ---
