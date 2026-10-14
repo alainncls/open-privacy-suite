@@ -841,7 +841,9 @@ Both write-method shapes are rewritten to `debug_traceCall` against the upstream
 
 `eth_sendRawTransaction` is RLP-decoded via the same production helper (`decodeRawTransaction` in `internal/server/jsonrpc_processor.go`) used by the real-call path. Sender is recovered from the signature using the chain-id-aware signer; the trace then runs against `(from, to, data, value)` exactly as a real raw-tx call would. A malformed signed blob returns a clean decode error rather than a silent pass.
 
-If the upstream node doesn't expose `debug_*`, write-method dry-run returns "node does not support debug_traceCall — dry-run for write methods unavailable." Read-method dry-run continues to work.
+Dry-run of `eth_call` is traced too (*Org-local `eth_call` trace* below), so it also requires `debug_traceCall`. If the upstream node does not expose it, dry-run of `eth_call` and of write methods returns `502` with "node does not support debug_traceCall" (audited as `trace_unsupported`); a trace timeout or transient upstream failure returns `503`. The other read methods continue to work.
+
+**Org-local `eth_call` trace.** Dry-run traces every `eth_call`, even when live `eth_call` tracing is disabled, and stops at the first frame owned by another organization. Without the trace, an org admin could see output computed by another organization's contract. A direct call to another organization's contract stays `deny`; a nested frame there answers `decision: "indeterminate"` with reason `external_scope_required`, without evaluating the foreign policy. The verdict can therefore be stricter than live (`indeterminate` where live allows). `impersonation_log.response_decision` records the wire outcome when it differs from the coarse `decision` bucket.
 
 ### Audit log (`impersonation_log`)
 

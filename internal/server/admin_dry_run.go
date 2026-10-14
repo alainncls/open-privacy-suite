@@ -91,7 +91,7 @@ var dryRunTraceMethods = map[string]bool{
 // handleDryRun handles POST /api/orgs/:org_id/dry-run.
 //
 // @Summary      Dry-run an RPC call as a user
-// @Description  Evaluates "what would this user see if they made this RPC call?" in the path org, without mutating chain state. Returns allow or deny for definitive local decisions. If nested execution reaches a contract owned by another organization, returns decision=indeterminate and reason=external_scope_required without evaluating that foreign policy. Read methods are forwarded, and the response goes through the same privacy filter as the user's own call, evaluated in the path org only: the user's contract grants, admin role and visibleTo shares from other organizations do not apply, and the user's disclosure grants never apply (a grant discloses to the grantee alone); a transaction or receipt the user may not read, or one sent to or deploying another organization's contract, comes back null; logs are filtered, and embedded addresses the user cannot see are redacted. Write methods (eth_sendTransaction / eth_sendRawTransaction) are translated to debug_traceCall so the RBAC verdict, the events the tx would emit, and the subset the user would see in its receipt can be inspected. If the user's view cannot be produced, nothing from the node is returned (500). Requires a tier-2 org-admin JWT of the path org: X-Admin-Token credentials (both the full super-admin token and the operator token) are explicitly rejected, since impersonation reads tenant data as the user. The impersonated user must exist and be a member of the path org, else an opaque 404. Every evaluation is written to the impersonation audit log fail-closed. Under the strict read privacy profile (PRIVACY_READ_PROFILE=strict) read methods are refused with 403 before anything is forwarded (the refusal is audited), and a simulated send returns only the allow/deny verdict, without the trace or its logs. Supported methods: eth_call, eth_getLogs, eth_getTransactionReceipt, eth_getTransactionByHash, eth_getBalance, eth_getCode, eth_getStorageAt, eth_blockNumber, eth_chainId, eth_sendTransaction, eth_sendRawTransaction.
+// @Description  Evaluates "what would this user see if they made this RPC call?" in the path org, without mutating chain state. Returns allow or deny for definitive local decisions. If nested execution reaches a contract owned by another organization, returns decision=indeterminate and reason=external_scope_required without evaluating that foreign policy. eth_call is traced with debug_traceCall even when live eth_call tracing is disabled, so its verdict can be stricter than live (indeterminate where live allows), and it needs a node that supports debug_traceCall. Read methods are forwarded, and the response goes through the same privacy filter as the user's own call, evaluated in the path org only: the user's contract grants, admin role and visibleTo shares from other organizations do not apply, and the user's disclosure grants never apply (a grant discloses to the grantee alone); a transaction or receipt the user may not read, or one sent to or deploying another organization's contract, comes back null; logs are filtered, and embedded addresses the user cannot see are redacted. Write methods (eth_sendTransaction / eth_sendRawTransaction) are translated to debug_traceCall so the RBAC verdict, the events the tx would emit, and the subset the user would see in its receipt can be inspected. If the user's view cannot be produced, nothing from the node is returned (500). Requires a tier-2 org-admin JWT of the path org: X-Admin-Token credentials (both the full super-admin token and the operator token) are explicitly rejected, since impersonation reads tenant data as the user. The impersonated user must exist and be a member of the path org, else an opaque 404. Every evaluation is written to the impersonation audit log fail-closed. Under the strict read privacy profile (PRIVACY_READ_PROFILE=strict) read methods are refused with 403 before anything is forwarded (the refusal is audited), and a simulated send returns only the allow/deny verdict, without the trace or its logs. Supported methods: eth_call, eth_getLogs, eth_getTransactionReceipt, eth_getTransactionByHash, eth_getBalance, eth_getCode, eth_getStorageAt, eth_blockNumber, eth_chainId, eth_sendTransaction, eth_sendRawTransaction.
 // @Description  Client state/block override options are unsupported regardless of the selected user's role, including admins.
 // @Tags         Admin: RBAC
 // @Accept       json
@@ -104,8 +104,8 @@ var dryRunTraceMethods = map[string]bool{
 // @Failure      403 {object} apimodels.APIError "source address not on the private network, X-Admin-Token/operator credentials used (dry-run requires a tier-2 admin JWT), or a read method under the strict read profile"
 // @Failure      404 {object} apimodels.APIError "impersonated user not found or not a member of the path org (opaque)"
 // @Failure      500 {object} apimodels.APIError "internal error (includes audit-log write failure, or the user's view could not be produced — response withheld)"
-// @Failure      502 {object} apimodels.APIError "upstream node error or trace failure"
-// @Failure      503 {object} apimodels.APIError "trace or compliance preview unavailable"
+// @Failure      502 {object} apimodels.APIError "upstream node error or trace failure, or the node does not support debug_traceCall (permanent; eth_call and write methods need it)"
+// @Failure      503 {object} apimodels.APIError "trace (timeout, transient upstream failure) or compliance preview unavailable"
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/dry-run [post]
 func (s *Server) handleDryRun(c *gin.Context) {
@@ -353,6 +353,10 @@ func (s *Server) handleDryRun(c *gin.Context) {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid operation"})
 				return
 			}
+			if errors.Is(traceErr, errNodeTraceUnsupported) {
+				s.respondDryRunTraceUnsupported(c, ctx, adminDID, req.UserDID, orgID, req.RPC)
+				return
+			}
 			if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", sanitizeDryRunReason(traceErr), c.GetString("correlation_id"), ""); logErr != nil {
 				slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
@@ -526,6 +530,10 @@ func (s *Server) forwardDryRunTrace(ctx context.Context, rpc apimodels.DryRunRPC
 	return s.forwardDryRunTraceWithAPIKey(ctx, rpc, apiKey, apiKeyHeader)
 }
 
+// errNodeTraceUnsupported is a permanent condition: the upstream node does not
+// expose debug_traceCall. Dry-run answers it explicitly, not as a retryable 503.
+var errNodeTraceUnsupported = errors.New("node does not support debug_traceCall")
+
 // simulationClientError marks an operation-shape error controlled by the
 // caller (malformed params). Policy-check maps it to 400, distinct from
 // infrastructure failures (500).
@@ -599,11 +607,26 @@ func (s *Server) respondDryRunTraceError(
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid operation"})
 		return true
 	}
+	if errors.Is(traceErr, errNodeTraceUnsupported) {
+		s.respondDryRunTraceUnsupported(c, ctx, adminDID, userDID, orgID, rpc)
+		return true
+	}
 	if logErr := s.recordImpersonation(ctx, adminDID, userDID, orgID, rpc, "error", ReasonTracingUnavailable, c.GetString("correlation_id"), ""); logErr != nil {
 		slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
 	}
 	c.JSON(http.StatusServiceUnavailable, gin.H{"error": "policy simulation unavailable"})
 	return true
+}
+
+// respondDryRunTraceUnsupported answers a node without debug_traceCall, for
+// eth_call and write methods alike.
+func (s *Server) respondDryRunTraceUnsupported(c *gin.Context, ctx context.Context, adminDID, userDID, orgID string, rpc apimodels.DryRunRPCBlock) {
+	if logErr := s.recordImpersonation(ctx, adminDID, userDID, orgID, rpc, "error", "trace_unsupported", c.GetString("correlation_id"), ""); logErr != nil {
+		slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+	c.JSON(http.StatusBadGateway, gin.H{"error": "node does not support debug_traceCall; dry-run unavailable for this method"})
 }
 
 // forwardDryRunTraceWithAPIKey evaluates an EVM call with debug_traceCall
@@ -715,9 +738,9 @@ func (s *Server) forwardDryRunTraceWithAPIKey(ctx context.Context, rpc apimodels
 		// Common case: debug_* not enabled on the node. Sanitise the
 		// message so we don't echo arbitrary upstream output back to
 		// the admin UI without inspection.
-		if strings.Contains(strings.ToLower(rpcResp.Error.Message), "method") &&
-			strings.Contains(strings.ToLower(rpcResp.Error.Message), "not") {
-			return nil, fmt.Errorf("node does not support debug_traceCall")
+		msg := strings.ToLower(rpcResp.Error.Message)
+		if rpcResp.Error.Code == -32601 || (strings.Contains(msg, "method") && strings.Contains(msg, "not")) {
+			return nil, errNodeTraceUnsupported
 		}
 		return nil, fmt.Errorf("trace failed: %s", rpcResp.Error.Message)
 	}
