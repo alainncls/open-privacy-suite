@@ -201,7 +201,7 @@ func (s *Server) resolvePolicyCheckSubject(ctx context.Context, subj policyCheck
 // handlePolicyCheck handles POST /api/v1/admin/cross-org-authorization-oracle.
 //
 // @Summary      Check whether a subject would be allowed to make an RPC call
-// @Description  Cross-organization privacy-policy oracle for an explicitly trusted infrastructure caller. Disabled by default (CROSS_ORG_AUTHORIZATION_ORACLE_MODE=disabled), in which case it answers 404. Subject is a DID or Ethereum address. Operation is a JSON-RPC method and params. The answer is decision=allow, deny or indeterminate. deny means policy was evaluated inside the oracle scope (the organizations in CROSS_ORG_AUTHORIZATION_ORACLE_ORG_IDS) and refuses the call. indeterminate means the oracle cannot judge: reason=outside_oracle_scope when the subject, the requested or resolved organization, the target or a nested call is outside that scope; reason=not_simulated when the method executes EVM code the oracle does not trace. The oracle never consults an organization outside the scope. Callers should proceed on allow, block on deny, and on indeterminate not block on the oracle but let the live call decide. Authority scope: the token holder may query any member of any allowlisted organization; the operator allowlist is the consent boundary. In verdict_only mode the response carries only the decision and its coarse reason. In full_simulation mode an allow also carries artifacts, the raw, unredacted trace and logs of the simulated call, by design; where the operator must not be able to access tenant data, use verdict_only. Per-organization consent is planned as follow-up work. EVM execution methods use debug_traceCall with the same upstream credential as live calls; as on live RPC, a targeted eth_createAccessList keeps its entry-point check only. Write methods also run a side-effect-free compliance preview. The endpoint does not submit the call or consume a travel-rule record. A supplied sender must link to the subject. Requests share one global concurrency cap (MAX_CONCURRENT_REQUESTS in flight); request-rate limits belong to the upstream RPC proxy. Traces use the subject organization's upstream API key, or the default key, so they count against that key's upstream quota; an upstream 429 is returned as 429 with its Retry-After. debug_traceCall and debug_traceTransaction are not supported (400). Admin, operator, and JWT credentials are not accepted. Every request that reaches evaluation writes one operator-only entry (no organization) to the hash-chained RBAC audit log, including a 429 or 503 after evaluation started; if that write fails the answer is withheld (500). Early 400s (malformed body, subject or method) and the concurrency-cap 429 are not audited. Operational failures (concurrency cap, upstream 429, trace errors or timeouts) return 429 or 503, never a policy verdict.
+// @Description  Cross-organization privacy-policy oracle for an explicitly trusted infrastructure caller. Disabled by default (CROSS_ORG_AUTHORIZATION_ORACLE_MODE=disabled), in which case it answers 404. Subject is a DID or Ethereum address. Operation is a JSON-RPC method and params. The answer is decision=allow, deny or indeterminate. deny means policy was evaluated inside the oracle scope (the organizations in CROSS_ORG_AUTHORIZATION_ORACLE_ORG_IDS) and refuses the call. indeterminate means the oracle cannot judge: reason=outside_oracle_scope when the subject, the requested or resolved organization, the target or a nested call is outside that scope; reason=not_simulated when the method executes EVM code the oracle does not trace, including a targeted eth_createAccessList, which live RPC keeps on its entry-point check without a trace. The oracle never consults an organization outside the scope. Callers should proceed on allow, block on deny, and on indeterminate not block on the oracle but let the live call decide. Authority scope: the token holder may query any member of any allowlisted organization; the operator allowlist is the consent boundary. In verdict_only mode the response carries only the decision and its coarse reason. In full_simulation mode an allow also carries artifacts, the raw, unredacted trace and logs of the simulated call, by design; where the operator must not be able to access tenant data, use verdict_only. Per-organization consent is planned as follow-up work. EVM execution methods use debug_traceCall with the same upstream credential as live calls. Write methods also run a side-effect-free compliance preview. The endpoint does not submit the call or consume a travel-rule record. A supplied sender must link to the subject. Requests share one global concurrency cap (MAX_CONCURRENT_REQUESTS in flight); request-rate limits belong to the upstream RPC proxy. Traces use the subject organization's upstream API key, or the default key, so they count against that key's upstream quota; an upstream 429 is returned as 429 with its Retry-After. debug_traceCall and debug_traceTransaction are not supported (400). Admin, operator, and JWT credentials are not accepted. Every request that reaches evaluation writes one operator-only entry (no organization) to the hash-chained RBAC audit log, including a 429 or 503 after evaluation started; if that write fails the answer is withheld (500). Early 400s (malformed body, subject or method) and the concurrency-cap 429 are not audited. Operational failures (concurrency cap, upstream 429, trace errors or timeouts) return 429 or 503, never a policy verdict.
 // @Tags         Admin: RBAC
 // @Accept       json
 // @Produce      json
@@ -278,6 +278,9 @@ func (s *Server) handlePolicyCheck(c *gin.Context) {
 			slog.Error("policy-check: audit log write failed; refusing response", "err", logErr)
 			respondInternalError(c, "internal error")
 			return
+		}
+		if out.decision == oracleDecisionIndeterminate {
+			s.recordOracleIndeterminate(out.wireReason)
 		}
 		response := policyCheckWireResponse{Decision: out.decision, Reason: out.wireReason}
 		if out.decision == oracleDecisionAllow && s.config != nil && strings.EqualFold(strings.TrimSpace(s.config.CrossOrgAuthorizationOracleMode), "full_simulation") {
@@ -369,9 +372,6 @@ func (s *Server) handlePolicyCheck(c *gin.Context) {
 			respondInternalError(c, "internal error")
 		}
 		return
-	}
-	if out.decision == oracleDecisionIndeterminate {
-		s.recordOracleIndeterminate(out.wireReason)
 	}
 	respond(out)
 }
@@ -516,8 +516,9 @@ func (s *Server) simulatePolicyCheck(
 	}
 
 	if effectiveMethod == "eth_createAccessList" && accessReq.TargetAddress != "" {
-		// As live RPC: a targeted access list keeps its entry-point gate only.
-		return oracleAllow(), nil
+		// Live keeps a targeted access list on its entry-point gate, so the
+		// nested scope is never evaluated: the oracle cannot judge it.
+		return oracleNotSimulated(), nil
 	}
 	if s.db == nil || s.rbacAccessCtrl == nil || accessResult == nil || accessResult.OrgID == "" {
 		return oracleOutcome{}, errors.New("resolved policy context is unavailable")
@@ -577,7 +578,7 @@ func (s *Server) simulatePolicyCheck(
 		}
 		artifacts.Trace = traceResult.Trace
 		artifacts.Logs = traceResult.Logs
-		if validationErr := s.validatePolicyCheckTrace(ctx, user, perms, accessResult.OrgID, accessReq.TargetAddress, traceResult.Parsed); validationErr != nil {
+		if validationErr := s.validatePolicyCheckTrace(ctx, user, perms, op.Method, accessResult.OrgID, accessReq.TargetAddress, traceResult.Parsed); validationErr != nil {
 			if validationErr.StatusCode >= http.StatusInternalServerError {
 				return oracleOutcome{}, fmt.Errorf("%w: trace validation unavailable", errSimUpstreamUnavailable)
 			}
@@ -643,7 +644,7 @@ func (s *Server) validatePolicyCheckTrace(
 	ctx context.Context,
 	user *rbac.User,
 	perms *rbac.EffectivePermissions,
-	orgID, targetAddr string,
+	method, orgID, targetAddr string,
 	traceResult *tracer.TraceResult,
 ) *ProcessError {
 	scope := evaluationScope{kind: authorizationScopeAllowlisted, orgID: orgID, inScope: s.crossOrgAuthorizationOracleOrgAllowed}
@@ -652,8 +653,8 @@ func (s *Server) validatePolicyCheckTrace(
 		slog.Warn("policy-check: trace scope lookup failed", "org_id", orgID, "err", err)
 		return &ProcessError{StatusCode: http.StatusInternalServerError, Message: sendTraceValidatorError, Reason: ReasonTracingUnavailable}
 	}
-	return s.validateTraceWithOrgIDs(ctx, user, perms, orgID, targetAddr, traceResult, userOrgIDs, userHasDeploy,
-		rbac.WithEvaluationScope(s.crossOrgAuthorizationOracleOrgAllowed))
+	opts := append(traceShapeOptions(method, targetAddr), rbac.WithEvaluationScope(s.crossOrgAuthorizationOracleOrgAllowed))
+	return s.validateTraceWithOrgIDs(ctx, user, perms, orgID, targetAddr, traceResult, userOrgIDs, userHasDeploy, opts...)
 }
 
 func (s *Server) crossOrgAuthorizationOracleOrgAllowed(orgID string) bool {

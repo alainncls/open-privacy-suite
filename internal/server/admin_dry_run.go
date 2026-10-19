@@ -103,7 +103,7 @@ var dryRunTraceMethods = map[string]bool{
 // @Failure      403 {object} apimodels.APIError "source address not on the private network, X-Admin-Token/operator credentials used (dry-run requires a tier-2 admin JWT), or a read method under the strict read profile"
 // @Failure      404 {object} apimodels.APIError "impersonated user not found or not a member of the path org (opaque)"
 // @Failure      500 {object} apimodels.APIError "internal error (includes audit-log write failure, or the user's view could not be produced — response withheld)"
-// @Failure      502 {object} apimodels.APIError "upstream node error or trace failure, or the node does not support debug_traceCall (permanent; eth_call and write methods need it)"
+// @Failure      502 {object} apimodels.APIError "upstream node error on a forwarded read, or the node does not support debug_traceCall (permanent; eth_call and write methods need it)"
 // @Failure      503 {object} apimodels.APIError "trace (timeout, transient upstream failure) or compliance preview unavailable"
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/dry-run [post]
@@ -319,7 +319,7 @@ func (s *Server) handleDryRun(c *gin.Context) {
 				return
 			}
 		}
-		if validationErr := s.validateDryRunTrace(ctx, user, userPerms, orgID, accessReq.TargetAddress, traceResp.Parsed); validationErr != nil {
+		if validationErr := s.validateDryRunTrace(ctx, user, userPerms, req.RPC.Method, orgID, accessReq.TargetAddress, traceResp.Parsed); validationErr != nil {
 			decision, wireDecision, wireReason, auditReason, responseDecision := dryRunTraceProcessOutcome(validationErr)
 			if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, decision, auditReason, c.GetString("correlation_id"), responseDecision); logErr != nil {
 				slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
@@ -337,31 +337,16 @@ func (s *Server) handleDryRun(c *gin.Context) {
 
 	// Allowed — execute or trace. Both branches log on success.
 	if isTrace {
-		traceResp, traceErr := s.forwardDryRunTrace(ctx, req.RPC)
+		traceCtx, cancel := context.WithTimeout(ctx, policyCheckTraceTimeout)
+		traceResp, traceErr := s.forwardDryRunTrace(traceCtx, req.RPC)
+		cancel()
 		if traceErr != nil {
-			var clientErr *simulationClientError
-			if errors.As(traceErr, &clientErr) {
-				if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", "decode_error", c.GetString("correlation_id"), ""); logErr != nil {
-					slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-					return
-				}
-				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid operation"})
-				return
-			}
-			if errors.Is(traceErr, errNodeTraceUnsupported) {
-				s.respondDryRunTraceUnsupported(c, ctx, adminDID, req.UserDID, orgID, req.RPC)
-				return
-			}
-			if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", sanitizeDryRunReason(traceErr), c.GetString("correlation_id"), ""); logErr != nil {
-				slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-				return
-			}
-			c.JSON(http.StatusBadGateway, gin.H{"error": "upstream trace error"})
+			// Same classification as eth_call: 400 caller error, 502 node
+			// without debug_traceCall, 503 transient failure or timeout.
+			s.respondDryRunTraceError(c, ctx, adminDID, req.UserDID, orgID, req.RPC, traceErr)
 			return
 		}
-		if validationErr := s.validateDryRunTrace(ctx, user, userPerms, orgID, accessReq.TargetAddress, traceResp.Parsed); validationErr != nil {
+		if validationErr := s.validateDryRunTrace(ctx, user, userPerms, req.RPC.Method, orgID, accessReq.TargetAddress, traceResp.Parsed); validationErr != nil {
 			decision, wireDecision, wireReason, auditReason, responseDecision := dryRunTraceProcessOutcome(validationErr)
 			if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, decision, auditReason, c.GetString("correlation_id"), responseDecision); logErr != nil {
 				slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
@@ -795,7 +780,7 @@ func (s *Server) validateDryRunTrace(
 	ctx context.Context,
 	user *rbac.User,
 	perms *rbac.EffectivePermissions,
-	orgID, targetAddr string,
+	method, orgID, targetAddr string,
 	traceResult *tracer.TraceResult,
 ) *ProcessError {
 	userOrgIDs, userHasDeploy, err := traceOrgScope(ctx, s.rbacAccessCtrl, user, evaluationScope{kind: authorizationScopeOrgLocal, orgID: orgID})
@@ -803,7 +788,8 @@ func (s *Server) validateDryRunTrace(
 		slog.Warn("dry-run trace: scope lookup failed", "org_id", orgID, "err", err)
 		return &ProcessError{StatusCode: http.StatusInternalServerError, Message: sendTraceValidatorError, Reason: ReasonTracingUnavailable}
 	}
-	return s.validateTraceWithOrgIDs(ctx, user, perms, orgID, targetAddr, traceResult, userOrgIDs, userHasDeploy)
+	return s.validateTraceWithOrgIDs(ctx, user, perms, orgID, targetAddr, traceResult, userOrgIDs, userHasDeploy,
+		traceShapeOptions(method, targetAddr)...)
 }
 
 // validateTraceWithOrgIDs applies a trace policy with an explicit organization

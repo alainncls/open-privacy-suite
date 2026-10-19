@@ -37,6 +37,7 @@ type parityFixture struct {
 	proc        *JSONRPCProcessor
 	canary      *creationCanary
 	orgA        string
+	orgB        string
 	ownAddr     string
 	foreignAddr string
 	grantedDID  string
@@ -71,7 +72,8 @@ func setupParityFixture(t *testing.T) *parityFixture {
 	f.orgA = uuid.New().String()
 	require.NoError(t, ts.db.CreateOrganization(ctx, &rbac.Organization{ID: f.orgA, Slug: "parity-a", Name: "Parity A", Settings: map[string]any{}}))
 	ownID := drCreateContract(t, ts.db, f.orgA, f.ownAddr, "ParityOwn")
-	orgB := registerForeignOrgContract(t, ctx, ts, f.foreignAddr)
+	f.orgB = registerForeignOrgContract(t, ctx, ts, f.foreignAddr)
+	orgB := f.orgB
 
 	methods := []string{"eth_call", "eth_estimateGas", "eth_createAccessList"}
 	f.grantedDID = seedCreationMember(t, ctx, ts, f.orgA, nil, methods)
@@ -160,8 +162,9 @@ func (f *parityFixture) oracleOutcome(t *testing.T, did, method string, params [
 	})
 }
 
+type outcomes struct{ live, dryRun, oracle string }
+
 func TestOperationEvaluatorParity(t *testing.T) {
-	type outcomes struct{ live, dryRun, oracle string }
 	call := func(f *parityFixture, block any) []any {
 		return []any{map[string]any{"to": f.ownAddr, "data": "0x"}, block}
 	}
@@ -226,9 +229,9 @@ func TestOperationEvaluatorParity(t *testing.T) {
 				want := tc.want
 				switch {
 				case method == "eth_createAccessList" && tc.name != "RBAC deny" && tc.name != "malformed params":
-					// A targeted access list keeps its entry-point gate only, on
-					// every path that serves it.
-					want.live, want.oracle = parityAllow, parityAllow
+					// Live keeps a targeted access list on its entry-point gate
+					// without a trace; the oracle cannot judge what it never ran.
+					want.live, want.oracle = parityAllow, parityIndeterminate
 				case method == "eth_estimateGas" && tc.name == "invalid block parameter":
 					// CheckAccess classifies an eth_call block tag; for
 					// eth_estimateGas the trace helper rejects it as a caller error.
@@ -242,5 +245,81 @@ func TestOperationEvaluatorParity(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// addParityMembership gives the granted subject a second group in orgID.
+func (f *parityFixture) addParityMembership(t *testing.T, orgID string, claims []rbac.Claim) {
+	t.Helper()
+	ctx := context.Background()
+	groupID := uuid.New().String()
+	insertGroupRawSQL(t, ctx, f.ts.db, groupID, orgID, "p-"+groupID[:8], "P-"+groupID[:8], "p-"+groupID[:8])
+	require.NoError(t, f.ts.db.CreateGroupAccess(ctx, &rbac.GroupAccess{
+		ID: uuid.New().String(), GroupID: groupID, Claims: claims, AllowedMethods: []string{"eth_call"},
+	}))
+	user, err := f.ts.db.GetUserByExternalID(ctx, f.grantedDID)
+	require.NoError(t, err)
+	require.NoError(t, f.ts.db.CreateMembership(ctx, &rbac.UserMembership{
+		ID: uuid.New().String(), UserID: user.ID, GroupID: groupID, Source: rbac.MembershipSourceAdmin,
+	}))
+}
+
+// The deploy claim for a nested CREATE comes from the evaluated org only, on
+// every path: a claim in another allowlisted org grants nothing.
+func TestOperationEvaluatorParity_NestedCreateDeployClaim(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		claimIn string // "evaluated" or "other"
+		want    string
+	}{
+		{name: "claim in another allowlisted org", claimIn: "other", want: parityDeny},
+		{name: "claim in the evaluated org", claimIn: "evaluated", want: parityAllow},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := setupParityFixture(t)
+			orgID := f.orgB
+			if tc.claimIn == "evaluated" {
+				orgID = f.orgA
+			}
+			f.addParityMembership(t, orgID, []rbac.Claim{rbac.ClaimDeploy})
+			f.canary.setFrame(traceFrame{Type: "CALL", From: fixedAddr(0x01), To: f.ownAddr,
+				Calls: []traceFrame{{Type: "CREATE", From: f.ownAddr, To: fixedAddr(0xc7)}}})
+			params := []any{map[string]any{"to": f.ownAddr, "data": "0x"}, "latest"}
+
+			assert.Equal(t, tc.want, f.live(t, f.grantedDID, "eth_call", params), "live")
+			assert.Equal(t, tc.want, f.oracleOutcome(t, f.grantedDID, "eth_call", params), "oracle")
+		})
+	}
+}
+
+// A creation-shaped call may call the child its constructor deploys, on every
+// path; the child's own frames are still validated.
+func TestOperationEvaluatorParity_CreatedChild(t *testing.T) {
+	child := fixedAddr(0xc4)
+	for _, tc := range []struct {
+		name   string
+		nested []traceFrame
+		want   outcomes
+	}{
+		{name: "child called", want: outcomes{parityAllow, parityAllow, parityAllow}},
+		{
+			name:   "child enters a foreign contract",
+			nested: []traceFrame{{Type: "STATICCALL", From: child, To: fixedAddr(0xb2)}},
+			want:   outcomes{parityDeny, parityIndeterminate, parityDeny},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := setupParityFixture(t)
+			deployer := seedCreationMember(t, context.Background(), f.ts, f.orgA, []rbac.Claim{rbac.ClaimDeploy}, []string{"eth_call"})
+			f.canary.setFrame(traceFrame{Type: "CREATE", From: fixedAddr(0x00), To: fixedAddr(0xc3), Calls: []traceFrame{
+				{Type: "CREATE", From: fixedAddr(0xc3), To: child},
+				{Type: "CALL", From: fixedAddr(0xc3), To: child, Calls: tc.nested},
+			}})
+			params := creationParams(creationCode)
+
+			assert.Equal(t, tc.want.live, f.live(t, deployer, "eth_call", params), "live")
+			assert.Equal(t, tc.want.oracle, f.oracleOutcome(t, deployer, "eth_call", params), "oracle")
+			assert.Equal(t, tc.want.dryRun, f.dryRunOutcome(t, deployer, "eth_call", params), "dry-run")
+		})
 	}
 }

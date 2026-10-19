@@ -1220,9 +1220,8 @@ func TestValidatePolicyCheckVisibleTo(t *testing.T) {
 	})
 }
 
-// Review item 3: the deploy claim for a nested CREATE comes from allowlisted
-// memberships only. Without one, the claim may exist where the oracle may not
-// look, so every such case is indeterminate.
+// A nested CREATE needs the evaluated org's deploy claim, as on live RPC. A
+// claim elsewhere, allowlisted or not, grants nothing.
 func TestPolicyCheck_NestedCreateDeployClaimScope(t *testing.T) {
 	created := "0x0000000000000000000000000000000000c0ffee"
 	for _, tc := range []struct {
@@ -1231,9 +1230,9 @@ func TestPolicyCheck_NestedCreateDeployClaimScope(t *testing.T) {
 		decision string
 		reason   string
 	}{
-		{name: "claim only in non-allowlisted org", claimOrg: "unallowlisted", decision: oracleDecisionIndeterminate, reason: oracleReasonOutsideScope},
-		{name: "claim in allowlisted org", claimOrg: "allowlisted", decision: oracleDecisionAllow},
-		{name: "no claim anywhere", decision: oracleDecisionIndeterminate, reason: oracleReasonOutsideScope},
+		{name: "claim only in non-allowlisted org", claimOrg: "unallowlisted", decision: oracleDecisionDeny, reason: oracleReasonDenied},
+		{name: "claim in the evaluated org", claimOrg: "allowlisted", decision: oracleDecisionAllow},
+		{name: "no claim anywhere", decision: oracleDecisionDeny, reason: oracleReasonDenied},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := setupPCFixture(t)
@@ -1531,4 +1530,54 @@ func pcSignedRawTx(t *testing.T, to *common.Address, data []byte) (string, strin
 	raw, err := signed.MarshalBinary()
 	require.NoError(t, err)
 	return "0x" + hex.EncodeToString(raw), crypto.PubkeyToAddress(key.PublicKey).Hex()
+}
+
+// Live keeps a targeted eth_createAccessList on its entry-point gate, so the
+// oracle never evaluates nested scope and must not answer allow.
+func TestPolicyCheck_TargetedCreateAccessListNotSimulated(t *testing.T) {
+	f := setupPCFixture(t)
+	f.srv.metrics = metrics.NewNoop()
+	ctx := context.Background()
+	groupID := uuid.New().String()
+	require.NoError(t, f.db.CreateGroup(ctx, &rbac.Group{
+		ID: groupID, OrgID: f.orgA, Slug: "pc-access-list", Name: "pc-access-list", Depth: 0, Path: "pc-access-list",
+	}))
+	require.NoError(t, f.db.CreateGroupAccess(ctx, &rbac.GroupAccess{
+		ID: uuid.New().String(), GroupID: groupID, AllowedMethods: []string{"eth_createAccessList"},
+	}))
+	pcAddMembership(t, f, f.userDID, groupID)
+	op := pcBalanceOfCallOp(f.contractAddr, f.userAddr)
+	op["method"] = "eth_createAccessList"
+
+	w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", map[string]any{
+		"subject": map[string]any{"did": f.userDID}, "operation": op,
+	})
+	assertOracleAnswer(t, w, oracleDecisionIndeterminate, oracleReasonNotSimulated)
+	assert.Equal(t, 1.0, oracleIndeterminateCount(t, f.srv.metrics, oracleReasonNotSimulated))
+}
+
+// Every emitted indeterminate answer is counted once, early returns included.
+func TestPolicyCheck_IndeterminateCountedOnEveryPath(t *testing.T) {
+	for name, body := range map[string]func(f *pcFixture) map[string]any{
+		"requested org outside allowlist": func(f *pcFixture) map[string]any {
+			return map[string]any{"subject": map[string]any{"did": f.userDID}, "org_id": uuid.New().String(),
+				"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr)}
+		},
+		"unlinked address": func(f *pcFixture) map[string]any {
+			return map[string]any{"subject": map[string]any{"address": f.unlinkedAddr},
+				"operation": pcBalanceOfCallOp(f.contractAddr, f.unlinkedAddr)}
+		},
+		"address linked to several identities": func(f *pcFixture) map[string]any {
+			return map[string]any{"subject": map[string]any{"address": f.collisionAddr},
+				"operation": pcBalanceOfCallOp(f.contractAddr, f.collisionAddr)}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := setupPCFixture(t)
+			f.srv.metrics = metrics.NewNoop()
+			w := policyCheckPost(t, f.srv, "cross_org_authorization_oracle_token", body(f))
+			assertOracleAnswer(t, w, oracleDecisionIndeterminate, oracleReasonOutsideScope)
+			assert.Equal(t, 1.0, oracleIndeterminateCount(t, f.srv.metrics, oracleReasonOutsideScope))
+		})
+	}
 }

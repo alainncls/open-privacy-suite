@@ -571,7 +571,7 @@ func (p *JSONRPCProcessor) validateEthCallWithTracingInOrg(ctx context.Context, 
 	if creation {
 		// Contracts the creation code deploys and then calls run the
 		// caller's own code; their frames are validated in turn.
-		traceOpts = append(traceOpts, rbac.WithCreatedContractsAsOwn())
+		traceOpts = append(traceOpts, traceShapeOptions(resolved, "")...)
 	}
 
 	validationResult, err := p.traceValidator.ValidateTrace(ctx, userOrgIDs, traceResult, userHasDeploy, traceOpts...)

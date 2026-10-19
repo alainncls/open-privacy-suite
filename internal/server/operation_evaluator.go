@@ -136,13 +136,22 @@ func traceOrgScope(ctx context.Context, ac *rbac.AccessController, user *rbac.Us
 	if err != nil || perms == nil {
 		return nil, false, fmt.Errorf("resolved-org permissions unavailable: %w", errOrNil(err))
 	}
-	// Live RPC decides creation by the resolved org's effective claims alone;
-	// the oracle also accepts any allowlisted membership's claim.
-	hasDeploy := effectivePermissionsHasDeployClaim(perms)
-	if !hasDeploy && scope.kind == authorizationScopeAllowlisted {
-		hasDeploy = membershipsHaveDeployClaim(ctx, ac.Store(), memberships)
+	// Runtime creation needs the resolved org's effective deploy claim, on
+	// every path. The allowlist restricts the oracle; it grants nothing.
+	return orgIDs, effectivePermissionsHasDeployClaim(perms), nil
+}
+
+// traceShapeOptions returns the trace options that depend on the operation
+// shape. A creation-shaped call (eth_call family without a target) may call
+// the contracts its own creation code deploys.
+func traceShapeOptions(method, targetAddr string) []rbac.TraceOption {
+	switch rbac.ResolveMethodAlias(method) {
+	case "eth_call", "eth_estimateGas", "eth_createAccessList":
+		if targetAddr == "" {
+			return []rbac.TraceOption{rbac.WithCreatedContractsAsOwn()}
+		}
 	}
-	return orgIDs, hasDeploy, nil
+	return nil
 }
 
 func errOrNil(err error) error {
@@ -234,9 +243,6 @@ func traceVerdict(scope authorizationScopeKind, denial *ProcessError) operationV
 		}
 	case authorizationScopeAllowlisted:
 		switch denial.TraceDenialKind {
-		case rbac.DenialKindDeployClaim:
-			// The claim may exist in an organization the oracle may not consult.
-			return operationVerdict{decision: oracleDecisionIndeterminate, wireReason: oracleReasonOutsideScope, internalReason: "deploy_claim_not_in_scope"}
 		case rbac.DenialKindOutOfScope:
 			return operationVerdict{decision: oracleDecisionIndeterminate, wireReason: oracleReasonOutsideScope, internalReason: "nested_call_outside_allowlist",
 				detail: map[string]string{"org_id": denial.TraceDeniedOrgID, "contract": denial.TraceDeniedTarget}}

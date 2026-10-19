@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"math/big"
 	"net/http"
@@ -934,4 +935,72 @@ func TestDryRun_EthCallTraceTimeoutReturns503(t *testing.T) {
 		"rpc":      map[string]any{"method": "eth_call", "params": []any{map[string]any{"to": f.contractAddr, "data": "0x"}, "latest"}},
 	})
 	require.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
+}
+
+// drWriteUser seeds a path-org member allowed to send to f.contractAddr.
+func drWriteUser(t *testing.T, f *dryRunFixture) string {
+	t.Helper()
+	ctx := context.Background()
+	groupID := uuid.New().String()
+	require.NoError(t, f.srv.db.CreateGroup(ctx, &rbac.Group{
+		ID: groupID, OrgID: f.orgID, Slug: "dr-writer", Name: "dr-writer", Depth: 0, Path: "dr-writer",
+	}))
+	require.NoError(t, f.srv.db.CreateGroupAccess(ctx, &rbac.GroupAccess{
+		ID: uuid.New().String(), GroupID: groupID, AllowedMethods: []string{"eth_sendTransaction"},
+	}))
+	did := "did:dr:writer"
+	drCreateUserInGroup(t, f.srv.db, did, groupID)
+	contractID, err := f.srv.db.GetContractByAddressGlobal(ctx, f.contractAddr)
+	require.NoError(t, err)
+	require.NotNil(t, contractID)
+	drCreateGrant(t, f.srv.db, contractID.ID, groupID)
+	return did
+}
+
+// Write-method dry-run uses the eth_call classification: 503 for a transient
+// trace failure or timeout, 502 only for a node without debug_traceCall.
+func TestDryRun_WriteTraceTransientFailureReturns503(t *testing.T) {
+	for _, hang := range []bool{false, true} {
+		t.Run(fmt.Sprintf("hang=%v", hang), func(t *testing.T) {
+			f := setupDryRunFixture(t)
+			prev := policyCheckTraceTimeout
+			policyCheckTraceTimeout = 50 * time.Millisecond
+			t.Cleanup(func() { policyCheckTraceTimeout = prev })
+			release := make(chan struct{})
+			stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if hang {
+					select {
+					case <-release:
+					case <-r.Context().Done():
+					}
+					return
+				}
+				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"execution timeout"}}`))
+			}))
+			t.Cleanup(func() { close(release); stub.Close() })
+			f.srv.proxy = proxy.New(stub.URL)
+
+			w := dryRunPost(t, f.srv, f.orgID, "jwt_admin", f.adminDID, map[string]any{
+				"user_did": drWriteUser(t, f),
+				"rpc":      map[string]any{"method": "eth_sendTransaction", "params": []any{map[string]any{"to": f.contractAddr, "data": "0x"}}},
+			})
+			require.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
+		})
+	}
+}
+
+func TestDryRun_WriteNodeWithoutDebugAPIReturns502(t *testing.T) {
+	f := setupDryRunFixture(t)
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"the method debug_traceCall does not exist/is not available"}}`))
+	}))
+	t.Cleanup(stub.Close)
+	f.srv.proxy = proxy.New(stub.URL)
+
+	w := dryRunPost(t, f.srv, f.orgID, "jwt_admin", f.adminDID, map[string]any{
+		"user_did": drWriteUser(t, f),
+		"rpc":      map[string]any{"method": "eth_sendTransaction", "params": []any{map[string]any{"to": f.contractAddr, "data": "0x"}}},
+	})
+	require.Equal(t, http.StatusBadGateway, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "node does not support debug_traceCall")
 }

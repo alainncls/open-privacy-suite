@@ -160,8 +160,8 @@ The response has a `decision` of `allow`, `deny` or `indeterminate`:
 | `indeterminate` (reason `not_simulated`) | The method may execute EVM code that the oracle does not simulate. | Same as above. |
 
 The oracle never consults an organization outside `CROSS_ORG_AUTHORIZATION_ORACLE_ORG_IDS`, including whether the subject
-is a member of one, and every policy input comes from allowlisted memberships only. A nested contract creation without a
-deploy claim in an allowlisted organization is therefore `indeterminate`, since the claim may exist elsewhere. An unlinked
+is a member of one. The allowlist restricts what the oracle may evaluate; it never broadens the subject's permissions. As on
+live RPC, a nested contract creation needs the deploy claim in the evaluated organization, otherwise the answer is `deny`. An unlinked
 address and a member of a non-allowlisted organization get the same answer. `indeterminate`
 never weakens security: live RPC still enforces the full policy. In `verdict_only` mode the response contains only the decision
 and its coarse reason; `full_simulation` additionally returns the trace artifacts on `allow`.
@@ -172,8 +172,8 @@ unredacted by design. Where the operator must not be able to access tenant data,
 consent is planned as follow-up work. See [Configuration](/docs/configuration#cross-org-authorization-oracle) for the settings.
 
 The endpoint checks RBAC and nested EVM calls with `debug_traceCall`, using the same evaluation phases as live RPC and admin
-dry-run (organization selection, sender binding, RBAC, trace with the live block-parameter check, compliance). As on live RPC,
-a targeted `eth_createAccessList` keeps its entry-point check only. Write operations also use a side-effect-free compliance preview.
+dry-run (organization selection, sender binding, RBAC, trace with the live block-parameter and creation rules, compliance).
+Live RPC keeps a targeted `eth_createAccessList` on its entry-point check without a trace, so the oracle answers it `indeterminate` (`not_simulated`). Write operations also use a side-effect-free compliance preview.
 The preview does not send a transaction, write a compliance log, or consume a travel-rule record.
 
 The upstream node must support `debug_traceCall`. The endpoint fails closed when tracing is unavailable or exceeds five seconds.
